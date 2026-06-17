@@ -17,7 +17,7 @@ llamafactory-cli train \
     --lr_scheduler_type cosine \
     --max_grad_norm 1.0 \
     --logging_steps 5 \
-    --save_steps 100 \
+    --save_steps 0 \
     --warmup_steps 0 \
     --packing False \
     --enable_thinking True \
