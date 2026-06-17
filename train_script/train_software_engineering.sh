@@ -26,34 +26,10 @@ echo "Conda env: $CONDA_DEFAULT_ENV"
 echo "Using Python: $(which python)"
 echo "Python version: $(python --version)"
 
-echo "Training on All Categories..."
+echo "Training on Software Engineering..."
 
-DATASETS="nemotron_easy_data_processing,\
-nemotron_easy_data_querying,\
-nemotron_easy_data_science,\
-nemotron_easy_debugging,\
-nemotron_easy_dependency_management,\
-nemotron_easy_file_operations,\
-nemotron_easy_scientific_computing,\
-nemotron_easy_security,\
-nemotron_easy_software_engineering,\
-nemotron_medium_data_processing,\
-nemotron_medium_data_querying,\
-nemotron_medium_data_science,\
-nemotron_medium_debugging,\
-nemotron_medium_dependency_management,\
-nemotron_medium_file_operations,\
-nemotron_medium_model_training,\
-nemotron_medium_scientific_computing,\
-nemotron_medium_security,\
-nemotron_medium_software_engineering,\
-nemotron_medium_system_administration,\
-nemotron_mixed_data_processing,\
-nemotron_mixed_data_science,\
-nemotron_mixed_debugging,\
-nemotron_mixed_file_operations,\
-nemotron_mixed_scientific_computing,\
-nemotron_mixed_security"
+DATASETS="nemotron_easy_software_engineering,\
+nemotron_medium_software_engineering"
 
 ~/miniconda3/envs/llama310/bin/llamafactory-cli train \
     --stage sft \
@@ -79,7 +55,7 @@ nemotron_mixed_security"
     --packing False \
     --enable_thinking True \
     --report_to none \
-    --output_dir /projects/ai_safe/cuongdc/Terminal-all \
+    --output_dir /projects/ai_safe/cuongdc/Terminal-software_engineering \
     --bf16 True \
     --plot_loss True \
     --trust_remote_code True \

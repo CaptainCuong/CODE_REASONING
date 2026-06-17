@@ -1,13 +1,13 @@
 import pandas as pd
 import json
+from huggingface_hub import hf_hub_download
 
-PARQUET_PATH = (
-    "/helios-storage/helios4-data/cuong/hub/"
-    "datasets--nvidia--Nemotron-Terminal-Corpus/snapshots/"
-    "a1667c4ffdadea02a89bffe4f1bb7ca2ff19f8d9/"
-    "synthetic_tasks/skill_based/medium/model_training/data_filtered.parquet"
+PARQUET_PATH = hf_hub_download(
+    repo_id="nvidia/Nemotron-Terminal-Corpus",
+    filename="synthetic_tasks/skill_based/medium/model_training/data_filtered.parquet",
+    repo_type="dataset",
 )
-OUT_PATH = "/home/cuong/CODE_REASONING/data/model_training.json"
+OUT_PATH = "/home/cuongdc/CODE_REASONING/data/model_training.json"
 
 role_map = {"user": "human", "assistant": "gpt"}
 

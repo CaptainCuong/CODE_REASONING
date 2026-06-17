@@ -1,14 +1,11 @@
 import json
-import glob
 import os
 import pandas as pd
+from huggingface_hub import hf_hub_download, list_repo_files
 
-SNAPSHOT = (
-    "/helios-storage/helios4-data/cuong/hub/"
-    "datasets--nvidia--Nemotron-Terminal-Corpus/snapshots/"
-    "a1667c4ffdadea02a89bffe4f1bb7ca2ff19f8d9/synthetic_tasks/skill_based"
-)
-DATA_DIR = "/home/cuong/CODE_REASONING/data"
+REPO_ID = "nvidia/Nemotron-Terminal-Corpus"
+SKILL_BASE = "synthetic_tasks/skill_based"
+DATA_DIR = "/home/cuongdc/CODE_REASONING/data"
 DATASET_INFO_PATH = os.path.join(DATA_DIR, "dataset_info.json")
 
 role_map = {"user": "human", "assistant": "gpt"}
@@ -32,14 +29,18 @@ def convert(parquet_path: str, out_path: str) -> int:
 with open(DATASET_INFO_PATH, "r", encoding="utf-8") as f:
     dataset_info = json.load(f)
 
-# Find all parquet files and convert
-parquet_files = sorted(glob.glob(f"{SNAPSHOT}/*/*/data_filtered.parquet"))
+# Find all parquet files in the repo and convert
+repo_files = sorted(
+    f for f in list_repo_files(REPO_ID, repo_type="dataset")
+    if f.startswith(SKILL_BASE) and f.endswith("data_filtered.parquet")
+)
 new_entries = {}
 
-for parquet_path in parquet_files:
-    # e.g. .../skill_based/easy/data_processing/data_filtered.parquet
-    parts = parquet_path.replace(SNAPSHOT + "/", "").split("/")
+for repo_file in repo_files:
+    # e.g. synthetic_tasks/skill_based/easy/data_processing/data_filtered.parquet
+    parts = repo_file[len(SKILL_BASE) + 1:].split("/")
     difficulty, skill = parts[0], parts[1]
+    parquet_path = hf_hub_download(repo_id=REPO_ID, filename=repo_file, repo_type="dataset")
     key = f"nemotron_{difficulty}_{skill}"
     file_name = f"{key}.json"
     out_path = os.path.join(DATA_DIR, file_name)
