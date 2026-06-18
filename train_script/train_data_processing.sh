@@ -51,7 +51,7 @@ nemotron_mixed_data_processing"
     --lr_scheduler_type cosine \
     --max_grad_norm 1.0 \
     --logging_steps 5 \
-    --save_steps 0 \
+    --save_strategy epoch \
     --warmup_steps 0 \
     --packing False \
     --enable_thinking True \
