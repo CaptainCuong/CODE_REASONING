@@ -7,7 +7,7 @@
 
 #SBATCH --ntasks-per-node=2         # Request 2 CPU cores
 
-#SBATCH --time=12:00:00              # Set a 12-hour time limit
+#SBATCH --time=24:00:00              # Set a 24-hour time limit
 
 #SBATCH --partition=h200_normal_q   # Specify the GPU partition: h200_normal_q, a100_normal_q on Tinkercliffs | a30_normal_q o>
 

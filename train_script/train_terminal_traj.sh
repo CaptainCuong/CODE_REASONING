@@ -26,11 +26,9 @@ echo "Conda env: $CONDA_DEFAULT_ENV"
 echo "Using Python: $(which python)"
 echo "Python version: $(python --version)"
 
-echo "Training on Data Science..."
+echo "Training on Terminal Traj..."
 
-DATASETS="nemotron_easy_data_science,\
-nemotron_medium_data_science,\
-nemotron_mixed_data_science"
+DATASETS="terminal_traj"
 
 ~/miniconda3/envs/llama310/bin/llamafactory-cli train \
     --stage sft \
@@ -46,7 +44,7 @@ nemotron_mixed_data_science"
     --learning_rate 1e-05 \
     --num_train_epochs 2.0 \
     --max_samples 100000 \
-    --per_device_train_batch_size 1 \
+    --per_device_train_batch_size 2 \
     --gradient_accumulation_steps 1 \
     --lr_scheduler_type cosine \
     --max_grad_norm 1.0 \
@@ -56,7 +54,7 @@ nemotron_mixed_data_science"
     --packing False \
     --enable_thinking True \
     --report_to none \
-    --output_dir /projects/ai_safe/cuongdc/Terminal-data_science \
+    --output_dir /projects/ai_safe/cuongdc/Terminal-terminal_traj \
     --bf16 True \
     --plot_loss True \
     --trust_remote_code True \

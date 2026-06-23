@@ -7,13 +7,13 @@
 
 #SBATCH --ntasks-per-node=2         # Request 2 CPU cores
 
-#SBATCH --time=24:00:00              # Set a 24-hour time limit
+#SBATCH --time=00:30:00              # Set a 24-hour time limit
 
 #SBATCH --partition=h200_normal_q   # Specify the GPU partition: h200_normal_q, a100_normal_q on Tinkercliffs | a30_normal_q o>
 
 #SBATCH --account=cuong            # Your class-specific account: cuong, ece6514
 
-#SBATCH --gres=gpu:4                # Request 2 GPUs
+#SBATCH --gres=gpu:2                # Request 2 GPUs
 
 # Instructions for running ARC:
 # https://docs.arc.vt.edu/usage/vscode_remote_ssh.html
@@ -28,14 +28,12 @@ echo "Python version: $(python --version)"
 
 echo "Training on Data Science..."
 
-DATASETS="nemotron_easy_data_science,\
-nemotron_medium_data_science,\
-nemotron_mixed_data_science"
+DATASETS="qwen_data_science"
 
-~/miniconda3/envs/llama310/bin/llamafactory-cli train \
+llamafactory-cli train \
     --stage sft \
     --do_train True \
-    --model_name_or_path Qwen/Qwen3-8B \
+    --model_name_or_path cuong1692001/Terminal-terminal_traj \
     --preprocessing_num_workers 64 \
     --finetuning_type full \
     --template qwen3 \
@@ -44,7 +42,7 @@ nemotron_mixed_data_science"
     --dataset "$DATASETS" \
     --cutoff_len 16384 \
     --learning_rate 1e-05 \
-    --num_train_epochs 2.0 \
+    --num_train_epochs 5.0 \
     --max_samples 100000 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 1 \
@@ -56,7 +54,7 @@ nemotron_mixed_data_science"
     --packing False \
     --enable_thinking True \
     --report_to none \
-    --output_dir /projects/ai_safe/cuongdc/Terminal-data_science \
+    --output_dir /projects/ai_safe/cuongdc/Terminal-qwen-data-science-trajs \
     --bf16 True \
     --plot_loss True \
     --trust_remote_code True \
