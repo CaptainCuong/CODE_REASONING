@@ -1,9 +1,10 @@
 docker network prune -f
 
 tb run \
-    --dataset-path ./data_science_tasks \
+    --dataset-path ./benchmark_tasks_v1 \
     --agent terminus \
-    --model openai/terminal-qwen-data-science-trajs \
+    --model openai/llama-3.2-3b-instruct \
     --agent-kwarg api_base=http://localhost:8000/v1 \
     --agent-kwarg 'model_info={"max_input_tokens":30000,"max_tokens":30000,"max_output_tokens":30000,"input_cost_per_token":0,"output_cost_per_token":0,"litellm_provider":"openai","mode":"chat"}' \
-    --n-concurrent 1
+    --n-concurrent 1 \
+    --n-attempts 8

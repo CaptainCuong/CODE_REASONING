@@ -3,7 +3,14 @@ set -euo pipefail
 
 trap 'tput cnorm; tput sgr0' EXIT
 
-MODEL="/helios-storage/helios4-data/cuong/model/Terminal-qwen-data-science-trajs"
+source "$(conda info --base)/etc/profile.d/conda.sh"
+conda activate llama311
+
+export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+
+MODEL="nvidia/Nemotron-Terminal-8B"
+MODEL="meta-llama/Llama-3.2-3B-Instruct"
+MODEL="/helios-storage/helios4-data/cuong/model/ppo-openthinker/ckpts/global_step_50/policy"
 HOST="0.0.0.0"
 PORT=8000
 TENSOR_PARALLEL=4
@@ -27,4 +34,4 @@ exec python3 -m vllm.entrypoints.openai.api_server \
     --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
     --max-model-len "${MAX_MODEL_LEN}" \
     --trust-remote-code \
-    --served-model-name "terminal-qwen-data-science-trajs"
+    --served-model-name "llama-3.2-3b-instruct"

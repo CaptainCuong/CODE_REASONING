@@ -4,12 +4,12 @@ echo "Python version: $(python --version)"
 
 echo "Training on Data Science..."
 
-DATASETS="qwen_data_science"
+DATASETS="qwen_nemotron_8b_data_science_instructed_with_instructions"
 
 llamafactory-cli train \
     --stage sft \
     --do_train True \
-    --model_name_or_path cuong1692001/Terminal-terminal_traj \
+    --model_name_or_path nvidia/Nemotron-Terminal-8B \
     --preprocessing_num_workers 64 \
     --finetuning_type full \
     --template qwen3 \
@@ -17,7 +17,7 @@ llamafactory-cli train \
     --dataset_dir data \
     --dataset "$DATASETS" \
     --cutoff_len 10000 \
-    --learning_rate 1e-05 \
+    --learning_rate 5e-05 \
     --num_train_epochs 5.0 \
     --max_samples 100000 \
     --per_device_train_batch_size 1 \
@@ -29,7 +29,7 @@ llamafactory-cli train \
     --packing False \
     --enable_thinking True \
     --report_to none \
-    --output_dir /helios-storage/helios4-data/cuong/model/Terminal-qwen-data-science-trajs \
+    --output_dir /helios-storage/helios4-data/cuong/model/qwen_nemotron_8b_patched_with_instructions \
     --bf16 True \
     --plot_loss True \
     --trust_remote_code True \
