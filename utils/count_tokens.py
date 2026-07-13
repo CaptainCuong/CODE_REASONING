@@ -5,6 +5,9 @@ Accepts a mix of files and directories. Directories are scanned (non-recursively
 for *.json files; files that aren't ShareGPT-format ({"conversations": [...]})
 are skipped with a warning.
 
+Saves a token-length histogram per file (plus one for the combined total) as
+PNGs under images/.
+
 Example:
     python3 utils/count_tokens.py data/nemotron_complete.json data/nemotron_mixed_data_processing.json
     python3 utils/count_tokens.py data/ --tokenizer Qwen/Qwen3-8B
@@ -16,9 +19,14 @@ import statistics
 import sys
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from transformers import AutoTokenizer
 
 BATCH_SIZE = 256
+IMAGES_DIR = Path(__file__).resolve().parent.parent / "images"
 
 
 def to_messages(conversations: list[dict]) -> list[dict]:
@@ -72,6 +80,36 @@ def print_stats(label: str, lengths: list[int]) -> None:
     )
 
 
+def plot_distribution(label: str, lengths: list[int], out_path: Path) -> None:
+    if not lengths:
+        return
+    sorted_lengths = sorted(lengths)
+    n = len(sorted_lengths)
+    p50 = sorted_lengths[int(n * 0.50)]
+    p90 = sorted_lengths[min(int(n * 0.90), n - 1)]
+    p99 = sorted_lengths[min(int(n * 0.99), n - 1)]
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.hist(lengths, bins=80, color="#2196F3", edgecolor="white", linewidth=0.3)
+    for value, style, tag in [(p50, "--", "p50"), (p90, "--", "p90"), (p99, ":", "p99")]:
+        ax.axvline(value, color="#FF9800", linestyle=style, linewidth=1.2)
+        ax.text(value, ax.get_ylim()[1] * 0.97, f"{tag}={value:,}", rotation=90,
+                va="top", ha="right", fontsize=8, color="#FF9800")
+
+    ax.set_title(f"Token Length Distribution — {label} (n={n:,})", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Tokens per conversation")
+    ax.set_ylabel("Count")
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{int(v):,}"))
+    ax.grid(axis="y", alpha=0.3, linestyle="--")
+    ax.spines[["top", "right"]].set_visible(False)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Saved: {out_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("paths", nargs="+", help="ShareGPT JSON files and/or directories containing them")
@@ -96,10 +134,12 @@ def main() -> None:
 
         lengths = token_lengths(tokenizer, examples)
         print_stats(path.name, lengths)
+        plot_distribution(path.name, lengths, IMAGES_DIR / f"{path.stem}_token_dist.png")
         all_lengths.extend(lengths)
 
     print("-" * 100)
     print_stats("TOTAL", all_lengths)
+    plot_distribution("TOTAL", all_lengths, IMAGES_DIR / "total_token_dist.png")
 
 
 if __name__ == "__main__":

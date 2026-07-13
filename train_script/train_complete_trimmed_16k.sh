@@ -1,14 +1,12 @@
-#!/bin/bash
-
 echo "Conda env: $CONDA_DEFAULT_ENV"
 echo "Using Python: $(which python)"
 echo "Python version: $(python --version)"
 
-echo "Training on Data Processing..."
+echo "Training on Complete Dataset..."
 
-DATASETS="nemotron_easy_data_processing,\
-nemotron_medium_data_processing,\
-nemotron_mixed_data_processing"
+DATASETS="qwen_data_complete_trimmed_16k"
+
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 
 llamafactory-cli train \
     --stage sft \
@@ -29,12 +27,12 @@ llamafactory-cli train \
     --lr_scheduler_type cosine \
     --max_grad_norm 1.0 \
     --logging_steps 5 \
-    --save_steps 0 \
+    --save_strategy epoch \
     --warmup_steps 0 \
     --packing False \
     --enable_thinking True \
     --report_to none \
-    --output_dir /data/cuong/Terminal-data_processing \
+    --output_dir /data/cuong/Terminal-complete_trimmed_16k \
     --bf16 True \
     --plot_loss True \
     --trust_remote_code True \

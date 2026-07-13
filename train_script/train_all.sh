@@ -1,3 +1,5 @@
+#!/bin/bash
+
 echo "Conda env: $CONDA_DEFAULT_ENV"
 echo "Using Python: $(which python)"
 echo "Python version: $(python --version)"
@@ -31,7 +33,7 @@ nemotron_mixed_file_operations,\
 nemotron_mixed_scientific_computing,\
 nemotron_mixed_security"
 
-~/miniconda3/envs/llama310/bin/llamafactory-cli train \
+llamafactory-cli train \
     --stage sft \
     --do_train True \
     --model_name_or_path Qwen/Qwen3-8B \
@@ -55,7 +57,7 @@ nemotron_mixed_security"
     --packing False \
     --enable_thinking True \
     --report_to none \
-    --output_dir /helios-storage/helios4-data/cuong/Terminal-all \
+    --output_dir /data/cuong/Terminal-all \
     --bf16 True \
     --plot_loss True \
     --trust_remote_code True \
