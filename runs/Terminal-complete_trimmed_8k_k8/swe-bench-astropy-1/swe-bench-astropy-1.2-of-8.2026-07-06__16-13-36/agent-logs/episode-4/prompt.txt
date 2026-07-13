@@ -1,0 +1,93 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@5e943d0efea6:/app# cat > examine_separable.py << 'EOF'
+> import sys
+> sys.path.insert(0, '/usr/local/lib/python3.9/dist-packages')
+> from astropy.modeling.separable import _separable
+> import inspect
+> print(inspect.getsource(_separable))
+> EOF
+root@5e943d0efea6:/app# python3 examine_separable.py
+def _separable(transform):
+    """
+    Calculate the separability of outputs.
+
+    Parameters
+    ----------
+    transform : `astropy.modeling.Model`
+        A transform (usually a compound model).
+
+    Returns :
+    is_separable : ndarray of dtype np.bool
+        An array of shape (transform.n_outputs,) of boolean type
+        Each element represents the separablity of the corresponding output.
+    """
+    if (
+        transform_matrix := transform._calculate_separability_matrix()
+    ) is not NotImplemented:
+        return transform_matrix
+    elif isinstance(transform, CompoundModel):
+        sepleft = _separable(transform.left)
+        sepright = _separable(transform.right)
+        return _operators[transform.op](sepleft, sepright)
+    elif isinstance(transform, Model):
+        return _coord_matrix(transform, "left", transform.n_outputs)
+
+root@5e943d0efea6:/app# cat > compare_models.py << 'EOF'
+> from astropy.modeling import models as m
+> import numpy as np
+>
+> # Case 3: nested
+> nested = m.Pix2Sky_TAN() & (m.Linear1D(10) & m.Linear1D(5))
+> # Case 2: flat
+> flat = m.Pix2Sky_TAN() & m.Linear1D(10) & m.Linear1D(5)
+>
+> print('Nested model:')
+> print('  Inputs:', nested.inputs)
+> print('  Outputs:', nested.outputs)
+> print('  Input transformations:')
+> for i, t in enumerate(nested.input_transformations):
+>     print(f'    {i}: {t}')
+> print('  Output transformations:')
+> for i, t in enumerate(nested.output_transformations):
+>     print(f'    {i}: {t}')
+> print('  Number of components:', len(nested._components))
+> print('  Model set size:', nested._model_set_size)
+> print('  Separability matrix:')
+> print(separability_matrix(nested))
+> print()
+> print('Flat model:')
+> print('  Inputs:', flat.inputs)
+> print('  Outputs:', flat.outputs)
+> print('  Input transformations:')
+> for i, t in enumerate(flat.input_transformations):
+>     print(f'    {i}: {t}')
+> print('  Output transformations:')
+> for i, t in enumerate(flat.output_transformations):
+>     print(f'    {i}: {t}')
+> print('  Number of components:', len(flat._components))
+> print('  Model set size:', flat._model_set_size)
+> print('  Separability matrix:')
+> print(separability_matrix(flat))
+> print()
+> # Check if any internal difference
+> print('Are input transformations equal?', all(t1 == t2 for t1, t2 in zip(nested.input_transformations, flat.input_transformations)))
+> print('Are output transformations equal?', all(t1 == t2 for t1, t2 in zip(nested.output_transformations, flat.output_transformations)))
+> print('Are inputs equal?', list(nested.inputs) == list(flat.inputs))
+> print('Are outputs equal?', list(nested.outputs) == list(flat.outputs))
+> EOF
+root@5e943d0efea6:/app# python3 compare_models.py
+Nested model:
+  Inputs: ('x', 'y', 'x0', 'x1')
+  Outputs: ('phi', 'theta', 'y0', 'y1')
+  Input transformations:
+Traceback (most recent call last):
+  File "/app/compare_models.py", line 13, in <module>
+    for i, t in enumerate(nested.input_transformations):
+  File "/usr/local/lib/python3.9/site-packages/astropy/modeling/core.py", line 3402, in __getattr__
+    raise AttributeError(f'Attribute "{name}" not found')
+AttributeError: Attribute "input_transformations" not found
+root@5e943d0efea6:/app#

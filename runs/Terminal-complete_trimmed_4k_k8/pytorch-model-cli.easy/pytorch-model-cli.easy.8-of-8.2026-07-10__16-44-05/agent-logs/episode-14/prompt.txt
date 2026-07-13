@@ -1,0 +1,96 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@6ab78c99ebd5:/app# cat > extract.py << 'EOF'
+> import re
+> import json
+> import sys
+>
+> def extract_numbers_from_text(text):
+>     # Use regex to find numbers in the text.
+>     # Pattern to match a number (including decimals) not inside strings.
+>     # We'll do a simple approach: split by whitespace and look for tokens that are numbers.
+>     numbers = []
+>     for token in text.split():
+>         # Check if token is a number (integer or float)
+>         if re.match(r'^\-?[0-9]*\.?[0-9]*$', token):
+>             numbers.append(float(token))
+>     return numbers
+>
+> with open('simple_mnist/data.pkl', 'r') as f:
+>     data = f.read()
+>
+> all_numbers = extract_numbers_from_text(data)
+> print(f"Total numbers extracted: {len(all_numbers)}")
+> # Now we need to group them by layer.
+> # We know the structure: input_layer.weight, input_layer.bias, hidden_layer.weight, hidden_layer.bias, output_layer.weight, output_layer.bias.
+> # Let's count: weight matrices are 784*16 + 16*16 + 16*10 = 12544 + 256 + 160 = 12960 numbers.
+> # biases: 16 + 16 + 10 = 42 numbers.
+> # Total expected: 12960 + 42 = 13002 numbers.
+> if len(all_numbers) != 13002:
+>     print(f"Warning: expected 13002 numbers, got {len(all_numbers)}.", file=sys.stderr)
+>     # Maybe we need to include more numbers (like those with 'q' or 'h').
+>     # Let's also extract numbers that contain decimal points.
+>     # We'll try a different approach: use torch if possible.
+>     try:
+>         import torch
+>         # Load the data by writing to a temporary file and loading.
+>         import tempfile
+>         with tempfile.NamedTemporaryFile(mode='w', suffix='.pth', delete=False) as tmp:
+>             tmp.write(data)
+>             tmp_path = tmp.name
+>         try:
+>             state = torch.load(tmp_path)
+>         except Exception as e:
+>             print(f"Error loading state: {e}", file=sys.stderr)
+>             sys.exit(1)
+>         # Now we have the state dictionary.
+>         # We'll save it to a file.
+>         torch.save(state, 'simple_mnist.pth')
+>         print("Saved state to simple_mnist.pth")
+>         sys.exit(0)
+>     except ImportError:
+>         print("Torch is not installed or broken.", file=sys.stderr)
+>         sys.exit(1)
+>
+> # Group numbers by layer.
+> # We'll hardcode the indices based on the order we saw.
+> # input_layer.weight: first 12544 numbers
+> input_weight = all_numbers[:12544]
+> input_bias = all_numbers[12544:12544+16]
+> # hidden_layer.weight: next 256 numbers
+> hidden_weight = all_numbers[12544+16:12544+16+256]
+> hidden_bias = all_numbers[12544+16+256:12544+16+256+16]
+> # output_layer.weight: next 160 numbers
+> output_weight = all_numbers[12544+16+256+16:12544+16+256+16+160]
+> output_bias = all_numbers[12544+16+256+16+160:12544+16+256+16+160+10]
+>
+> # Create a dictionary.
+> model = {
+>     "input_weight": input_weight,
+>     "input_bias": input_bias,
+>     "hidden_weight": hidden_weight,
+>     "hidden_bias": hidden_bias,
+>     "output_weight": output_weight,
+>     "output_bias": output_bias
+> }
+>
+> # Save to JSON.
+> with open('simple_mnist.pth', 'w') as f:
+>     json.dump(model, f, indent=2)
+>
+> print("Saved model to simple_mnist.pth")
+> EOF
+root@6ab78c99ebd5:/app# python3 extract.py
+Traceback (most recent call last):
+  File "/app/extract.py", line 17, in <module>
+    data = f.read()
+  File "<frozen codecs>", line 325, in decode
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0x80 in position 0: invalid start byte
+root@6ab78c99ebd5:/app# ls -l simple_mnist.pth
+ls: cannot access 'simple_mnist.pth': No such file or directory
+root@6ab78c99ebd5:/app# cat simple_mnist.pth
+cat: simple_mnist.pth: No such file or directory
+root@6ab78c99ebd5:/app#

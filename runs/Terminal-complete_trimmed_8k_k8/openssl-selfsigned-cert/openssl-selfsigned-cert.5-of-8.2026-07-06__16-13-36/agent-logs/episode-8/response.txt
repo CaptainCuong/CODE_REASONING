@@ -1,0 +1,176 @@
+<think>
+We need to fix the Python script. The correct import for the certificate class is `from ssl import SSLCertificate` or `from ssl import X509StoreContext`. Actually, the correct class is `ssl.SSLCertificate` or `ssl.X509StoreContext`. Let's check the OpenSSL library in Python. We can use `ssl.X509StoreContext` to load the certificate and get its attributes. Alternatively, we can use `ssl.SSLCertificate` but it might not be available. Let's look at the available attributes by trying to import `ssl.SSLCertificate` and see if it works.
+
+We can also use the `cert` module from the `ssl` package: `from ssl import cert`. But earlier we saw that import failed. However, we can try `from ssl import cert` again with a different approach.
+
+Alternatively, we can use the `openssl` command to get the subject and dates and then use Python to parse the dates. Since we already have the verification.txt, we could just read that file. But the requirement is to create a Python script that verifies the certificate and prints details. We can use OpenSSL subprocess to get the subject and dates, and use the `ssl` module to load the certificate for verification.
+
+Let's write a script that:
+1. Uses subprocess to get the subject and dates (or we can use the `cert` module from the `ssl` package if available).
+2. Uses the `ssl` module to load the certificate and check if it can be loaded.
+3. Prints the required details.
+
+We'll also fix the date parsing. The OpenSSL date format is 'Jul  7 17:16:53 2027 GMT'. We can use `datetime.strptime` with format '%b %d %H:%M:%S %Y %z'.
+
+Let's write the script step by step.
+
+First, let's check what classes are available in the ssl module.
+
+We'll do a quick interactive check, but we can also just write the script and test.
+
+We'll create a new script:
+
+```python
+import ssl
+import subprocess
+import sys
+from datetime import datetime
+
+def verify_certificate():
+    cert_path = '/app/ssl/server.crt'
+    key_path = '/app/ssl/server.key'
+    
+    # Check if files exist
+    try:
+        with open(cert_path, 'r') as f:
+            cert_data = f.read()
+    except FileNotFoundError:
+        print(f'ERROR: Certificate file not found: {cert_path}')
+        sys.exit(1)
+    
+    try:
+        with open(key_path, 'r') as f:
+            key_data = f.read()
+    except FileNotFoundError:
+        print(f'ERROR: Private key file not found: {key_path}')
+        sys.exit(1)
+    
+    # Load certificate into SSL context for verification
+    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+    context.load_cert_chain(cert_path, key_path)
+    
+    # Use subprocess to get subject and dates
+    result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'], 
+                           capture_output=True, text=True)
+    subject = result.stdout.strip()
+    result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-dates'], 
+                           capture_output=True, text=True)
+    dates = result.stdout.strip()
+    
+    # Parse dates using datetime.strptime with OpenSSL format
+    # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'
+    # Use format: '%b %d %H:%M:%S %Y %z'
+    try:
+        expiration_date = datetime.strptime(dates.split('notAfter=')[1].split(',')[0].strip(), '%b %d %H:%M:%S %Y %z')
+    except ValueError:
+        # Try without timezone
+        expiration_date = datetime.strptime(dates.split('notAfter=')[1].split(',')[0].strip(), '%b %d %H:%M:%S %Y')
+    
+    # Current date
+    now = datetime.now()
+    
+    # Verify certificate is not expired
+    if expiration_date < now:
+        print('ERROR: Certificate is expired')
+        sys.exit(1)
+    
+    # Extract expiration date string in YYYY-MM-DD format
+    expiration_str = expiration_date.strftime('%Y-%m-%d')
+    
+    # Print details
+    print(f'Subject: {subject}')
+    print(f'Dates: {dates}')
+    print(f'Common Name: {subject.split(\" \")[0]}')  # This is not reliable; let's get common name differently
+    # We can extract common name from subject line
+    # Subject format: "Subject: CN=dev-internal.company.local, O=DevOps Team, C=US"
+    # We'll split by commas and take the first part after 'CN='
+    # But we can also use OpenSSL to get common name directly
+    result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'], 
+                           capture_output=True, text=True)
+    subject_lines = result.stdout.split('\\n')
+    common_name = None
+    for line in subject_lines:
+        if line.startswith(' CN='):
+            common_name = line[4:].strip()
+            break
+    
+    print(f'Common Name: {common_name}')
+    print(f'Expiration Date: {expiration_str}')
+    print('Certificate verification successful')
+
+if __name__ == '__main__':
+    verify_certificate()
+```
+
+But note: the subject string from OpenSSL is like "Subject: CN=dev-internal.company.local, O=DevOps Team, C=US". We can extract the common name by splitting.
+
+Alternatively, we can use the `ssl` module to get the common name. Let's see if we can use `ssl.SSLCertificate` or `ssl.X509StoreContext`. Let's quickly test in the terminal.
+
+We'll run a one-liner to see what's available.
+
+We'll do:
+
+```bash
+python3 -c "import ssl; print([x for x in dir(ssl) if 'cert' in x])"
+```
+
+But we can also just write the script and if it fails, we'll adjust.
+
+Let's create the script and test.
+
+We'll also fix the deprecation warning by using `ssl.PROTOCOL_TLSv1_2` (or `ssl.PROTOCOL_SSLv23` but it's deprecated). We can use `ssl.PROTOCOL_TLSv1_2` and ignore the warning.
+
+We'll now create the script and run it.
+</think>
+
+{
+  "analysis": "The script is failing due to import error for 'Certificate' from ssl. We need to use a different approach. Let's use subprocess to get the subject and dates, and use the ssl module to load the certificate for verification. We'll also fix the date parsing. We'll create a new script that uses subprocess to get the subject and dates, and uses the ssl module to load the certificate and verify it. We'll also extract the common name from the subject using simple string parsing.",
+  "plan": "1. Write a new Python script that uses subprocess to get subject and dates, and uses the ssl module to load the certificate and verify it. 2. Parse dates using datetime.strptime with the OpenSSL format. 3. Print required details. 4. Test the script. 5. Ensure all files are present and permissions correct.",
+  "commands": [
+    {
+      "keystrokes": "cat > /app/check_cert.py << 'EOF'\nimport ssl\nimport subprocess\nimport sys\nfrom datetime import datetime\n\ndef verify_certificate():\n    cert_path = '/app/ssl/server.crt'\n    key_path = '/app/ssl/server.key'\n    \n    # Check if files exist\n    try:\n        with open(cert_path, 'r') as f:\n            cert_data = f.read()\n    except FileNotFoundError:\n        print(f'ERROR: Certificate file not found: {cert_path}')\n        sys.exit(1)\n    \n    try:\n        with open(key_path, 'r') as f:\n            key_data = f.read()\n    except FileNotFoundError:\n        print(f'ERROR: Private key file not found: {key_path}')\n        sys.exit(1)\n    \n    # Load certificate into SSL context for verification\n    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)\n    context.load_cert_chain(cert_path, key_path)\n    \n    # Use subprocess to get subject and dates\n    result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'], \n                           capture_output=True, text=True)\n    subject = result.stdout.strip()\n    result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-dates'], \n                           capture_output=True, text=True)\n    dates = result.stdout.strip()\n    \n    # Parse dates using datetime.strptime with OpenSSL format\n    # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'\n    # Use format: '%b %d %H:%M:%S %Y %z'\n    try:\n        expiration_date = datetime.strptime(dates.split('notAfter=')[1].split(',')[0].strip(), '%b %d %H:%M:%S %Y %z')\n    except ValueError:\n        # Try without timezone\n        expiration_date = datetime.strptime(dates.split('notAfter=')[1].split(',')[0].strip(), '%b %d %H:%M:%S %Y')\n    \n    # Current date\n    now = datetime.now()\n    \n    # Verify certificate is not expired\n    if expiration_date < now:\n        print('ERROR: Certificate is expired')\n        sys.exit(1)\n    \n    # Extract expiration date string in YYYY-MM-DD format\n    expiration_str = expiration_date.strftime('%Y-%m-%d')\n    \n    # Extract common name from subject\n    # Subject format: \"Subject: CN=dev-internal.company.local, O=DevOps Team, C=US\"\n    # We'll split by commas and take the first part after 'CN='\n    common_name = None\n    for line in subject.split('\\n'):\n        if line.startswith(' CN='):\n            common_name = line[4:].strip()\n            break\n    \n    # Print details\n    print(f'Subject: {subject}')\n    print(f'Dates: {dates}')\n    print(f'Common Name: {common_name}')\n    print(f'Expiration Date: {expiration_str}')\n    print('Certificate verification successful')\n\nif __name__ == '__main__':\n    verify_certificate()\nEOF\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "chmod +x /app/check_cert.py\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "python3 /app/check_cert.py\n",
+      "duration": 1.0
+    },
+    {
+      "keystrokes": "echo $?\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "# Also test that verification.txt exists and contains correct info\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "cat /app/ssl/verification.txt\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "# Ensure permissions are correct (server.key should be 600)\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "ls -l /app/ssl/server.key\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "# Verify that server.pem contains both key and cert\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "head -5 /app/ssl/server.pem\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "tail -5 /app/ssl/server.pem\n",
+      "duration": 0.1
+    }
+  ],
+  "task_complete": false
+}

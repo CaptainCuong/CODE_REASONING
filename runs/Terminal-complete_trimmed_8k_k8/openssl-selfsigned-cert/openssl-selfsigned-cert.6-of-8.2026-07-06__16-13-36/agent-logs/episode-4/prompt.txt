@@ -1,0 +1,85 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@5efb3570622f:/app# cat > /app/check_cert.py << 'EOF'
+> #!/usr/bin/env python3
+> import subprocess
+> import sys
+> import os
+> from datetime import datetime, timezone
+>
+> cert_path = '/app/ssl/server.crt'
+> key_path = '/app/ssl/server.key'
+>
+> # Verify certificate exists
+> if not os.path.exists(cert_path):
+>     print(f'ERROR: Certificate file not found: {cert_path}')
+>     sys.exit(1)
+>
+> # Verify key exists
+> if not os.path.exists(key_path):
+>     print(f'ERROR: Private key file not found: {key_path}')
+>     sys.exit(1)
+>
+> # Use subprocess to verify certificate can be loaded with OpenSSL
+> # Run openssl x509 -in <cert_path> -subject
+> result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-subject'], capture_output=True, text=True)
+> if result.returncode != 0:
+>     print('ERROR: Failed to load certificate')
+>     sys.exit(1)
+>
+> # Extract subject line (first line)
+> subject_line = result.stdout.strip().split('\n')[0]
+> print(f'Subject: {subject_line}')
+>
+> # Get dates (openssl x509 -dates)
+> dates_result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-dates'], capture_output=True, text=True)
+> if dates_result.returncode != 0:
+>     print('ERROR: Failed to get date')
+>     sys.exit(1)
+>
+> # Parse dates: notBefore and notAfter
+> dates_lines = dates_result.stdout.strip().split('\n')
+> not_before = dates_lines[0].split('=')[1]
+> not_after = dates_lines[1].split('=')[1]
+>
+> # Parse date string without timezone, then assume UTC
+> def parse_date(date_str):
+>     # Remove trailing space and newline
+>     date_str = date_str.strip()
+>     # Use datetime.strptime with format: '%b %d %H:%M:%S %Y'
+>     dt = datetime.strptime(date_str, '%b %d %H:%M:%S %Y')
+>     # Assume UTC
+>     dt = dt.replace(tzinfo=timezone.utc)
+>     return dt.strftime('%Y-%m-%d')
+>
+> start_date = parse_date(not_before)
+> end_date = parse_date(not_after)
+>
+> print(f'Start date: {start_date}')
+> print(f'End date: {end_date}')
+>
+> # Also print Common Name from subject line
+> if 'CN =' in subject_line:
+>     cn_value = subject_line.split('CN = ')[1]
+>     print(f'Common Name: {cn_value}')
+>
+> print('Certificate verification successful')
+> EOF
+root@5efb3570622f:/app# python3 /app/check_cert.py
+Subject: subject=O = DevOps Team, CN = dev-internal.company.local
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 52, in <module>
+    start_date = parse_date(not_before)
+  File "/app/check_cert.py", line 47, in parse_date
+    dt = datetime.strptime(date_str, '%b %d %H:%M:%S %Y')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 458, in _strptime
+    raise ValueError("unconverted data remains: %s" %
+                      data_string[found.end():])
+ValueError: unconverted data remains:  GMT
+root@5efb3570622f:/app#

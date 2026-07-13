@@ -1,0 +1,72 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+root@3fd44eb37675:/app/langcodes# cat __init__.py | grep -n "__hash__"
+cat: __init__.py: No such file or directory
+root@3fd44eb37675:/app/langcodes# sed -n '1500,1520p' __init__.py
+sed: can't read __init__.py: No such file or directory
+root@3fd44eb37675:/app/langcodes# cp __init__.py __init__.py.backup
+cp: cannot stat '__init__.py': No such file or directory
+root@3fd44eb37675:/app/langcodes# cat > /tmp/fix_hash.py << 'EOF'
+> import sys
+> import re
+>
+> with open('__init__.py', 'r') as f:
+>     lines = f.readlines()
+>
+> # Find the __hash__ method and replace it
+> new_lines = []
+> i = 0
+> while i < len(lines):
+>     line = lines[i]
+>     if line.strip() == 'def __hash__(self) -> int:' and i+1 < len(lines):
+>         # Skip the next line (should be the broken implementation)
+>         new_lines.append('def __hash__(self) -> int:\n')
+>         new_lines.append('    return hash(self._str_tag)\n')
+>         i += 2
+>     else:
+>         new_lines.append(line)
+>         i += 1
+>
+> with open('__init__.py', 'w') as f:
+>     f.writelines(new_lines)
+> EOF
+root@3fd44eb37675:/app/langcodes# python3 /tmp/fix_hash.py
+Traceback (most recent call last):
+  File "/tmp/fix_hash.py", line 4, in <module>
+    with open('__init__.py', 'r') as f:
+FileNotFoundError: [Errno 2] No such file or directory: '__init__.py'
+root@3fd44eb37675:/app/langcodes# cat __init__.py | grep -A2 -B2 "__hash__"
+cat: __init__.py: No such file or directory
+root@3fd44eb37675:/app/langcodes# python3 -c "
+> from langcodes import Language
+> print('Testing original hash behavior...')
+> print('hash(Language.get(\"en\")):', hash(Language.get('en')))
+> print('hash(Language.get(\"en\")):', hash(Language.get('en')))
+> print('Are they equal?', hash(Language.get('en')) == hash(Language.get('en')))
+> "
+Testing original hash behavior...
+hash(Language.get("en")): 130343174815696
+hash(Language.get("en")): 130343174815696
+Are they equal? True
+root@3fd44eb37675:/app/langcodes# python3 -c "
+> import pickle
+> from langcodes import Language
+> lang1 = Language.get('en')
+> lang2 = Language.get('en')
+> print('Same object?', lang1 is lang2)
+> print('Same hash?', hash(lang1) == hash(lang2))
+> # pickle
+> with open('test_hash.bin', 'wb') as f:
+>     pickle.dump(lang1, f)
+> with open('test_hash.bin', 'rb') as f:
+>     lang3 = pickle.load(f)
+> print('Pickle loaded object is same?', lang3 is lang1)
+> print('Hash after pickle?', hash(lang3) == hash(lang1))
+> "
+Same object? True
+Same hash? True
+Pickle loaded object is same? False
+Hash after pickle? False
+root@3fd44eb37675:/app/langcodes#

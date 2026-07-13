@@ -1,0 +1,343 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@08f8266a9f21:/app/filesystem_spec# cd /app/filesystem_spec
+root@08f8266a9f21:/app/filesystem_spec# cat fsspec/asyn.py
+import asyncio
+import asyncio.events
+import functools
+import inspect
+import io
+import numbers
+import os
+import re
+import threading
+from contextlib import contextmanager
+from glob import has_magic
+from typing import TYPE_CHECKING, Iterable
+
+from .callbacks import DEFAULT_CALLBACK
+from .exceptions import FSTimeoutError
+from .implementations.local import LocalFileSystem, make_path_posix, trailing_sep
+from .spec import AbstractBufferedFile, AbstractFileSystem
+from .utils import glob_translate, is_exception, other_paths
+
+private = re.compile("_[^_]")
+iothread = [None]  # dedicated fsspec IO thread
+loop = [None]  # global event loop for any non-async instance
+_lock = None  # global lock placeholder
+get_running_loop = asyncio.get_running_loop
+
+
+def get_lock():
+    """Allocate or return a threading lock.
+
+    The lock is allocated on first use to allow setting one lock per forked process.
+    """
+    global _lock
+    if not _lock:
+        _lock = threading.Lock()
+    return _lock
+
+
+def reset_lock():
+    """Reset the global lock.
+
+    This should be called only on the init of a forked process to reset the lock to
+    None, enabling the new forked process to get a new lock.
+    """
+    global _lock
+
+    iothread[0] = None
+    loop[0] = None
+    _lock = None
+
+
+async def _runner(event, coro, result, timeout=None):
+    timeout = timeout if timeout else None  # convert 0 or 0.0 to None
+    if timeout is not None:
+        coro = asyncio.wait_for(coro, timeout=timeout)
+    try:
+        result[0] = await coro
+    except Exception as ex:
+        result[0] = ex
+    finally:
+        event.set()
+
+
+def sync(loop, func, *args, timeout=None, **kwargs):
+    """
+    Make loop run coroutine until it returns. Runs in other thread
+
+    Examples
+    --------
+    >>> fsspec.asyn.sync(fsspec.asyn.get_loop(), func, *args,
+                         timeout=timeout, **kwargs)
+    """
+    timeout = timeout if timeout else None  # convert 0 or 0.0 to None
+    # NB: if the loop is not running *yet*, it is OK to submit work
+    # and we will wait for it
+    if loop is None or loop.is_closed():
+        raise RuntimeError("Loop is not running")
+    try:
+        loop0 = asyncio.events.get_running_loop()
+        if loop0 is loop:
+            raise NotImplementedError("Calling sync() from within a running loop")
+    except NotImplementedError:
+        raise
+    except RuntimeError:
+        pass
+    coro = func(*args, **kwargs)
+    result = [None]
+    event = threading.Event()
+    asyncio.run_coroutine_threadsafe(_runner(event, coro, result, timeout), loop)
+    while True:
+        # this loops allows thread to get interrupted
+        if event.wait(1):
+            break
+        if timeout is not None:
+            timeout -= 1
+            if timeout < 0:
+                raise FSTimeoutError
+
+    return_result = result[0]
+    if isinstance(return_result, asyncio.TimeoutError):
+        # suppress asyncio.TimeoutError, raise FSTimeoutError
+        raise FSTimeoutError from return_result
+    elif isinstance(return_result, BaseException):
+        raise return_result
+    else:
+        return return_result
+
+
+def sync_wrapper(func, obj=None):
+    """Given a function, make so can be called in blocking contexts
+
+    Leave obj=None if defining within a class. Pass the instance if attaching
+    as an attribute of the instance.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        self = obj or args[0]
+        return sync(self.loop, func, *args, **kwargs)
+
+    return wrapper
+
+
+@contextmanager
+def _selector_policy():
+    original_policy = asyncio.get_event_loop_policy()
+    try:
+        if os.name == "nt" and hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+        yield
+    finally:
+        asyncio.set_event_loop_policy(original_policy)
+
+
+def get_loop():
+    """Create or return the default fsspec IO loop
+
+    The loop will be running on a separate thread.
+    """
+    if loop[0] is None:
+        with get_lock():
+            # repeat the check just in case the loop got filled between the
+            # previous two calls from another thread
+            if loop[0] is None:
+                with _selector_policy():
+                    loop[0] = asyncio.new_event_loop()
+                th = threading.Thread(target=loop[0].run_forever, name="fsspecIO")
+                th.daemon = True
+                th.start()
+                iothread[0] = th
+    return loop[0]
+
+
+if TYPE_CHECKING:
+    import resource
+
+    ResourceError = resource.error
+else:
+    try:
+        import resource
+    except ImportError:
+        resource = None
+        ResourceError = OSError
+    else:
+        ResourceError = getattr(resource, "error", OSError)
+
+_DEFAULT_BATCH_SIZE = 128
+_NOFILES_DEFAULT_BATCH_SIZE = 1280
+
+
+def _get_batch_size(nofiles=False):
+  
+[... output limited to 10000 bytes; 71 interior bytes omitted ...]
+, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+):
+    import traceback
+
+    tasks = [t for t in asyncio.tasks.all_tasks(loop[0]) if not t.done()]
+    if printout:
+        [task.print_stack() for task in tasks]
+    out = [
+        {
+            "locals": task._coro.cr_frame.f_locals,
+            "file": task._coro.cr_frame.f_code.co_filename,
+            "firstline": task._coro.cr_frame.f_code.co_firstlineno,
+            "linelo": task._coro.cr_frame.f_lineno,
+            "stack": traceback.format_stack(task._coro.cr_frame),
+            "task": task if with_task else None,
+        }
+        for task in tasks
+    ]
+    if cancel:
+        for t in tasks:
+            cbs = t._callbacks
+            t.cancel()
+            asyncio.futures.Future.set_exception(t, exc)
+            asyncio.futures.Future.cancel(t)
+            [cb[0](t) for cb in cbs]  # cancels any dependent concurrent.futures
+            try:
+                t._coro.throw(exc)  # exits coro, unless explicitly handled
+            except exc:
+                pass
+    return out
+
+
+class AbstractAsyncStreamedFile(AbstractBufferedFile):
+    # no read buffering, and always auto-commit
+    # TODO: readahead might still be useful here, but needs async version
+
+    async def read(self, length=-1):
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = -1 if length is None else int(length)
+        if self.mode != "rb":
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
+        if length == 0:
+            # don't even bother calling fetch
+            return b""
+        out = await self._fetch_range(self.loc, self.loc + length)
+        self.loc += len(out)
+        return out
+
+    async def write(self, data):
+        """
+        Write data to buffer.
+
+        Buffer only sent on flush() or if buffer is greater than
+        or equal to blocksize.
+
+        Parameters
+        ----------
+        data: bytes
+            Set of bytes to be written.
+        """
+        if self.mode not in {"wb", "ab"}:
+            raise ValueError("File not in write mode")
+        if self.closed:
+            raise ValueError("I/O operation on closed file.")
+        if self.forced:
+            raise ValueError("This file has been force-flushed, can only close")
+        out = self.buffer.write(data)
+        self.loc += out
+        if self.buffer.tell() >= self.blocksize:
+            await self.flush()
+        return out
+
+    async def close(self):
+        """Close file
+
+        Finalizes writes, discards cache
+        """
+        if getattr(self, "_unclosable", False):
+            return
+        if self.closed:
+            return
+        if self.mode == "rb":
+            self.cache = None
+        else:
+            if not self.forced:
+                await self.flush(force=True)
+
+            if self.fs is not None:
+                self.fs.invalidate_cache(self.path)
+                self.fs.invalidate_cache(self.fs._parent(self.path))
+
+        self.closed = True
+
+    async def flush(self, force=False):
+        if self.closed:
+            raise ValueError("Flush on closed file")
+        if force and self.forced:
+            raise ValueError("Force flush cannot be called more than once")
+        if force:
+            self.forced = True
+
+        if self.mode not in {"wb", "ab"}:
+            # no-op to flush on read-mode
+            return
+
+        if not force and self.buffer.tell() < self.blocksize:
+            # Defer write on small block
+            return
+
+        if self.offset is None:
+            # Initialize a multipart upload
+            self.offset = 0
+            try:
+                await self._initiate_upload()
+            except:
+                self.closed = True
+                raise
+
+        if await self._upload_chunk(final=force) is not False:
+            self.offset += self.buffer.seek(0, 2)
+            self.buffer = io.BytesIO()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+
+    async def _fetch_range(self, start, end):
+        raise NotImplementedError
+
+    async def _initiate_upload(self):
+        pass
+
+    async def _upload_chunk(self, final=False):
+        raise NotImplementedError
+root@08f8266a9f21:/app/filesystem_spec#

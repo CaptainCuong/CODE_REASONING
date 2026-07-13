@@ -1,0 +1,127 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@41626f833e6f:/app# head -30 /app/graphene.dat
+47183,554644    19261,547207
+46588,360019    19266,089699
+46008,191298    19077,996963
+45442,488736    19173,287322
+44890,718036    19501,518253
+44352,368927    19506,586203
+43826,959593    19752,431144
+43314,029137    19812,863021
+42813,138290    19678,348151
+42323,866373    19764,871128
+41845,813826    19360,099292
+41378,600916    19413,554878
+40921,863181    19626,191780
+40475,250679    19704,066336
+40038,430487    19495,727898
+39611,084116    19672,573559
+39192,908278    19538,763458
+38783,609488    19344,943112
+38382,908122    19510,307527
+37990,536178    19552,152695
+37606,236678    19568,884582
+37229,764497    19605,714542
+36860,880256    19652,302102
+36499,358232    19518,303269
+36144,980263    19684,212843
+35797,536721    19599,237174
+35456,826102    19666,264313
+35122,653398    19895,771042
+34794,833482    19781,231391
+34473,186962    19931,483503
+root@41626f833e6f:/app# wc -l /app/graphene.dat
+3565 /app/graphene.dat
+root@41626f833e6f:/app# cat > /app/fit.py << 'EOF'
+> import numpy as np
+> import json
+> from scipy import stats
+>
+> def read_data(filename):
+>     with open(filename, 'r') as f:
+>         lines = f.readlines()
+>     # Assume first line is header
+>     header = lines[0].strip().split(',')
+>     print('Header:', header)
+>     data = []
+>     for line in lines[1:]:
+>         line = line.strip()
+>         if line:
+>             x, y = map(float, line.split(','))
+>             data.append((x, y))
+>     return np.array(data, dtype=np.float64).T
+>
+> def fit_peak(x, y):
+>     # Fit a single Lorentzian
+>     # Use scipy.stats.fit? Not directly. We'll use minimize.
+>     from scipy.optimize import minimize
+>     def lorenzian(params, x):
+>         x0, gamma, amp, off = params
+>         return amp / (1 + (x - x0)**2 / gamma**2) + off
+>     # Initial guess
+>     x0 = np.mean(x)
+>     gamma = np.std(x) * 3
+>     amp = np.max(y) - np.min(y)
+>     off = np.min(y)
+>     # We need to adjust for offset
+>     # Instead, we can fit with scipy.stats.norm.pdf? Not.
+>     # Simpler: use scipy.linalg.lstsq? Not.
+>     # Let's use minimize with bounds.
+>     bounds = [(x.min(), x.max()), (0, None), (0, None), (None, None)]
+>     result = minimize(lambda p: np.sum((lorenzian(p, x) - y)**2), [x0, gamma, amp, off], bounds=bounds)
+>     return result.x
+>
+> x, y = read_data('/app/graphene.dat')
+> print('Data shape:', x.shape)
+> print('First few x:', x[:5])
+> print('First few y:', y[:5])
+>
+> # Fit G peak (maybe lower wavenumber)
+> g_params = fit_peak(x, y)
+> print('G peak parameters:', g_params)
+>
+> # For 2D, we need to identify the second peak.
+> # We can split by finding local maxima.
+> local_max = np.where(np.diff(np.append([False], np.abs(np.diff(y)) > np.abs(np.diff(y)[1:]))))
+> print('Local maxima indices:', local_max)
+> # Assume two maxima.
+> peak1 = local_max[0]
+> peak2 = local_max[1]
+> x1 = x[peak1]
+> y1 = y[peak1]
+> x2 = x[peak2]
+> y2 = y[peak2]
+> print('Peak1 (G):', x1, y1)
+> print('Peak2 (2D):', x2, y2)
+>
+> # Fit each
+> params1 = fit_peak(x, y)
+> params2 = fit_peak(x, y)
+> print('Params1:', params1)
+> print('Params2:', params2)
+>
+> # Write results
+> results = {
+>     'G': {
+>         'x0': float(params1[0]),
+>         'gamma': float(params1[1]),
+>         'amplitude': float(params1[2]),
+>         'offset': float(params1[3])
+>     },
+>     '2D': {
+>         'x0': float(params2[0]),
+>         'gamma': float(params2[1]),
+>         'amplitude': float(params2[2]),
+>         'offset': float(params2[3])
+>     }
+> }
+>
+> with open('/app/results.json', 'w') as f:
+>     json.dump(results, f, indent=2)
+> print('Results written to results.json')
+> EOF
+root@41626f833e6f:/app#

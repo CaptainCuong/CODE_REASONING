@@ -1,0 +1,739 @@
+root@2153accfc7b8:/app# ls -la
+total 0
+drwxr-xr-x 1 root root 27 Jul  7 18:33 .
+drwxr-xr-x 1 root root 57 Jul  7 18:52 ..
+drwxr-xr-x 1 root root 30 Jul  7 18:33 logs
+drwxr-xr-x 2 root root 10 Jul  7 18:33 reports
+drwxr-xr-x 1 root root 34 Jul  7 18:33 rules
+root@2153accfc7b8:/app# find /app -type f -name '*.json' -o -name '*.log' -o -name '*.sh' 2>/dev/null | head -20
+/app/rules/detection_rules.json
+/app/logs/http.log
+/app/logs/auth.log
+root@2153accfc7b8:/app# cat /app/rules/detection_rules.json
+{
+  "rules": [
+    {
+      "id": "SSH-BRUTE-FORCE",
+      "description": "SSH brute force attempt",
+      "pattern": "Failed password for",
+      "threshold": 5,
+      "timeframe": 60,
+      "severity": "high"
+    },
+    {
+      "id": "WEB-SCAN",
+      "description": "Web server scanning activity",
+      "pattern": "GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php",
+      "threshold": 3,
+      "timeframe": 300,
+      "severity": "medium"
+    },
+    {
+      "id": "INVALID-USER",
+      "description": "Login attempts with invalid users",
+      "pattern": "invalid user",
+      "threshold": 2,
+      "timeframe": 300,
+      "severity": "low"
+    },
+    {
+      "id": "SUDO-COMMAND",
+      "description": "Sudo command execution",
+      "pattern": "sudo:.*COMMAND=",
+      "threshold": 1,
+      "timeframe": 3600,
+      "severity": "info"
+    }
+  ]
+}
+root@2153accfc7b8:/app# head -5 /app/logs/auth.log
+Apr 10 08:12:33 server sshd[1234]: Accepted publickey for admin from 192.168.1.5 port 49123
+Apr 10 08:15:45 server sshd[1235]: Failed password for root from 45.32.67.89 port 54321
+Apr 10 08:15:48 server sshd[1235]: Failed password for root from 45.32.67.89 port 54322
+Apr 10 08:15:51 server sshd[1235]: Failed password for root from 45.32.67.89 port 54323
+Apr 10 08:15:54 server sshd[1235]: Failed password for root from 45.32.67.89 port 54324
+root@2153accfc7b8:/app# head -5 /app/logs/http.log
+192.168.1.5 - - [10/Apr/2023:08:30:42 +0000] "GET /index.html HTTP/1.1" 200 4523 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:15 +0000] "GET /admin HTTP/1.1" 403 1234 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:18 +0000] "GET /phpmyadmin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:20 +0000] "GET /wp-admin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:22 +0000] "GET /manager/html HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+root@2153accfc7b8:/app# wc -l /app/logs/auth.log /app/logs/http.log
+  14 /app/logs/auth.log
+  14 /app/logs/http.log
+  28 total
+root@2153accfc7b8:/app# tail -5 /app/logs/auth.log
+Apr 10 11:45:10 server sudo: devuser : TTY=pts/1 ; PWD=/var/www ; USER=root ; COMMAND=/usr/bin/vim /etc/nginx/nginx.conf
+Apr 10 12:57:45 server sshd[1245]: Accepted password for guest from 192.168.2.10 port 52123
+Apr 10 13:10:22 server sshd[1250]: Failed password for invalid user admin123 from 198.51.100.23 port 49222
+Apr 10 13:10:25 server sshd[1250]: Failed password for invalid user admin123 from 198.51.100.23 port 49223
+Apr 10 14:25:33 server sudo: guest : command not allowed ; TTY=pts/3 ; PWD=/home/guest ; USER=root ; COMMAND=/usr/bin/less /var/log/auth.log
+root@2153accfc7b8:/app# tail -5 /app/logs/http.log
+192.168.1.5 - - [10/Apr/2023:14:33:18 +0000] "GET /documentation HTTP/1.1" 200 12532 "-" "Mozilla/5.0"
+8.8.8.8 - - [10/Apr/2023:14:35:22 +0000] "HEAD / HTTP/1.1" 200 0 "-" "curl/7.68.0"
+127.0.0.1 - - [10/Apr/2023:14:40:12 +0000] "GET /health HTTP/1.1" 200 42 "-" "Monitoring/1.0"
+45.32.67.89 - - [10/Apr/2023:15:12:35 +0000] "GET /.env HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+45.32.67.89 - - [10/Apr/2023:15:12:38 +0000] "GET /config.php HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+root@2153accfc7b8:/app# mkdir -p /app/scripts
+root@2153accfc7b8:/app# cd /app/scripts
+root@2153accfc7b8:/app/scripts# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> AUTH_LOG="$LOG_DIR/auth.log"
+> HTTP_LOG="$LOG_DIR/http.log"
+> ALERT_OUTPUT="/app/alert.json"
+> REPORT_OUTPUT="/app/report.json"
+>
+> # Read rules into associative arrays
+> RULES=()
+> RULE_ID=""
+> RULE_PATTERN=""
+> RULE_THRESHOLD=""
+> RULE_TIMEFRAME=""
+> RULE_SEVERITY=""
+>
+> # Function to parse JSON and store rules
+> parse_rules() {
+>     local json_file="$1"
+>     if [[ ! -f "$json_file" ]]; then
+>         echo "Rules file not found: $json_file"
+>         exit 1
+>     fi
+>     # Use jq if available, else fallback to grep/sed
+>     if command -v jq >/dev/null 2>&1; then
+>         jq -r '.rules[] | "\(.id) \(.pattern) \(.threshold) \(.timeframe) \(.severity)"' "$json_file" > /tmp/rules.txt
+>     else
+>         # Fallback: simple parsing (not robust)
+>         echo "jq not installed, using simple parsing (may be inaccurate)"
+>         grep -A5 '"rules"' "$json_file" | grep -E '"id|pattern|threshold|timeframe|severity"' | sed -n 'N;N;N;N;s/\n/ /p'
+>     fi
+> }
+>
+> # Function to extract IPs from a line based on rule pattern
+> extract_ips() {
+>     local line="$1"
+>     local pattern="$2"
+>     # Use grep -o to find IPs; pattern may contain spaces
+>     # We'll use a simple regex for IP addresses
+>     grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$line" | sort -u
+> }
+>
+> # Main detection logic
+> detect() {
+>     parse_rules "$RULES_FILE"
+>     while IFS= read -r rule_line; do
+>         # Simple parsing: assume format "id pattern threshold timeframe severity"
+>         rule_id=$(echo "$rule_line" | awk '{print $1}')
+>         rule_pattern=$(echo "$rule_line" | awk '{print $2}')
+>         rule_threshold=$(echo "$rule_line" | awk '{print $3}')
+>         rule_timeframe=$(echo "$rule_line" | awk '{print $4}')
+>         rule_severity=$(echo "$rule_line" | awk '{print $5}')
+>
+>         # Count matches in auth.log
+>         auth_count=$(grep -c -E "$rule_pattern" "$AUTH_LOG")
+>         # Count matches in http.log
+>         http_count=$(grep -c -E "$rule_pattern" "$HTTP_LOG")
+>         total_matches=$((auth_count + http_count))
+>
+>         # If total matches >= threshold, record
+>         if [[ $total_matches -ge $rule_threshold ]]; then
+>             # Collect unique IPs
+>             auth_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$AUTH_LOG" | grep -E "$rule_pattern" | sort -u)
+>             http_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$HTTP_LOG" | grep -E "$rule_pattern" | sort -u)
+>             # Combine unique IPs
+>             all_ips=$(echo "$auth_ips" "$http_ips" | sort -u)
+>             # Build IPs string
+>             ips_str=""
+>             if [[ -n "$all_ips" ]]; then
+>                 ips_str=$(echo "$all_ips" | tr '\n' ',' | sed 's/,$//')
+>             fi
+>             # Add to alerts array
+>             alerts+=("$rule_id $rule_severity $total_matches $ips_str")
+>             # For statistics
+>             stats+=("$rule_id $total_matches")
+>         fi
+>     done < /tmp/rules.txt
+>
+>     # Generate alert.json
+>     generate_alert_json
+>     # Generate report.json
+>     generate_report_json
+> }
+>
+> # Generate alert.json
+> generate_alert_json() {
+>     local timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+>     echo '{"timestamp":"'$timestamp'","alerts":[' > "$ALERT_OUTPUT"
+>     local first=1
+>     for alert in "${alerts[@]}"; do
+>         if [[ $first -eq 1 ]]; then
+>             first=0
+>         else
+>             echo ',' >> "$ALERT_OUTPUT"
+>         fi
+>         # Split alert into parts
+>         local id=${alert%% *}
+>         local severity=${alert#* }
+>         local severity=${severity%% *}
+>         local matches=${alert#* }
+>         local matches=${matches%% *}
+>         local ips=${alert#* }
+>         ips=${ips%% *}
+>         echo '  {"id":"'$id'","severity":"'$severity'","matches":'$matches',"ips":"'$ips'"}' >> "$ALERT_OUTPUT"
+>     done
+>     echo '  ]}' >> "$ALERT_OUTPUT"
+> }
+>
+> # Generate report.json
+> generate_report_json() {
+>     local timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+>     echo '{"timestamp":"'$timestamp'","events":[' > "$REPORT_OUTPUT"
+>     local first=1
+>     for alert in "${alerts[@]}"; do
+>         if [[ $first -eq 1 ]]; then
+>             first=0
+>         else
+>             echo ',' >> "$REPORT_OUTPUT"
+>         fi
+>         local id=${alert%% *}
+>         local severity=${alert#* }
+>         local severity=${severity%% *}
+>         local matches=${alert#* }
+>         local matches=${matches%% *}
+>         local ips=${alert#* }
+>         ips=${ips%% *}
+>         echo '  {"id":"'$id'","severity":"'$severity'","matches":'$matches',"ips":"'$ips'"}' >> "$REPORT_OUTPUT"
+>     done
+>     echo '  ],"statistics":{' >> "$REPORT_OUTPUT"
+>     local first_stat=1
+>     for stat in "${stats[@]}"; do
+>         if [[ $first_stat -eq 1 ]]; then
+>             first_stat=0
+>         else
+>             echo ',' >> "$REPORT_OUTPUT"
+>         fi
+>         local rule_id=${stat%% *}
+>         local count=${stat#* }
+>         count=${count%% *}
+>         echo '    "'$rule_id'":'$count >> "$REPORT_OUTPUT"
+>     done
+>     echo '  }}' >> "$REPORT_OUTPUT"
+> }
+>
+> # Execute detection
+> detect
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x intrusion_detector.sh
+root@2153accfc7b8:/app/scripts# cat > response.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> AUTH_LOG="$LOG_DIR/auth.log"
+> HTTP_LOG="$LOG_DIR/http.log"
+>
+> # Function to extract IPs from a line (simple regex)
+> extract_ips() {
+>     local line="$1"
+>     grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$line" | sort -u
+> }
+>
+> # Function to extract IPs for a given rule from logs
+> extract_ips_for_rule() {
+>     local rule_id="$1"
+>     # Map rule id to pattern
+>     case "$rule_id" in
+>         "SSH-BRUTE-FORCE") pattern="Failed password for" ;;
+>         "WEB-SCAN") pattern="GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php" ;;
+>         "INVALID-USER") pattern="invalid user" ;;
+>         "SUDO-COMMAND") pattern="sudo:.*COMMAND=" ;;
+>         *) echo "Unknown rule";;
+>     esac
+>     if [[ -z "$pattern" ]]; then
+>         echo "Pattern not found for rule $rule_id"
+>         return 1
+>     fi
+>     # Combine IPs from both logs
+>     auth_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$AUTH_LOG" | grep -E "$pattern" | sort -u)
+>     http_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$HTTP_LOG" | grep -E "$pattern" | sort -u)
+>     echo "$auth_ips $http_ips"
+> }
+>
+> # Function to generate block rule (just a comment)
+> generate_block_rule() {
+>     local ip="$1"
+>     echo "# Generated block rule for IP $ip" > /dev/null
+>     # For actual firewall, you would add a rule to iptables or similar.
+>     echo "# Example: iptables -A INPUT -s $ip -j DROP" >> /dev/null
+> }
+>
+> # Function to extract activity for a given IP
+> extract_activity() {
+>     local ip="$1"
+>     local auth_lines=$(grep -E "^[^#]*$ip" "$AUTH_LOG" 2>/dev/null)
+>     local http_lines=$(grep -E " $ip " "$HTTP_LOG" 2>/dev/null)
+>     echo "Activity for IP $ip from auth.log:"
+>     echo "$auth_lines"
+>     echo "\nActivity from http.log:"
+>     echo "$http_lines"
+>     # Also check for suspicious activities per rule
+>     echo "\nSuspicious activities detected:"
+>     for rule_id in "SSH-BRUTE-FORCE" "WEB-SCAN" "INVALID-USER" "SUDO-COMMAND"; do
+>         # Check if IP appears in matches for that rule
+>         # We'll just grep the logs for the pattern and see if IP appears
+>         case "$rule_id" in
+>             "SSH-BRUTE-FORCE") pattern="Failed password for" ;;
+>             "WEB-SCAN") pattern="GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php" ;;
+>             "INVALID-USER") pattern="invalid user" ;;
+>             "SUDO-COMMAND") pattern="sudo:.*COMMAND=" ;;
+>         esac
+>         if grep -q "$pattern" "$AUTH_LOG" 2>/dev/null; then
+>             # Check if IP appears in that line
+>             if grep -q " $ip " "$AUTH_LOG" 2>/dev/null || grep -q "from $ip" "$AUTH_LOG" 2>/dev/null; then
+>                 echo "  - $rule_id: Suspicious activity detected"
+>             fi
+>         fi
+>         if grep -q "$pattern" "$HTTP_LOG" 2>/dev/null; then
+>             if grep -q " $ip " "$HTTP_LOG" 2>/dev/null; then
+>                 echo "  - $rule_id: Suspicious activity detected"
+>             fi
+>         fi
+>     done
+> }
+>
+> # Main
+> if [[ $# -eq 0 ]]; then
+>     echo "Usage: $0 <IP>"
+>     exit 1
+> fi
+>
+> IP="$1"
+> # Validate IP format
+> if [[ ! "$IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+>     echo "Invalid IP format"
+>     exit 1
+> fi
+>
+> # Generate block rule
+> generate_block_rule "$IP"
+> # Extract activity
+> extract_activity "$IP"
+> # Create incident report
+> TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+> REPORT_FILE="/app/incident_${IP}_${TIMESTAMP}.txt"
+> echo "Incident Report for IP $IP" > "$REPORT_FILE"
+> echo "Generated at $TIMESTAMP" >> "$REPORT_FILE"
+> echo "=" >> "$REPORT_FILE"
+> # Include extracted activity
+> extract_activity "$IP" >> "$REPORT_FILE"
+> # Also include extracted IPs for each rule
+> echo "\nIPs associated with each rule:" >> "$REPORT_FILE"
+> for rule_id in "SSH-BRUTE-FORCE" "WEB-SCAN" "INVALID-USER" "SUDO-COMMAND"; do
+>     ips=$(extract_ips_for_rule "$rule_id" 2>/dev/null)
+>     if [[ -n "$ips" ]]; then
+>         echo "  $rule_id: $ips" >> "$REPORT_FILE"
+>     else
+>         echo "  $rule_id: None" >> "$REPORT_FILE"
+>     fi
+> done
+>
+> echo "\nBlock rule generated." >> "$REPORT_FILE"
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x response.sh
+root@2153accfc7b8:/app/scripts# cd /app
+root@2153accfc7b8:/app# ls -la scripts/
+total 12
+drwxr-xr-x 2 root root   66 Jul  7 18:53 .
+drwxr-xr-x 1 root root   29 Jul  7 18:53 ..
+-rwxr-xr-x 1 root root 4928 Jul  7 18:53 intrusion_detector.sh
+-rwxr-xr-x 1 root root 4002 Jul  7 18:53 response.sh
+root@2153accfc7b8:/app# ./scripts/intrusion_detector.sh
+root@2153accfc7b8:/app# cat /app/alert.json
+cat: /app/alert.json: No such file or directory
+root@2153accfc7b8:/app# cat /app/report.json
+cat: /app/report.json: No such file or directory
+root@2153accfc7b8:/app# which jq
+/usr/bin/jq
+root@2153accfc7b8:/app# cd /app/scripts
+root@2153accfc7b8:/app/scripts# ./intrusion_detector.sh 2>&1
+root@2153accfc7b8:/app/scripts# echo $?
+1
+root@2153accfc7b8:/app/scripts# ls -la /tmp/rules.txt 2>/dev/null || echo 'rules.txt not found'
+-rw-r--r-- 1 root root 230 Jul  7 18:53 /tmp/rules.txt
+root@2153accfc7b8:/app/scripts# cat /tmp/rules.txt 2>/dev/null || echo 'no file'
+SSH-BRUTE-FORCE Failed password for 5 60 high
+WEB-SCAN GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php 3 300 medium
+INVALID-USER invalid user 2 300 low
+SUDO-COMMAND sudo:.*COMMAND= 1 3600 info
+root@2153accfc7b8:/app/scripts# head -20 /app/logs/auth.log
+Apr 10 08:12:33 server sshd[1234]: Accepted publickey for admin from 192.168.1.5 port 49123
+Apr 10 08:15:45 server sshd[1235]: Failed password for root from 45.32.67.89 port 54321
+Apr 10 08:15:48 server sshd[1235]: Failed password for root from 45.32.67.89 port 54322
+Apr 10 08:15:51 server sshd[1235]: Failed password for root from 45.32.67.89 port 54323
+Apr 10 08:15:54 server sshd[1235]: Failed password for root from 45.32.67.89 port 54324
+Apr 10 08:15:57 server sshd[1235]: Failed password for root from 45.32.67.89 port 54325
+Apr 10 08:16:00 server sshd[1235]: Failed password for root from 45.32.67.89 port 54326
+Apr 10 09:22:15 server sudo: admin : TTY=pts/0 ; PWD=/home/admin ; USER=root ; COMMAND=/bin/ls /root
+Apr 10 10:33:21 server sshd[1238]: Accepted publickey for devuser from 10.0.0.15 port 51442
+Apr 10 11:45:10 server sudo: devuser : TTY=pts/1 ; PWD=/var/www ; USER=root ; COMMAND=/usr/bin/vim /etc/nginx/nginx.conf
+Apr 10 12:57:45 server sshd[1245]: Accepted password for guest from 192.168.2.10 port 52123
+Apr 10 13:10:22 server sshd[1250]: Failed password for invalid user admin123 from 198.51.100.23 port 49222
+Apr 10 13:10:25 server sshd[1250]: Failed password for invalid user admin123 from 198.51.100.23 port 49223
+Apr 10 14:25:33 server sudo: guest : command not allowed ; TTY=pts/3 ; PWD=/home/guest ; USER=root ; COMMAND=/usr/bin/less /var/log/auth.log
+root@2153accfc7b8:/app/scripts# grep -c 'Failed password for' /app/logs/auth.log
+8
+root@2153accfc7b8:/app/scripts# grep -c 'sudo:' /app/logs/auth.log
+3
+root@2153accfc7b8:/app/scripts# cd /app/scripts
+root@2153accfc7b8:/app/scripts# cat > test_rules.sh << 'EOF'
+> #!/bin/bash
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> AUTH_LOG="$LOG_DIR/auth.log"
+> HTTP_LOG="$LOG_DIR/http.log"
+>
+> if command -v jq >/dev/null 2>&1; then
+>     jq -r '.rules[] | "\(.id) \(.pattern) \(.threshold) \(.timeframe) \(.severity)"' "$RULES_FILE" > /tmp/rules.txt
+> fi
+>
+> while IFS= read -r rule_line; do
+>     rule_id=$(echo "$rule_line" | awk '{print $1}')
+>     rule_pattern=$(echo "$rule_line" | awk '{print $2}')
+>     auth_count=$(grep -c -E "$rule_pattern" "$AUTH_LOG")
+>     http_count=$(grep -c -E "$rule_pattern" "$HTTP_LOG")
+>     total=$((auth_count + http_count))
+>     echo "Rule: $rule_id, Pattern: $rule_pattern, Auth matches: $auth_count, Http matches: $http_count, Total: $total"
+>     if [[ $total -ge 0 ]]; then
+>         auth_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$AUTH_LOG" | grep -E "$rule_pattern" | sort -u)
+>         http_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$HTTP_LOG" | grep -E "$rule_pattern" | sort -u)
+>         echo "  Auth IPs: $auth_ips"
+>         echo "  Http IPs: $http_ips"
+>         combined=$(echo "$auth_ips" "$http_ips" | sort -u)
+>         echo "  Combined unique IPs: $combined"
+>     fi
+> done < /tmp/rules.txt
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x test_rules.sh
+root@2153accfc7b8:/app/scripts# ./test_rules.sh
+Rule: SSH-BRUTE-FORCE, Pattern: Failed, Auth matches: 8, Http matches: 0, Total: 8
+  Auth IPs:
+  Http IPs:
+  Combined unique IPs:
+Rule: WEB-SCAN, Pattern: GET, Auth matches: 0, Http matches: 11, Total: 11
+  Auth IPs:
+  Http IPs:
+  Combined unique IPs:
+Rule: INVALID-USER, Pattern: invalid, Auth matches: 2, Http matches: 0, Total: 2
+  Auth IPs:
+  Http IPs:
+  Combined unique IPs:
+Rule: SUDO-COMMAND, Pattern: sudo:.*COMMAND=, Auth matches: 3, Http matches: 0, Total: 3
+  Auth IPs:
+  Http IPs:
+  Combined unique IPs:
+root@2153accfc7b8:/app/scripts# cat > test_patterns.sh << 'EOF'
+> #!/bin/bash
+> LOG_DIR="/app/logs"
+> AUTH_LOG="$LOG_DIR/auth.log"
+> HTTP_LOG="$LOG_DIR/http.log"
+>
+> # SSH-BRUTE-FORCE
+> pattern="Failed password for"
+> echo "SSH-BRUTE-FORCE:"
+> grep -c -E "$pattern" "$AUTH_LOG"
+> grep -c -E "$pattern" "$HTTP_LOG"
+> # WEB-SCAN
+> pattern="GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php"
+> echo "WEB-SCAN:"
+> grep -c -E "$pattern" "$AUTH_LOG"
+> grep -c -E "$pattern" "$HTTP_LOG"
+> # INVALID-USER
+> pattern="invalid user"
+> echo "INVALID-USER:"
+> grep -c -E "$pattern" "$AUTH_LOG"
+> grep -c -E "$pattern" "$HTTP_LOG"
+> # SUDO-COMMAND
+> pattern="sudo:.*COMMAND="
+> echo "SUDO-COMMAND:"
+> grep -c -E "$pattern" "$AUTH_LOG"
+> grep -c -E "$pattern" "$HTTP_LOG"
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x test_patterns.sh
+root@2153accfc7b8:/app/scripts# ./test_patterns.sh
+SSH-BRUTE-FORCE:
+8
+0
+WEB-SCAN:
+0
+6
+INVALID-USER:
+2
+0
+SUDO-COMMAND:
+3
+0
+root@2153accfc7b8:/app/scripts# cd /app/scripts
+root@2153accfc7b8:/app/scripts# bash -x ./intrusion_detector.sh 2>&1 | head -30
++ set -e
++ LOG_DIR=/app/logs
++ RULES_FILE=/app/rules/detection_rules.json
++ AUTH_LOG=/app/logs/auth.log
++ HTTP_LOG=/app/logs/http.log
++ ALERT_OUTPUT=/app/alert.json
++ REPORT_OUTPUT=/app/report.json
++ RULES=()
++ RULE_ID=
++ RULE_PATTERN=
++ RULE_THRESHOLD=
++ RULE_TIMEFRAME=
++ RULE_SEVERITY=
++ detect
++ parse_rules /app/rules/detection_rules.json
++ local json_file=/app/rules/detection_rules.json
++ [[ ! -f /app/rules/detection_rules.json ]]
++ command -v jq
++ jq -r '.rules[] | "\(.id) \(.pattern) \(.threshold) \(.timeframe) \(.severity)"' /app/rules/detection_rules.json
++ IFS=
++ read -r rule_line
+++ echo 'SSH-BRUTE-FORCE Failed password for 5 60 high'
+++ awk '{print $1}'
++ rule_id=SSH-BRUTE-FORCE
+++ echo 'SSH-BRUTE-FORCE Failed password for 5 60 high'
+++ awk '{print $2}'
++ rule_pattern=Failed
+++ echo 'SSH-BRUTE-FORCE Failed password for 5 60 high'
+++ awk '{print $3}'
++ rule_threshold=password
+root@2153accfc7b8:/app/scripts# cd /app/scripts
+root@2153accfc7b8:/app/scripts# cat > intrusion_detector_fixed.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> AUTH_LOG="$LOG_DIR/auth.log"
+> HTTP_LOG="$LOG_DIR/http.log"
+> ALERT_OUTPUT="/app/alert.json"
+> REPORT_OUTPUT="/app/report.json"
+>
+> # Read rules into associative arrays
+> RULES=()
+> RULE_ID=""
+> RULE_PATTERN=""
+> RULE_THRESHOLD=""
+> RULE_TIMEFRAME=""
+> RULE_SEVERITY=""
+>
+> # Function to parse JSON and store rules
+> parse_rules() {
+>     local json_file="$1"
+>     if [[ ! -f "$json_file" ]]; then
+>         echo "Rules file not found: $json_file"
+>         exit 1
+>     fi
+>     # Use jq if available, else fallback to grep/sed
+>     if command -v jq >/dev/null 2>&1; then
+>         # Output id|pattern|threshold|timeframe|severity separated by '|'
+>         jq -r '.rules[] | "\(.id)|\(.pattern)|\(.threshold)|\(.timeframe)|\(.severity)"' "$json_file" > /tmp/rules.txt
+>     else
+>         echo "jq not installed, using simple parsing (may be inaccurate)"
+>         grep -A5 '"rules"' "$json_file" | grep -E '"id|pattern|threshold|timeframe|severity"' | sed -n 'N;N;N;N;s/\n/ /p'
+>     fi
+> }
+>
+> # Function to extract IPs from a line based on rule pattern
+> extract_ips() {
+>     local line="$1"
+>     local pattern="$2"
+>     grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$line" | sort -u
+> }
+>
+> # Main detection logic
+> detect() {
+>     parse_rules "$RULES_FILE"
+>     while IFS= read -r rule_line; do
+>         # Split by '|'
+>         rule_id=$(echo "$rule_line" | cut -d'|' -f1)
+>         rule_pattern=$(echo "$rule_line" | cut -d'|' -f2)
+>         rule_threshold=$(echo "$rule_line" | cut -d'|' -f3)
+>         rule_timeframe=$(echo "$rule_line" | cut -d'|' -f4)
+>         rule_severity=$(echo "$rule_line" | cut -d'|' -f5)
+>         echo "Rule: $rule_id, Pattern: $rule_pattern, Threshold: $rule_threshold, Timeframe: $rule_timeframe, Severity: $rule_severity"
+>         # Count matches in auth.log
+>         auth_count=$(grep -c -E "$rule_pattern" "$AUTH_LOG")
+>         # Count matches in http.log
+>         http_count=$(grep -c -E "$rule_pattern" "$HTTP_LOG")
+>         total_matches=$((auth_count + http_count))
+>         echo "  Auth matches: $auth_count, Http matches: $http_count, Total: $total_matches"
+>         # If total matches >= threshold, record
+>         if [[ $total_matches -ge $rule_threshold ]]; then
+>             # Collect unique IPs
+>             auth_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$AUTH_LOG" | grep -E "$rule_pattern" | sort -u)
+>             http_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$HTTP_LOG" | grep -E "$rule_pattern" | sort -u)
+>             # Combine unique IPs
+>             all_ips=$(echo "$auth_ips" "$http_ips" | sort -u)
+>             # Build IPs string
+>             ips_str=""
+>             if [[ -n "$all_ips" ]]; then
+>                 ips_str=$(echo "$all_ips" | tr '\n' ',' | sed 's/,$//')
+>             fi
+>             # Add to alerts array
+>             alerts+=("$rule_id $rule_severity $total_matches $ips_str")
+>             # For statistics
+>             stats+=("$rule_id $total_matches")
+>         fi
+>     done < /tmp/rules.txt
+>
+>     echo "Alerts array size: ${#alerts[@]}"
+>     echo "Stats array size: ${#stats[@]}"
+>     # Generate alert.json
+>     generate_alert_json
+>     # Generate report.json
+>     generate_report_json
+> }
+>
+> # Generate alert.json
+> generate_alert_json() {
+>     local timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+>     echo '{"timestamp":"'$timestamp'","alerts":[' > "$ALERT_OUTPUT"
+>     local first=1
+>     for alert in "${alerts[@]}"; do
+>         if [[ $first -eq 1 ]]; then
+>             first=0
+>         else
+>             echo ',' >> "$ALERT_OUTPUT"
+>         fi
+>         # Split alert into parts
+>         local id=${alert%% *}
+>         local severity=${alert#* }
+>         local severity=${severity%% *}
+>         local matches=${alert#* }
+>         local matches=${matches%% *}
+>         local ips=${alert#* }
+>         ips=${ips%% *}
+>         echo '  {"id":"'$id'","severity":"'$severity'","matches":'$matches',"ips":"'$ips'"}' >> "$ALERT_OUTPUT"
+>     done
+>     echo '  ]}' >> "$ALERT_OUTPUT"
+> }
+>
+> # Generate report.json
+> generate_report_json() {
+>     local timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+>     echo '{"timestamp":"'$timestamp'","events":[' > "$REPORT_OUTPUT"
+>     local first=1
+>     for alert in "${alerts[@]}"; do
+>         if [[ $first -eq 1 ]]; then
+>             first=0
+>         else
+>             echo ',' >> "$REPORT_OUTPUT"
+>         fi
+>         local id=${alert%% *}
+>         local severity=${alert#* }
+>         local severity=${severity%% *}
+>         local matches=${alert#* }
+>         local matches=${matches%% *}
+>         local ips=${alert#* }
+>         ips=${ips%% *}
+>         echo '  {"id":"'$id'","severity":"'$severity'","matches":'$matches',"ips":"'$ips'"}' >> "$REPORT_OUTPUT"
+>     done
+>     echo '  ],"statistics":{' >> "$REPORT_OUTPUT"
+>     local first_stat=1
+>     for stat in "${stats[@]}"; do
+>         if [[ $first_stat -eq 1 ]]; then
+>             first_stat=0
+>         else
+>             echo ',' >> "$REPORT_OUTPUT"
+>         fi
+>         local rule_id=${stat%% *}
+>         local count=${stat#* }
+>         count=${count%% *}
+>         echo '    "'$rule_id'":'$count >> "$REPORT_OUTPUT"
+>     done
+>     echo '  }}' >> "$REPORT_OUTPUT"
+> }
+>
+> # Execute detection
+> detect
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x intrusion_detector_fixed.sh
+root@2153accfc7b8:/app/scripts# ./intrusion_detector_fixed.sh 2>&1
+Rule: SSH-BRUTE-FORCE, Pattern: Failed password for, Threshold: 5, Timeframe: 60, Severity: high
+root@2153accfc7b8:/app/scripts# echo $?
+1
+root@2153accfc7b8:/app/scripts# ls -la /app/alert.json /app/report.json 2>/dev/null || echo 'files not found'
+files not found
+root@2153accfc7b8:/app/scripts# cat /app/alert.json 2>/dev/null || echo 'no alert.json'
+no alert.json
+root@2153accfc7b8:/app/scripts# cat /app/report.json 2>/dev/null || echo 'no report.json'
+no report.json
+root@2153accfc7b8:/app/scripts# cat /tmp/rules.txt
+SSH-BRUTE-FORCE|Failed password for|5|60|high
+WEB-SCAN|GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php|3|300|medium
+INVALID-USER|invalid user|2|300|low
+SUDO-COMMAND|sudo:.*COMMAND=|1|3600|info
+root@2153accfc7b8:/app/scripts# wc -l /tmp/rules.txt
+4 /tmp/rules.txt
+root@2153accfc7b8:/app/scripts# cd /app/scripts
+root@2153accfc7b8:/app/scripts# cat > test_parse.sh << 'EOF'
+> #!/bin/bash
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> if command -v jq >/dev/null 2>&1; then
+>     jq -r '.rules[] | "\(.id)|\(.pattern)|\(.threshold)|\(.timeframe)|\(.severity)"' "$RULES_FILE" > /tmp/rules.txt
+> fi
+> while IFS= read -r rule_line; do
+>     echo "Line: '$rule_line'"
+>     rule_id=$(echo "$rule_line" | cut -d'|' -f1)
+>     echo "  rule_id: $rule_id"
+>     break
+>   done < /tmp/rules.txt
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x test_parse.sh
+root@2153accfc7b8:/app/scripts# ./test_parse.sh
+Line: 'SSH-BRUTE-FORCE|Failed password for|5|60|high'
+  rule_id: SSH-BRUTE-FORCE
+root@2153accfc7b8:/app/scripts# cat > test_parse2.sh << 'EOF'
+> #!/bin/bash
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> if command -v jq >/dev/null 2>&1; then
+>     jq -r '.rules[] | "\(.id)|\(.pattern)|\(.threshold)|\(.timeframe)|\(.severity)"' "$RULES_FILE" > /tmp/rules.txt
+> fi
+> while IFS= read -r rule_line; do
+>     echo "Line: '$rule_line'"
+>     rule_id=$(echo "$rule_line" | cut -d'|' -f1)
+>     echo "  rule_id: $rule_id"
+> done < /tmp/rules.txt
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x test_parse2.sh
+root@2153accfc7b8:/app/scripts# ./test_parse2.sh
+Line: 'SSH-BRUTE-FORCE|Failed password for|5|60|high'
+  rule_id: SSH-BRUTE-FORCE
+Line: 'WEB-SCAN|GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php|3|300|medium'
+  rule_id: WEB-SCAN
+Line: 'INVALID-USER|invalid user|2|300|low'
+  rule_id: INVALID-USER
+Line: 'SUDO-COMMAND|sudo:.*COMMAND=|1|3600|info'
+  rule_id: SUDO-COMMAND
+root@2153accfc7b8:/app/scripts# cat /tmp/rules.txt | od -c
+0000000   S   S   H   -   B   R   U   T   E   -   F   O   R   C   E   |
+0000020   F   a   i   l   e   d       p   a   s   s   w   o   r   d
+0000040   f   o   r   |   5   |   6   0   |   h   i   g   h  \n   W   E
+0000060   B   -   S   C   A   N   |   G   E   T       /   a   d   m   i
+0000100   n   |   G   E   T       /   p   h   p   m   y   a   d   m   i
+0000120   n   |   G   E   T       /   w   p   -   a   d   m   i   n   |
+0000140   G   E   T       /   m   a   n   a   g   e   r   /   h   t   m
+0000160   l   |   G   E   T       /   .   e   n   v   |   G   E   T
+0000200   /   c   o   n   f   i   g   .   p   h   p   |   3   |   3   0
+0000220   0   |   m   e   d   i   u   m  \n   I   N   V   A   L   I   D
+0000240   -   U   S   E   R   |   i   n   v   a   l   i   d       u   s
+0000260   e   r   |   2   |   3   0   0   |   l   o   w  \n   S   U   D
+0000300   O   -   C   O   M   M   A   N   D   |   s   u   d   o   :   .
+0000320   *   C   O   M   M   A   N   D   =   |   1   |   3   6   0   0
+0000340   |   i   n   f   o  \n
+0000346
+root@2153accfc7b8:/app/scripts#

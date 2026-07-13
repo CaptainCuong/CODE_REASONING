@@ -1,0 +1,116 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@ad1135b1c941:/app/ssl# cd /app/ssl
+root@ad1135b1c941:/app/ssl# openssl req -in server.crt -subject 2>&1 | grep -E '^(subject=|valid until:)'
+root@ad1135b1c941:/app/ssl# openssl req -in server.crt -validuntil 2>&1 | grep -E '^(valid until:)'
+root@ad1135b1c941:/app/ssl# cat > /app/extract_final.py << 'EOF'
+> import subprocess
+> import re
+>
+> subject = subprocess.check_output(['openssl', 'req', '-in', 'server.crt', '-subject'], stderr=subprocess.STDOUT)
+> print('Subject output:')
+> print(subject.decode())
+> lines = subject.decode().split('\n')
+> subject_line = None
+> for line in lines:
+>     if line.startswith('subject='):
+>         subject_line = line
+>         break
+> if subject_line:
+>     print('Subject line:', subject_line)
+>     # Extract the CN value after 'CN = '.
+>     match = re.search(r'CN = (.*?)\.', subject_line)
+>     if match:
+>         print('CN:', match.group(1))
+>     else:
+>         print('No CN found')
+>
+> validuntil = subprocess.check_output(['openssl', 'req', '-in', 'server.crt', '-validuntil'], stderr=subprocess.STDOUT)
+> print('Validuntil output:')
+> print(validuntil.decode())
+> lines2 = validuntil.decode().split('\n')
+> until_line = None
+> for line in lines2:
+>     if line.startswith('valid until:'):
+>         until_line = line
+>         break
+> if until_line:
+>     print('Until line:', until_line)
+>     until_val = until_line.split(':')[1].strip()
+>     print('Until value:', until_val)
+> else:
+>     print('No valid line found')
+> EOF
+root@ad1135b1c941:/app/ssl# python3 /app/extract_final.py
+Traceback (most recent call last):
+  File "/app/extract_final.py", line 4, in <module>
+    subject = subprocess.check_output(['openssl', 'req', '-in', 'server.crt', '-subject'], stderr=subprocess.STDOUT)
+  File "/usr/local/lib/python3.13/subprocess.py", line 472, in check_output
+    return run(*popenargs, stdout=PIPE, timeout=timeout, check=True,
+           ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+               **kwargs).stdout
+               ^^^^^^^^^
+  File "/usr/local/lib/python3.13/subprocess.py", line 577, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['openssl', 'req', '-in', 'server.crt', '-subject']' returned non-zero exit status 1.
+root@ad1135b1c941:/app/ssl# cat > /app/ssl/verification.txt << 'EOF'
+> Subject: $(openssl req -in server.crt -subject 2>&1 | grep '^subject=' | cut -d: -f2 | sed 's/^\s*//;s/\s*$//')
+> Validity Dates: $(openssl req -in server.crt -validuntil 2>&1 | grep '^valid until:' | tail -1)
+> SHA-256 Fingerprint: $(openssl x509 -in server.crt -fingerprint sha256 2>&1 | grep SHA256 | cut -d' ' -f2 | sed 's/\s*$//')
+> EOF
+root@ad1135b1c941:/app/ssl# cat /app/ssl/verification.txt
+Subject: $(openssl req -in server.crt -subject 2>&1 | grep '^subject=' | cut -d: -f2 | sed 's/^\s*//;s/\s*$//')
+Validity Dates: $(openssl req -in server.crt -validuntil 2>&1 | grep '^valid until:' | tail -1)
+SHA-256 Fingerprint: $(openssl x509 -in server.crt -fingerprint sha256 2>&1 | grep SHA256 | cut -d' ' -f2 | sed 's/\s*$//')
+root@ad1135b1c941:/app/ssl# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> import os
+> from datetime import datetime
+>
+> def main():
+>     cert_path = '/app/ssl/server.pem'
+>     if not os.path.exists(cert_path):
+>         print('Certificate file does not exist')
+>         sys.exit(1)
+>
+>     try:
+>         with open(cert_path, 'rb') as f:
+>             cert_data = f.read()
+>         # Load certificate
+>         cert = ssl.Certificate.load(cert_data)
+>
+>         # Subject
+>         subject = cert.subject
+>         print(f'Subject: {subject}')
+>
+>         # Common Name
+>         common_name = subject.get('CN', 'Not found')
+>         print(f'Common Name: {common_name}')
+>
+>         # Expiration date
+>         # Using the internal module
+>         exp_time = cert.exptime  # bytes in DDMMYYYYHHMMSS format
+>         dt = datetime.strptime(exp_time.decode('ascii'), '%d%m%Y%H%M%S')
+>         print(f'Expiration Date: {dt.date()}')
+>
+>         # Fingerprint
+>         subprocess.run(['openssl', 'x509', '-in', cert_path, '-fingerprint', 'sha256'], capture_output=True)
+>
+>         print('Certificate verification successful')
+>         sys.exit(0)
+>     except Exception as e:
+>         print(f'Error: {e}')
+>         sys.exit(1)
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@ad1135b1c941:/app/ssl# python3 /app/check_cert.py
+Error: module 'ssl' has no attribute 'Certificate'
+root@ad1135b1c941:/app/ssl#

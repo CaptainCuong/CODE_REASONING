@@ -1,0 +1,83 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@a4b482cf8989:/app# ls -la /app/c4_reshard/
+total 1788
+drwxr-xr-x 3 root root      55 Jul  7 15:39 .
+drwxr-xr-x 1 root root     109 Jul  7 15:39 ..
+drwxr-xr-x 2 root root  565248 Jul  7 15:39 chunk_001
+-rw-r--r-- 1 root root 1118476 Jul  7 15:39 mapping.json
+root@a4b482cf8989:/app# find /app/c4_reshard -type f | wc -l
+9899
+root@a4b482cf8989:/app# cat > /app/split_and_distribute.py << 'EOF'
+> import os
+> import sys
+> import json
+>
+> C4_SAMPLE_DIR = '/app/c4_sample'
+> C4_RESHARD_DIR = '/app/c4_reshard'
+> CHUNK_SIZE = 100 * 1024  # 100K
+> MAX_FILES_PER_FOLD = 30
+>
+> # Remove existing c4_reshard and create fresh
+> import shutil
+> if os.path.exists(C4_RESHARD_DIR):
+>     shutil.rmtree(C4_RESHARD_DIR)
+> os.makedirs(C4_RESHARD_DIR, exist_ok=True)
+>
+> mapping = {}
+>
+> for root, dirs, files in os.walk(C4_SAMPLE_DIR):
+>     for file in files:
+>         file_path = os.path.join(root, file)
+>         if not os.path.isfile(file_path):
+>             continue
+>         rel_path = os.path.relpath(file_path, C4_SAMPLE_DIR)
+>         with open(file_path, 'rb') as f:
+>             data = f.read()
+>         chunks = []
+>         for i in range(0, len(data), CHUNK_SIZE):
+>             chunk = data[i:i+CHUNK_SIZE]
+>             chunk_id = f"{rel_path}.chunks.{i//CHUNK_SIZE:03d}"
+>             chunks.append((chunk, chunk_id))
+>         chunk_group = (len(chunks) - 1) // MAX_FILES_PER_FOLD
+>         sub_dir = os.path.join(C4_RESHARD_DIR, f'chunk_{chunk_group+1:03d}')
+>         os.makedirs(sub_dir, exist_ok=True)
+>         for chunk, chunk_id in chunks:
+>             chunk_path = os.path.join(sub_dir, chunk_id)
+>             with open(chunk_path, 'wb') as f:
+>                 f.write(chunk)
+>             mapping.setdefault(rel_path, []).append(chunk_path)
+>
+> mapping_path = os.path.join(C4_RESHARD_DIR, 'mapping.json')
+> with open(mapping_path, 'w') as f:
+>     json.dump(mapping, f, indent=2)
+>
+> print(f"Processed {len(mapping)} files.")
+> print(f"Created {len(mapping)} chunk subdirectories.")
+> EOF
+root@a4b482cf8989:/app# python3 /app/split_and_distribute.py
+find /app/c4_reshard -type f | wc -l
+ls -la /app/c4_reshard/
+du -sh /app/c4_reshard/chunk_* 2>/dev/null | head -10
+python3 -c "import json; m=json.load(open('/app/c4_reshard/mapping.json')); total=sum(len(v) for v in m.values()); print('Total chunks:', total); print('Max chu
+nks per file:', max(len(v) for v in m.values()))"
+Processed 9898 files.
+Created 9898 chunk subdirectories.
+root@a4b482cf8989:/app# find /app/c4_reshard -type f | wc -l
+11423
+root@a4b482cf8989:/app# ls -la /app/c4_reshard/
+total 3792
+drwxr-xr-x 3 root root      55 Jul  7 15:40 .
+drwxr-xr-x 1 root root     144 Jul  7 15:40 ..
+drwxr-xr-x 2 root root 2506752 Jul  7 15:40 chunk_001
+-rw-r--r-- 1 root root 1229728 Jul  7 15:40 mapping.json
+root@a4b482cf8989:/app# du -sh /app/c4_reshard/chunk_* 2>/dev/null | head -10
+802M    /app/c4_reshard/chunk_001
+root@a4b482cf8989:/app# python3 -c "import json; m=json.load(open('/app/c4_reshard/mapping.json')); total=sum(len(v) for v in m.values()); print('Total chunks:'
+, total); print('Max chunks per file:', max(len(v) for v in m.values()))"
+Total chunks: 11422
+Max chunks per file: 4
+root@a4b482cf8989:/app#

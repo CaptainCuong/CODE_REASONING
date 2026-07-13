@@ -1,0 +1,127 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@cca295a37417:/git/project# cd /git/project
+root@cca295a37417:/git/project# rm -rf .git
+root@cca295a37417:/git/project# mkdir .git
+root@cca295a37417:/git/project# cd .git
+root@cca295a37417:/git/project/.git# git init
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: will change to "main" in Git 3.0. To configure the initial branch name
+hint: to use in all of your new repositories, which will suppress this warning,
+hint: call:
+hint:
+hint: 	git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+hint:
+hint: Disable this message with "git config set advice.defaultBranchName false"
+Initialized empty Git repository in /git/project/.git/.git/
+root@cca295a37417:/git/project/.git# git config user.email "test@example.com"
+root@cca295a37417:/git/project/.git# git config user.name "Test"
+root@cca295a37417:/git/project/.git# git config securetransport false
+error: key does not contain a section: securetransport
+root@cca295a37417:/git/project/.git# git config http.password "password"
+root@cca295a37417:/git/project/.git# # Create commits for main and dev branches
+root@cca295a37417:/git/project/.git# echo 'index.html' > index.html
+root@cca295a37417:/git/project/.git# git add index.html
+root@cca295a37417:/git/project/.git# git commit -m 'main index.html'
+[master (root-commit) 6b5ace0] main index.html
+ 1 file changed, 1 insertion(+)
+ create mode 100644 index.html
+root@cca295a37417:/git/project/.git# # Create dev branch with a different file
+root@cca295a37417:/git/project/.git# echo 'dev/index.html' > dev/index.html
+bash: dev/index.html: No such file or directory
+root@cca295a37417:/git/project/.git# git add dev/index.html
+fatal: pathspec 'dev/index.html' did not match any files
+root@cca295a37417:/git/project/.git# git commit -m 'dev index.html'
+On branch master
+nothing to commit, working tree clean
+root@cca295a37417:/git/project/.git# # Create branches main and dev pointing to those commits
+root@cca295a37417:/git/project/.git# git branch main
+root@cca295a37417:/git/project/.git# git branch dev
+root@cca295a37417:/git/project/.git# # Write post-receive hook that copies the branch's index.html file to /var/www/main/index.html and /var/www/dev/index.html
+root@cca295a37417:/git/project/.git# cd .git
+root@cca295a37417:/git/project/.git/.git# mkdir -p hooks
+root@cca295a37417:/git/project/.git/.git# cat > hooks/post-receive << 'EOF'
+> #!/bin/bash
+> # This hook is triggered after a push to the repository.
+> # It deploys the main branch to /var/www/main/index.html
+> # and the dev branch to /var/www/dev/index.html
+> # Then reloads nginx to serve the new files.
+>
+> REPO="/git/project"
+> MAIN_FILE="$REPO/.git/main/index.html"
+> DEV_FILE="$REPO/.git/dev/index.html"
+> MAIN_DEST="/var/www/main/index.html"
+> DEV_DEST="/var/www/dev/index.html"
+> NGINX_CMD="/usr/bin/signal nginx reload 2>/dev/null || /usr/bin/killall nginx 2>/dev/null || true"
+>
+> # Ensure destination directories exist
+> mkdir -p "/var/www/main" "/var/www/dev"
+>
+> # Copy main branch content
+> cp "$MAIN_FILE" "$MAIN_DEST"
+> # Copy dev branch content
+> cp "$DEV_FILE" "$DEV_DEST"
+>
+> # Reload nginx
+> $NGINX_CMD
+>
+> # Print success message
+> echo "Deployment complete"
+>
+> # Exit with success code
+> exit 0
+> EOF
+root@cca295a37417:/git/project/.git/.git# chmod +x hooks/post-receive
+root@cca295a37417:/git/project/.git/.git# # Fix nginx configuration
+root@cca295a37417:/git/project/.git/.git# cat > /etc/nginx/conf.d/project.conf << 'EOF'
+> server {
+>     server_name localhost;
+>     ssl_certificate /etc/ssl/selfsigned/server.crt;
+>     ssl_certificate_key /etc/ssl/selfsigned/private.key;
+>     ssl on;
+>     ssl_protocol all;
+>     location / {
+>         root /var/www/main;
+>         index index.html;
+>     }
+>     location /dev/ {
+>         root /var/www/dev;
+>         index index.html;
+>     }
+> }
+> EOF
+root@cca295a37417:/git/project/.git/.git# # Generate self-signed certificate correctly
+root@cca295a37417:/git/project/.git/.git# cd /etc/ssl/selfsigned
+root@cca295a37417:/etc/ssl/selfsigned# openssl genrsa -out private.key 2048
+root@cca295a37417:/etc/ssl/selfsigned# openssl req -new -key private.key -out cert.csr -subj "/C=US/ST=CA/L=San Francisco/O=Test/CN=localhost"
+root@cca295a37417:/etc/ssl/selfsigned# openssl x509 -req -in cert.csr -CA private.key -out server.crt -CAcreateserial
+Certificate request self-signature ok
+subject=C=US, ST=CA, L=San Francisco, O=Test, CN=localhost
+Could not find CA certificate from private.key
+40F7D30D75770000:error:1608010C:STORE routines:ossl_store_handle_load_result:unsupported:../crypto/store/store_result.c:160:provider=default
+root@cca295a37417:/etc/ssl/selfsigned# # Test push to main branch
+root@cca295a37417:/etc/ssl/selfsigned# cd /git/project
+root@cca295a37417:/git/project# git push origin main
+fatal: not a git repository (or any of the parent directories): .git
+root@cca295a37417:/git/project# # Check if deployment worked
+root@cca295a37417:/git/project# cat /var/www/main/index.html
+cat: /var/www/main/index.html: No such file or directory
+root@cca295a37417:/git/project# # Test push to dev branch
+root@cca295a37417:/git/project# git push origin dev
+fatal: not a git repository (or any of the parent directories): .git
+root@cca295a37417:/git/project# cat /var/www/dev/index.html
+cat: /var/www/dev/index.html: No such file or directory
+root@cca295a37417:/git/project# # Verify nginx is serving the files
+root@cca295a37417:/git/project# curl -k https://localhost:8443/index.html
+curl: (7) Failed to connect to localhost port 8443 after 0 ms: Could not connect to server
+root@cca295a37417:/git/project# curl -k https://localhost:8443/dev/index.html
+curl: (7) Failed to connect to localhost port 8443 after 0 ms: Could not connect to server
+root@cca295a37417:/git/project#

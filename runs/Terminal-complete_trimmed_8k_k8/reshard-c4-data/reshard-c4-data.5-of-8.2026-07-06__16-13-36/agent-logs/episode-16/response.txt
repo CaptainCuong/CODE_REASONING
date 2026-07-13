@@ -1,0 +1,57 @@
+<think>
+We need to understand why mapping.json is not being updated. The script printed the processed chunks, but the mapping.json still has old data. Possibly the script is overwriting mapping.json but the old data is being read from a different file? Let's check the mapping.json content again and see if there are any duplicate entries that cause the script to not overwrite? Actually, the script overwrites mapping.json with the new data. The error in revert.py indicates that some chunk_path is a directory (maybe because the mapping.json contains a path that is a directory). Let's examine the mapping.json more thoroughly.
+
+We'll write a small script to inspect mapping.json and see if there are any malformed entries. Also, we need to ensure that the c4_reshard directory meets constraints: each subdirectory must have <=30 files. Currently chunk_000 has 9898 files, chunk_001 has 1524 files. That's still >30. We need to split further. We'll create a new script that splits each file into 100K chunks and then distributes chunks across subdirectories based on chunk index modulo 30. That will give us up to 30 files per subdirectory. We'll also need to update revert.py to handle the new naming pattern.
+
+But first, let's check mapping.json for any issues. We'll also check if the mapping.json is being written by the new script. Let's run a quick test by writing a small script that prints the first few entries. We'll also check the file size of mapping.json (1302110 bytes). That's small, so the mapping.json is not the old one. That's good. So mapping.json is being written. However, the revert.py error indicates that for some chunk_path, os.path.exists(chunk_path) is False or it's a directory. Let's check the mapping.json for any path that is not a file.
+
+We'll run a Python one-liner to list keys where the value is not a file. Let's do that now.
+</think>
+
+{
+  "analysis": "The mapping.json file size is small (1302110 bytes) and the script reported processing 11422 chunks, so mapping.json should be updated. However, the revert.py script fails with IsADirectoryError, meaning some chunk_path in mapping.json is a directory (or a path that is a directory). Let's examine mapping.json for any malformed entries. We'll also need to ensure that the c4_reshard directory meets constraints (max 30 files per folder). Currently each subdirectory has >30 files. We need to split further. We'll create a new script that splits each file into 100K chunks and then distributes chunks across subdirectories based on chunk index modulo 30. That will give us up to 30 files per subdirectory. We'll also need to update revert.py to handle the new naming pattern.\n\nLet's first inspect mapping.json for any issues. We'll also check if the mapping.json is being written by the new script. Let's run a quick test by writing a small script that prints the first few entries. We'll also check the file size of mapping.json (1302110 bytes). That's small, so the mapping.json is not the old one. That's good. So mapping.json is being written. However, the revert.py error indicates that for some chunk_path, os.path.exists(chunk_path) is False or it's a directory. Let's check the mapping.json for any path that is not a file.\n\nWe'll run a Python one-liner to list keys where the value is not a file.",
+  "plan": "1. Examine mapping.json for any malformed entries. 2. If malformed, regenerate mapping.json. 3. Ensure c4_reshard meets constraints (max 30 files per folder). 4. Test revert.py. 5. Ensure revert.py is in /app.",
+  "commands": [
+    {
+      "keystrokes": "python3 -c \"\nimport json\nimport os\nwith open('/app/c4_reshard/mapping.json') as f:\n    data = json.load(f)\nfor k, v in data.items():\n    if not os.path.exists(v) or os.path.isdir(v):\n        print('Problematic:', k, v)\n\"\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "python3 -c \"\nimport json\nwith open('/app/c4_reshard/mapping.json') as f:\n    data = json.load(f)\nprint('Number of entries:', len(data))\n# Check if all paths exist\nimport os\nfor chunk_id, chunk_path in data.items():\n    if not os.path.exists(chunk_path):\n        print('Missing chunk:', chunk_id)\n        break\nelse:\n    print('All chunks exist')\n\"\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "rm -rf /app/c4_reshard\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "cat > /app/final_split.py << 'EOF'\nimport os\nimport sys\nimport json\nimport shutil\n\nC4_SAMPLE_DIR = '/app/c4_sample'\nC4_RESHARD_DIR = '/app/c4_reshard'\nCHUNK_SIZE = 100 * 1024  # 100K\nMAX_FILES_PER_FOLD = 30\n\n# Remove existing c4_reshard and create fresh\nif os.path.exists(C4_RESHARD_DIR):\n    shutil.rmtree(C4_RESHARD_DIR)\nos.makedirs(C4_RESHARD_DIR, exist_ok=True)\n\nmapping = {}\n\nfor root, dirs, files in os.walk(C4_SAMPLE_DIR):\n    for file in files:\n        file_path = os.path.join(root, file)\n        if not os.path.isfile(file_path):\n            continue\n        rel_path = os.path.relpath(file_path, C4_SAMPLE_DIR)\n        with open(file_path, 'rb') as f:\n            data = f.read()\n        chunks = []\n        for i in range(0, len(data), CHUNK_SIZE):\n            chunk = data[i:i+CHUNK_SIZE]\n            chunk_id = f\"{rel_path}.chunks.{i//CHUNK_SIZE:03d}\"\n            chunks.append((chunk, chunk_id))\n        # Determine subdirectory based on chunk index modulo MAX_FILES_PER_FOLD\n        for idx, (chunk, chunk_id) in enumerate(chunks):\n            chunk_group = (idx - 1) // MAX_FILES_PER_FOLD\n            sub_dir = os.path.join(C4_RESHARD_DIR, f'chunk_{chunk_group+1:03d}')\n            os.makedirs(sub_dir, exist_ok=True)\n            chunk_path = os.path.join(sub_dir, chunk_id)\n            with open(chunk_path, 'wb') as f:\n                f.write(chunk)\n            mapping.setdefault(chunk_id, chunk_path)\n\nmapping_path = os.path.join(C4_RESHARD_DIR, 'mapping.json')\nwith open(mapping_path, 'w') as f:\n    json.dump(mapping, f, indent=2)\n\nprint(f\"Processed {len(mapping)} chunks.\")\nprint(f\"Created {len(set(mapping.values()))} chunk subdirectories.\")\nEOF\n",
+      "duration": 1.0
+    },
+    {
+      "keystrokes": "python3 /app/final_split.py\n",
+      "duration": 2.0
+    },
+    {
+      "keystrokes": "find /app/c4_reshard -type f | wc -l\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "ls -la /app/c4_reshard/\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "python3 -c \"\nimport os\nsubdirs = os.listdir('/app/c4_reshard')\nfor d in subdirs:\n    if d != 'mapping.json':\n        fcount = len([f for f in os.listdir('/app/c4_reshard/' + d) if not f.startswith('.')])\n        print(f'{d}: {fcount} files')\n\"\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "python3 /app/revert.py\n",
+      "duration": 1.0
+    },
+    {
+      "keystrokes": "diff -r /app/c4_sample /app/c4_reshard 2>&1 | head -5\n",
+      "duration": 0.5
+    }
+  ],
+  "task_complete": false
+}

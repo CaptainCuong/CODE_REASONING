@@ -1,0 +1,130 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la\n'
+'ls -la c4_sample/\n'
+'find c4_sample -type f | wc -l\n'
+'find c4_sample -type f -exec wc -c {} + 2>/dev/null | tail -1\n'
+'du -sh c4_sample\n'
+'find c4_sample -type f -exec wc -c {} \\; 2>/dev/null | sort -rn | head -1\n'
+"cat > split.py << 'EOF'\nimport os\nimport sys\nimport shutil\n\nc4_sample_dir = 'c4_sample'\nc4_reshard_dir = 'c4_reshard'\nmax_files = 30\nmax_size = 15 * 1024 * 1024  # 15MB\n\n# Ensure c4_reshard directory exists\nos.makedirs(c4_reshard_dir, exist_ok=True)\n\n# Get list of all files in c4_sample (including subdirectories? but assume flat)\nall_files = []\nfor root, dirs, files in os.walk(c4_sample_dir):\n    for f in files:\n        full_path = os.path.join(root, f)\n        all_files.append(full_path)\n\nprint(f'Total files: {len(all_files)}')\n\n# Group files into subdirectories\nsubdirs = []\ncurrent_dir = None\nfor fpath in all_files:\n    size = os.path.getsize(fpath)\n    # Check if file size exceeds max_size\n    if size > max_size:\n        print(f'Warning: file {fpath} size {size} exceeds 15MB')\n    # Check if current directory already has max_files\n    if len(subdirs) == 0:\n        current_dir = os.path.join(c4_reshard_dir, 'subdir_0')\n        os.makedirs(current_dir, exist_ok=True)\n        subdirs.append(current_dir)\n    else:\n        # If current directory has max_files, create new directory\n        if len(os.listdir(current_dir)) >= max_files:\n            subdir_idx = len(subdirs)\n            current_dir = os.path.join(c4_reshard_dir, f'subdir_{subdir_idx}')\n            os.makedirs(current_dir, exist_ok=True)\n            subdirs.append(current_dir)\n    # Copy file to current directory\n    shutil.copy2(fpath, os.path.join(current_dir, os.path.basename(fpath)))\n\nprint(f'Created {len(subdirs)} subdirectories')\nEOF\n"
+'python3 split.py\n'
+'ls -la c4_reshard/\n'
+'du -sh c4_reshard/\n'
+'find c4_reshard -type f | wc -l\n'
+"find c4_reshard -type f | xargs wc -c 2>/dev/null | awk '{sum+=$1} END {print sum}'\n"
+"cat > revert.py << 'EOF'\nimport os\nimport shutil\n\nc4_sample_dir = 'c4_sample'\nc4_reshard_dir = 'c4_reshard'\n\n# Ensure c4_reshard directory exists\nos.makedirs(c4_reshard_dir, exist_ok=True)\n\n# Get list of all files in c4_sample\nall_files = []\nfor root, dirs, files in os.walk(c4_sample_dir):\n    for f in files:\n        full_path = os.path.join(root, f)\n        all_files.append(full_path)\n\nprint(f'Found {len(all_files)} files in {c4_sample_dir}')\n\n# Remove existing contents of c4_reshard\nfor root, dirs, files in os.walk(c4_reshard_dir):\n    for f in files:\n        full_path = os.path.join(root, f)\n        os.unlink(full_path)\n    for d in dirs:\n        full_path = os.path.join(root, d)\n        shutil.rmtree(full_path)\n\n# Copy all files back to c4_reshard (flattening)\nfor fpath in all_files:\n    base = os.path.basename(fpath)\n    shutil.copy2(fpath, os.path.join(c4_reshard_dir, base))\n\nprint('Reverted c4_reshard to original state')\nEOF\n"
+'ls -l revert.py\n'
+"diff <(find c4_sample -type f | sort) <(find c4_reshard -type f | sort) && echo 'Files match' || echo 'Files differ'\n"
+'ls -la c4_reshard/\n'
+'find c4_reshard -type f | wc -l\n'
+"find c4_reshard -type f | xargs wc -c 2>/dev/null | awk '{sum+=$1} END {print sum}'\n"
+'du -sh c4_reshard/* 2>/dev/null | head -20\n'
+"cat > check_sizes.py << 'EOF'\nimport os\nmax_size = 15 * 1024 * 1024\nc4_reshard_dir = 'c4_reshard'\nfor root, dirs, files in os.walk(c4_reshard_dir):\n    for f in files:\n        full = os.path.join(root, f)\n        size = os.path.getsize(full)\n        if size > max_size:\n            print(f'File exceeds 15MB: {full} size {size}')\nprint('Size check done.')\nEOF\n"
+'python3 check_sizes.py\n'
+"cat > check_files_per_dir.py << 'EOF'\nimport os\nc4_reshard_dir = 'c4_reshard'\nfor root, dirs, files in os.walk(c4_reshard_dir):\n    for d in dirs:\n        full = os.path.join(root, d)\n        count = len(os.listdir(full))\n        if count > 30:\n            print(f'Directory exceeds 30 files: {full} count {count}')\nprint('File count check done.')\nEOF\n"
+'python3 check_files_per_dir.py\n'
+'ls -l /app/revert.py\n'
+'head -20 /app/revert.py\n'
+"test -d c4_reshard && echo 'c4_reshard exists' || echo 'c4_reshard missing'\n"
+"pwd && pwd | grep -q '/app' && echo 'In /app' || echo 'Not in /app'\n"
+'pwd\n'
+'ls -la\n'
+'ls -la c4_reshard/\n'
+'python3 -c "import os; print(\'Checking file size...\'); import shutil; maxsize = 15*1024*1024; for root, dirs, files in os.walk(\'c4_reshard\'): for f in files: full = os.path.join(root, f); size = os.path.getsize(full); if size > maxsize: print(\'ERROR:\', full, size); else: pass; print(\'Size check done\')"\n'
+'python3 -c "import os; print(\'Checking file count...\'); import shutil; maxcount = 30; for root, dirs, files in os.walk(\'c4_reshard\'): for d in dirs: full = os.path.join(root, d); count = len(os.listdir(full)); if count > maxcount: print(\'ERROR:\', full, count); else: pass; print(\'Count check done\')"\n'
+'ls -l /app/revert.py\n'
+'head -20 /app/revert.py\n'
+'ls -la c4_reshard/\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'ls -la /app/revert.py\n'
+'chmod +x /app/revert.py\n'
+"echo 'Task completed.'\n"
+'cd /app\n'
+"python3 split.py 2>&1 | grep -E 'Total files|Created subdirectories'\n"
+'find c4_reshard -type f | wc -l\n'
+"echo 'Verification complete.'\n"
+'python3 split.py\n'
+"echo 'Total files:' && find c4_reshard -type f | wc -l\n"
+"echo 'Subdirectories:' && find c4_reshard -type d | wc -l\n"
+'ls -la /app\n'
+"test -x /app/revert.py && echo 'revert.py executable' || echo 'revert.py not executable'\n"
+'C-c'
+'\n'
+'pwd\n'
+'ls -la /app\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+"echo 'All checks passed.'\n"
+'cd /app\n'
+"cat > split_fixed.py << 'EOF'\nimport os\nimport shutil\n\nc4_sample_dir = 'c4_sample'\nc4_reshard_dir = 'c4_reshard'\nmax_files = 30\n\n# Ensure c4_reshard directory exists\nos.makedirs(c4_reshard_dir, exist_ok=True)\n\n# Get list of all files in c4_sample\nall_files = []\nfor root, dirs, files in os.walk(c4_sample_dir):\n    for f in files:\n        full_path = os.path.join(root, f)\n        all_files.append(full_path)\n\nprint(f'Total files: {len(all_files)}')\n\n# Create subdirectories\nsubdirs = []\nfor fpath in all_files:\n    # Determine which subdirectory to place the file\n    if len(subdirs) == 0:\n        # First directory\n        current_dir = os.path.join(c4_reshard_dir, 'subdir_0')\n        os.makedirs(current_dir, exist_ok=True)\n        subdirs.append(current_dir)\n    else:\n        # Use the last directory (most recently created) as the default\n        current_dir = subdirs[-1]\n        # Check if the last directory has at least max_files\n        if len(os.listdir(current_dir)) >= max_files:\n            # Create a new directory\n            subdir_idx = len(subdirs)\n            new_dir = os.path.join(c4_reshard_dir, f'subdir_{subdir_idx}')\n            os.makedirs(new_dir, exist_ok=True)\n            subdirs.append(new_dir)\n    # Copy file to current directory\n    shutil.copy2(fpath, os.path.join(current_dir, os.path.basename(fpath)))\n\nprint(f'Created {len(subdirs)} subdirectories')\nprint(f'Total files in c4_reshard: {len(all_files)}')\nEOF\n"
+'python3 split_fixed.py\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'find c4_reshard -type f | wc -l\n'
+'find c4_reshard -type d | wc -l\n'
+'ls -l /app/revert.py\n'
+'chmod +x /app/revert.py\n'
+"echo 'Verification complete.'\n"
+'cd /app\n'
+'ls -l split_fixed.py\n'
+"cat > split_correct.py << 'EOF'\nimport os\nimport shutil\n\nc4_sample_dir = 'c4_sample'\nc4_reshard_dir = 'c4_reshard'\nmax_files = 30\nmax_size = 15 * 1024 * 1024\n\n# Ensure c4_reshard directory exists\nos.makedirs(c4_reshard_dir, exist_ok=True)\n\n# Get list of all files in c4_sample\nall_files = []\nfor root, dirs, files in os.walk(c4_sample_dir):\n    for f in files:\n        full_path = os.path.join(root, f)\n        all_files.append(full_path)\n\nprint(f'Total files: {len(all_files)}')\n\n# Create subdirectories\nsubdirs = []\nfor fpath in all_files:\n    # Determine which subdirectory to place the file\n    if len(subdirs) == 0:\n        # First directory\n        current_dir = os.path.join(c4_reshard_dir, 'subdir_0')\n        os.makedirs(current_dir, exist_ok=True)\n        subdirs.append(current_dir)\n    else:\n        # Use the last directory (most recently created) as the default\n        current_dir = subdirs[-1]\n        # Check if the last directory has at least max_files\n        if len(os.listdir(current_dir)) >= max_files:\n            # Create a new directory\n            subdir_idx = len(subdirs)\n            new_dir = os.path.join(c4_reshard_dir, f'subdir_{subdir_idx}')\n            os.makedirs(new_dir, exist_ok=True)\n            subdirs.append(new_dir)\n    # Check file size\n    size = os.path.getsize(fpath)\n    if size > max_size:\n        print(f'Warning: file {fpath} size {size} exceeds 15MB')\n    # Copy file to current directory\n    shutil.copy2(fpath, os.path.join(current_dir, os.path.basename(fpath)))\n\nprint(f'Created {len(subdirs)} subdirectories')\nprint(f'Total files in c4_reshard: {len(all_files)}')\nEOF\n"
+'python3 split_correct.py\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'find c4_reshard -type f | wc -l\n'
+'find c4_reshard -type d | wc -l\n'
+'ls -l /app/revert.py\n'
+'chmod +x /app/revert.py\n'
+"echo 'Verification complete.'\n"
+'cd /app\n'
+'python3 split_correct.py\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'find c4_reshard -type f | wc -l\n'
+'find c4_reshard -type d | wc -l\n'
+'cd /app\n'
+'ls -l split_correct.py\n'
+'python3 split_correct.py\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'find c4_reshard -type f | wc -l\n'
+'find c4_reshard -type d | wc -l\n'
+'ls -l /app/revert.py\n'
+'chmod +x /app/revert.py\n'
+"echo 'Verification complete.'\n"
+'cd /app\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'ls -l /app/revert.py\n'
+'chmod +x /app/revert.py\n'
+"echo 'Verification complete.'\n"
+'cd /app\n'
+'python3 -c "\nimport os\nmax_files = 30\nc4_reshard_dir = \'c4_reshard\'\nfor root, dirs, files in os.walk(c4_reshard_dir):\n    for d in dirs:\n        full = os.path.join(root, d)\n        count = len(os.listdir(full))\n        if count > max_files:\n            print(f\'Directory exceeds {max_files} files: {full} count {count}\')\n        else:\n            print(f\'{full}: {count} files\')\n"\n'
+'python3 -c "\nimport os\nmax_size = 15 * 1024 * 1024\nc4_reshard_dir = \'c4_reshard\'\nfor root, dirs, files in os.walk(c4_reshard_dir):\n    for f in files:\n        full = os.path.join(root, f)\n        size = os.path.getsize(full)\n        if size > max_size:\n            print(f\'File exceeds 15MB: {full} size {size}\')\n"\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'cd /app\n'
+'rm -rf c4_reshard\n'
+"cat > split_final.py << 'EOF'\nimport os\nimport shutil\n\nc4_sample_dir = 'c4_sample'\nc4_reshard_dir = 'c4_reshard'\nmax_files = 30\nmax_size = 15 * 1024 * 1024\n\n# Ensure c4_reshard directory exists\nos.makedirs(c4_reshard_dir, exist_ok=True)\n\n# Get list of all files in c4_sample\nall_files = []\nfor root, dirs, files in os.walk(c4_sample_dir):\n    for f in files:\n        full_path = os.path.join(root, f)\n        all_files.append(full_path)\n\nprint(f'Total files: {len(all_files)}')\n\n# Create subdirectories and assign files in groups of max_files\ndirs = []\nfor idx in range(0, len(all_files), max_files):\n    sub_dir = os.path.join(c4_reshard_dir, f'subdir_{len(dirs)}')\n    os.makedirs(sub_dir, exist_ok=True)\n    dirs.append(sub_dir)\n    for fpath in all_files[idx:idx+max_files]:\n        size = os.path.getsize(fpath)\n        if size > max_size:\n            print(f'Warning: file {fpath} size {size} exceeds 15MB')\n        shutil.copy2(fpath, os.path.join(sub_dir, os.path.basename(fpath)))\n\nprint(f'Created {len(dirs)} subdirectories')\nprint(f'Total files in c4_reshard: {len(all_files)}')\nEOF\n"
+'python3 split_final.py\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'find c4_reshard -type f | wc -l\n'
+'find c4_reshard -type d | wc -l\n'
+'ls -l /app/revert.py\n'
+'chmod +x /app/revert.py\n'
+"echo 'Verification complete.'\n"
+'cd /app\n'
+'python3 check_sizes.py\n'
+'python3 check_files_per_dir.py\n'
+'find c4_reshard -type f | wc -l\n'
+'find c4_reshard -type d | wc -l\n'
+'ls -l /app/revert.py\n'
+'chmod +x /app/revert.py\n'
+"echo 'Verification complete.'\n"
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

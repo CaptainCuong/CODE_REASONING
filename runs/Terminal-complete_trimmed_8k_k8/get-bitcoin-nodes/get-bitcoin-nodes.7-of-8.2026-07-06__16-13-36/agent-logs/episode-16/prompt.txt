@@ -1,0 +1,208 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+, 'RPCClient'))"
+False
+root@f45576156ba0:/app# python3 -c "import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); import bitcoinlib.services.bcoin; print(hasattr(b
+itcoinlib.services.bcoin, 'RPCClient'))"
+False
+root@f45576156ba0:/app# python3 /app/bitcoin_service.py
+Traceback (most recent call last):
+  File "/app/bitcoin_service.py", line 9, in <module>
+    from bitcoinlib import client
+ImportError: cannot import name 'client' from 'bitcoinlib' (/usr/local/lib/python3.13/site-packages/bitcoinlib/__init__.py)
+root@f45576156ba0:/app# cat /usr/local/lib/python3.13/site-packages/bitcoinlib/services/services.py
+# -*- coding: utf-8 -*-
+#
+#    BitcoinLib - Python Cryptocurrency Library
+#    SERVICES - Main Service connector
+#    © 2017 - 2026 June - 1200 Web Development <http://1200wd.com/>
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import json
+import random
+import time
+from datetime import timedelta
+from sqlalchemy import func
+from bitcoinlib import services
+from bitcoinlib.networks import Network
+from bitcoinlib.encoding import to_bytes, int_to_varbyteint, varstr
+from bitcoinlib.db_cache import *
+from bitcoinlib.transactions import Transaction, transaction_update_spents
+from bitcoinlib.blocks import Block
+
+
+_logger = logging.getLogger(__name__)
+
+
+class ServiceError(Exception):
+    def __init__(self, msg=''):
+        self.msg = msg
+        _logger.error(msg)
+
+    def __str__(self):
+        return self.msg
+
+
+class Service(object):
+    """
+    Class to connect to various cryptocurrency service providers. Use to receive network and blockchain information,
+    get specific transaction information, current network fees or push a raw transaction.
+
+    The Service class connects to 1 or more service providers at random to retrieve or send information. If a service
+    provider fails to correctly respond, the Service class will try another available provider.
+
+    """
+
+    def __init__(self, network=DEFAULT_NETWORK, min_providers=1, max_providers=1, providers=None,
+                 timeout=TIMEOUT_REQUESTS, cache_uri=None, ignore_priority=False, exclude_providers=None,
+                 max_errors=SERVICE_MAX_ERRORS, strict=True, wallet_name=None, provider_name=None):
+        """
+        Create a service object for the specified network. By default, the object connects to 1 service provider, but you
+        can specify a list of providers or a minimum or maximum number of providers.
+
+        :param network: Specify network used
+        :type network: str, Network
+        :param min_providers: Minimum number of providers to connect to. Default is 1. Use, for instance, to receive fee information from a number of providers
+and calculate the average fee.
+        :type min_providers: int
+        :param max_providers: Maximum number of providers to connect to. Default is 1.
+        :type max_providers: int
+        :param providers: List of providers to connect to. Default is all providers and select a provider at random.
+        :type providers: list of str
+        :param timeout: Timeout for web requests. Leave empty to use default from config settings
+        :type timeout: int
+        :param cache_uri: Database to use for caching
+        :type cache_uri: str
+        :param ignore_priority: Ignores provider priority if set to True. Could be used for unit testing, so no providers are missed when testing. Default is Fa
+lse
+        :type ignore_priority: bool
+        :param exclude_providers: Exclude providers in this list, can be used when problems with certain providers arise.
+        :type exclude_providers: list of str
+        :param strict: Strict checks of valid signatures, scripts and transactions. Normally use strict=True for wallets, transaction validations etcetera. For
+blockchain parsing strict=False should be used, but be sure to check warnings in the log file. Default is True.
+        :type strict: bool
+        :param wallet_name: Name of wallet if connecting to bitcoin node
+        :type wallet_name: str
+        :param provider_name: Name of a specific provider to connect to. Note this is different from the providers list argument: the lists mention a type of pr
+ovider such as 'blockbook' or 'bcoin', the provider name is a key in the providers.json dictionary file such as 'bcoin.testnet.localhost'.
+        :type provider_name: str
+
+      
+[... output limited to 10000 bytes; 71 interior bytes omitted ...]
+st block retrieved from the service provider. For instance, if an address contains a large number of transactions, and th
+ey will be retrieved in more than one request.
+        :type last_block: int
+        :param balance: Total balance of address in sathosis, or smallest network detominator
+        :type balance: int
+        :param n_utxos: Total number of UTXO's for this address
+        :type n_utxos: int
+        :param txs_complete: True if all transactions for this address are added to cache
+        :type txs_complete: bool
+        :param last_txid: Transaction ID of last transaction downloaded from blockchain
+        :type last_txid: bytes
+
+ .       :return:
+        """
+        if not self.cache_enabled():
+            return
+        n_txs = None
+        if txs_complete:
+            n_txs = len(self.session.query(DbCacheTransaction).join(DbCacheTransactionNode).
+                        filter(DbCacheTransactionNode.address == address).all())
+            if n_utxos is None:
+                n_utxos = self.session.query(DbCacheTransactionNode).\
+                    filter(DbCacheTransactionNode.address == address, DbCacheTransactionNode.spent.is_(False),
+                           DbCacheTransactionNode.is_input.is_(False)).count()
+                if self.session.query(DbCacheTransactionNode).\
+                        filter(DbCacheTransactionNode.address == address, DbCacheTransactionNode.spent.is_(None),
+                               DbCacheTransactionNode.is_input.is_(False)).count():
+                    n_utxos = None
+            if not balance:
+                plusmin = self.session.query(DbCacheTransactionNode.is_input, func.sum(DbCacheTransactionNode.value)). \
+                    filter(DbCacheTransactionNode.address == address). \
+                    group_by(DbCacheTransactionNode.is_input).all()
+                balance = 0 if not plusmin else sum([(-p[1] if p[0] else p[1]) for p in plusmin])
+        db_addr = self.getaddress(address)
+        new_address = DbCacheAddress(
+            address=address, network_name=self.network.name,
+            last_block=last_block if last_block else getattr(db_addr, 'last_block', None),
+            balance=balance if balance is not None else getattr(db_addr, 'balance', None),
+            n_utxos=n_utxos if n_utxos is not None else getattr(db_addr, 'n_utxos', None),
+            n_txs=n_txs if n_txs is not None else getattr(db_addr, 'n_txs', None),
+            last_txid=last_txid if last_txid is not None else getattr(db_addr, 'last_txid', None))
+        self.session.merge(new_address)
+        try:
+            self.commit()
+        except Exception as e:    # pragma: no cover
+            _logger.warning("Caching failure addr: %s" % e)
+
+    def store_estimated_fee(self, blocks, fee):
+        """
+        Store estimated fee retrieved from service providers in cache.
+
+        :param blocks: Confirmation within x blocks
+        :type blocks: int
+        :param fee: Estimated fee in Sathosis
+        :type fee: int
+
+        :return:
+        """
+        if not self.cache_enabled():
+            return
+        if blocks <= 1:
+            varname = 'fee_high'
+        elif blocks <= 5:
+            varname = 'fee_medium'
+        else:
+            varname = 'fee_low'
+        dbvar = DbCacheVars(varname=varname, network_name=self.network.name, value=str(fee), type='int',
+                            expires=datetime.now() + timedelta(seconds=600))
+        self.session.merge(dbvar)
+        self.commit()
+
+    def store_block(self, block):
+        """
+        Store block in the cache database
+
+        :param block: The Block object to store in the cache
+        :type block: Block
+
+        :return:
+        """
+        if not self.cache_enabled():
+            return
+        if not (block.height and block.block_hash and block.prev_block and block.merkle_root and
+                block.bits and block.version) \
+                and not block.block_hash == b'\x00\x00\x00\x00\x00\x19\xd6h\x9c\x08Z\xe1e\x83\x1e\x93O\xf7c\xaeF' \
+                                            b'\xa2\xa6\xc1r\xb3\xf1\xb6\n\x8c\xe2o':  # Bitcoin genesis block
+            _logger.info("Caching failure block: incomplete data")
+            return
+
+        new_block = DbCacheBlock(
+            block_hash=block.block_hash, height=block.height, network_name=self.network.name,
+            version=block.version_int, prev_block=block.prev_block, bits=block.bits_int,
+            merkle_root=block.merkle_root, nonce=block.nonce_int, time=block.time, tx_count=block.tx_count)
+        self.session.merge(new_block)
+        try:
+            self.commit()
+        except Exception as e:    # pragma: no cover
+            _logger.warning("Caching failure block: %s" % e)
+root@f45576156ba0:/app# find /usr/local/lib/python3.13/site-packages -name '*.py' -grep 'client' 2>/dev/null | head -10
+root@f45576156ba0:/app# find /usr/local/lib/python3.13/site-packages -name '*.py' -grep 'RPCClient' 2>/dev/null | head -10
+root@f45576156ba0:/app#

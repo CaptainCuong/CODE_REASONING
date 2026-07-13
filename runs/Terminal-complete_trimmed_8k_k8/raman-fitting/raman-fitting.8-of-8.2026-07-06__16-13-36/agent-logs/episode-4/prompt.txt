@@ -1,0 +1,90 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@c6e5f8627b96:/app# cat -A /app/graphene.dat | head -2
+47183,554644^I19261,547207^M$
+46588,360019^I19266,089699^M$
+cat: write error: Broken pipe
+root@c6e5f8627b96:/app# head -1 /app/graphene.dat | od -c
+0000000   4   7   1   8   3   ,   5   5   4   6   4   4  \t   1   9   2
+0000020   6   1   ,   5   4   7   2   0   7  \r  \n
+0000033
+root@c6e5f8627b96:/app# cat > /app/fit_peaks2.py << 'EOF'
+> import numpy as np
+> import json
+> import sys
+>
+> def gaussian(x, x0, gamma, amplitude, offset):
+>     return amplitude * np.exp(-((x - x0) / gamma)**2) + offset
+>
+> # Read the file as text and replace tabs with commas
+> def load_graphene(filename):
+>     with open(filename, 'r') as f:
+>         lines = f.readlines()
+>     # First line: replace tabs with commas
+>     # We'll split each line by whitespace and take first two columns
+>     data = []
+>     for line in lines:
+>         parts = line.strip().split()
+>         if len(parts) >= 2:
+>             data.append([float(parts[0]), float(parts[1])])
+>     arr = np.array(data)
+>     return arr[:,0], arr[:,1]
+>
+> x, y = load_graphene('/app/graphene.dat')
+> print(f'Loaded {len(x)} data points')
+> print(f'x range: {x.min()} to {x.max()}')
+> print(f'y range: {y.min()} to {y.max()}')
+>
+> # Find peaks
+> from scipy.signal import find_peaks
+> peaks, _ = find_peaks(y, distance=10)
+> print(f'Found {len(peaks)} peaks at indices: {peaks}')
+> print(f'Peak x values: {x[peaks]}')
+>
+> # Fit two Gaussians
+> p0 = [1590, 20, 1000, 0, 2700, 20, 1000, 0]
+> lower = [1500, 0, 0, 0, 2600, 0, 0, 0]
+> upper = [3000, 1000, 10000, 10000, 3000, 1000, 10000, 10000]
+>
+> popt, pcov = curve_fit(lambda x, a,b,c,d,e,f,g,h: gaussian(x, a,b,c,d) + gaussian(x, e,f,g,h),
+>                       x, y, p0=p0, bounds=(lower, upper), maxfev=5000)
+> print('Fitted parameters:')
+> print(popt)
+>
+> x01, gamma1, amp1, offset1, x02, gamma2, amp2, offset2 = popt
+>
+> results = {
+>     "G": {
+>         "x0": float(x01),
+>         "gamma": float(gamma1),
+>         "amplitude": float(amp1),
+>         "offset": float(offset1)
+>     },
+>     "2D": {
+>         "x0": float(x02),
+>         "gamma": float(gamma2),
+>         "amplitude": float(amp2),
+>         "offset": float(offset2)
+>     }
+> }
+>
+> with open('/app/results.json', 'w') as f:
+>     json.dump(results, f, indent=2)
+>
+> print('Results written to /app/results.json')
+> EOF
+root@c6e5f8627b96:/app# python3 /app/fit_peaks2.py
+Traceback (most recent call last):
+  File "/app/fit_peaks2.py", line 22, in <module>
+    x, y = load_graphene('/app/graphene.dat')
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/app/fit_peaks2.py", line 18, in load_graphene
+    data.append([float(parts[0]), float(parts[1])])
+                 ~~~~~^^^^^^^^^^
+ValueError: could not convert string to float: '47183,554644'
+root@c6e5f8627b96:/app# cat /app/results.json
+cat: /app/results.json: No such file or directory
+root@c6e5f8627b96:/app#

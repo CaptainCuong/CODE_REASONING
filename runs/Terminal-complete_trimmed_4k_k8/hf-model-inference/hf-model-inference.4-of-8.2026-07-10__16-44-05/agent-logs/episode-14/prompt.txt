@@ -1,0 +1,162 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@fd192edb97d7:/app# python3 -u /app/debug3.py
+Loading model...
+Loading weights: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████| 104/104 [00:00<00:00, 5567.49it/s]
+Model loaded: DistilBertForSequenceClassification(
+  (distilbert): DistilBertModel(
+    (embeddings): Embeddings(
+      (word_embeddings): Embedding(30522, 768, padding_idx=0)
+      (position_embeddings): Embedding(512, 768)
+      (LayerNorm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+      (dropout): Dropout(p=0.1, inplace=False)
+    )
+    (transformer): Transformer(
+      (layer): ModuleList(
+        (0-5): 6 x TransformerBlock(
+          (attention): DistilBertSelfAttention(
+            (q_lin): Linear(in_features=768, out_features=768, bias=True)
+            (k_lin): Linear(in_features=768, out_features=768, bias=True)
+            (v_lin): Linear(in_features=768, out_features=768, bias=True)
+            (out_lin): Linear(in_features=768, out_features=768, bias=True)
+            (dropout): Dropout(p=0.1, inplace=False)
+          )
+          (sa_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+          (ffn): FFN(
+            (dropout): Dropout(p=0.1, inplace=False)
+            (lin1): Linear(in_features=768, out_features=3072, bias=True)
+            (lin2): Linear(in_features=3072, out_features=768, bias=True)
+            (activation): GELUActivation()
+          )
+          (output_layer_norm): LayerNorm((768,), eps=1e-12, elementwise_affine=True, bias=True)
+        )
+      )
+    )
+  )
+  (pre_classifier): Linear(in_features=768, out_features=768, bias=True)
+  (classifier): Linear(in_features=768, out_features=2, bias=True)
+  (dropout): Dropout(p=0.2, inplace=False)
+)
+Text: I love programming! It's such a great field.
+Traceback (most recent call last):
+  File "/app/debug3.py", line 20, in <module>
+    tokens = model.tokenize([text])  # returns a list of lists of token IDs
+             ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/torch/nn/modules/module.py", line 1967, in __getattr__
+    raise AttributeError(
+        f"'{type(self).__name__}' object has no attribute '{name}'"
+    )
+AttributeError: 'DistilBertForSequenceClassification' object has no attribute 'tokenize'
+root@fd192edb97d7:/app# cat > /app/sentiment_api.py << 'EOF'
+> import json
+> import sys
+> from flask import Flask
+> from transformers import AutoModelForSequenceClassification
+> from pathlib import Path
+>
+> app = Flask(__name__)
+>
+> # Load the model
+> model_path = Path('/app/model_cache/sentiment_model')
+> model = AutoModelForSequenceClassification.from_pretrained(model_path)
+>
+> @app.route('/sentiment', methods=['POST'])
+> def sentiment_analysis():
+>     try:
+>         data = json.loads(request.data)
+>         text = data['text']
+>         # Tokenize the text
+>         tokens = model.tokenize([text])
+>         # Convert to tensor
+>         import torch
+>         with torch.inference_mode():
+>             logits = model(torch.tensor(tokens))
+>         # Convert to numpy for easier handling
+>         import numpy as np
+>         probs = np.softmax(logits.logits.numpy(), axis=1)
+>         positive = probs[0, 0]  # first token is positive
+>         negative = probs[0, 1]   # second token is negative
+>         # Determine sentiment
+>         if positive > negative:
+>             sentiment = 'positive'
+>         else:
+>             sentiment = 'negative'
+>         # Return the required JSON
+>         return {
+>             'sentiment': sentiment,
+>             'confidence': {
+>                 'positive': float(positive),
+>                 'negative': float(negative)
+>             }
+>         }
+>     except Exception as e:
+>         return {
+>             'error': str(e)
+>         }, 500
+>
+> if __name__ == '__main__':
+>     app.run(host='0.0.0.0', port=5000)
+> EOF
+root@fd192edb97d7:/app# python3 /app/sentiment_api.py
+python3 -u /app/debug3.py
+cat > /app/sentiment_api.py << 'EOF'
+import json
+import sys
+from flask import Flask
+from transformers import AutoModelForSequenceClassification
+from pathlib import Path
+
+app = Flask(__name__)
+
+# Load the model
+model_path = Path('/app/model_cache/sentiment_model')
+model = AutoModelForSequenceClassification.from_pretrained(model_path)
+
+@app.route('/sentiment', methods=['POST'])
+def sentiment_analysis():
+    try:
+        data = json.loads(request.data)
+        text = data['text']
+        # Tokenize the text
+        tokens = model.tokenize([text])  # returns a list of lists of token IDs
+        # Convert to tensor
+        import torch
+        with torch.inference_mode():
+            logits = model(torch.tensor(tokens))
+        # Convert to numpy for easier handling
+        import numpy as np
+        probs = np.softmax(logits.logits.numpy(), axis=1)
+        positive = probs[0, 0]  # first token is positive
+        negative = probs[0, 1]   # second token is negative
+        # Determine sentiment
+        if positive > negative:
+            sentiment = 'positive'
+        else:
+            sentiment = 'negative'
+        # Return the required JSON
+        return {
+            'sentiment': sentiment,
+            'confidence': {
+                'positive': float(positive),
+                'negative': float(negative)
+            }
+        }
+    except Exception as e:
+        return {
+            'error': str(e)
+        }, 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
+EOF
+python3 /app/sentiment_api.py
+Loading weights: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████| 104/104 [00:00<00:00, 8060.45it/s]
+ * Serving Flask app 'sentiment_api'
+ * Debug mode: off
+Address already in use
+Port 5000 is in use by another program. Either identify and stop that program, or start the server with a different port.
+root@fd192edb97d7:/app# python3 -u /app/debug3.py
+

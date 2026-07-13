@@ -1,0 +1,76 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+ls -la model_cache/
+Downloading distilbert-base-uncased-finetuned-sst-2-english to /app/model_cache/sentiment_model
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████| 104/104 [00:00<00:00, 6748.16it/s]
+Writing model shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [00:00<00:00,  6.48it/s]
+Model saved.
+root@110a97f7eaaf:/app# ls -la model_cache/
+total 0
+drwxr-xr-x 3 root root 37 Jul  7 15:53 .
+drwxr-xr-x 1 root root 62 Jul  7 15:52 ..
+drwxr-xr-x 2 root root 62 Jul  7 15:53 sentiment_model
+root@110a97f7eaaf:/app# cd /app
+root@110a97f7eaaf:/app# cat > app.py << 'EOF'
+> import json
+> from flask import Flask, request, jsonify
+> import sys
+> import os
+> sys.path.insert(0, '/app/model_cache')
+> from transformers import AutoModelForSequenceClassification
+>
+> app = Flask(__name__)
+> model = AutoModelForSequenceClassification.from_pretrained('/app/model_cache/sentiment_model')
+>
+> def get_sentiment(text):
+>     # Input: list of text strings, output: list of probabilities (logits)
+>     # The model expects a batch of inputs, returns a batch of probabilities.
+>     # We'll get the probability for positive (class 1) and negative (class 0)
+>     # The model's output is a tensor of shape (batch_size, num_classes)
+>     # For binary classification, num_classes = 2.
+>     outputs = model([text], return_dict=False)
+>     # outputs is a list of probabilities (logits) for each input
+>     prob = outputs[0]
+>     # Assuming class 0 is negative, class 1 is positive
+>     confidence_positive = prob[1]  # probability for positive
+>     confidence_negative = prob[0]  # probability for negative
+>     # Determine sentiment: positive if confidence_positive > 0.5 else negative
+>     if confidence_positive > 0.5:
+>         sentiment = 'positive'
+>     else:
+>         sentiment = 'negative'
+>     return {
+>         'sentiment': sentiment,
+>         'confidence': {
+>             'positive': float(confidence_positive),
+>             'negative': float(confidence_negative)
+>         }
+>     }
+>
+> @app.route('/sentiment', methods=['POST'])
+> def sentiment():
+>     try:
+>         data = request.get_json()
+>         if 'text' not in data:
+>             return {'error': 'Missing text field'}
+>         text = data['text']
+>         if not isinstance(text, str):
+>             return {'error': 'text must be a string'}
+>         result = get_sentiment(text)
+>         return result
+>     except Exception as e:
+>         return {'error': str(e)}
+>
+> if __name__ == '__main__':
+>     app.run(host='0.0.0.0', port=5000, debug=False)
+> EOF
+root@110a97f7eaaf:/app# python3 app.py
+Traceback (most recent call last):
+  File "/app/app.py", line 2, in <module>
+    from flask import Flask, request, jsonify
+ModuleNotFoundError: No module named 'flask'
+root@110a97f7eaaf:/app#

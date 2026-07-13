@@ -1,0 +1,339 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@b7ddb5872f7a:/app# cat /app/linux-6.9/init/initramfs.c
+// SPDX-License-Identifier: GPL-2.0
+#include <linux/init.h>
+#include <linux/async.h>
+#include <linux/fs.h>
+#include <linux/slab.h>
+#include <linux/types.h>
+#include <linux/fcntl.h>
+#include <linux/delay.h>
+#include <linux/string.h>
+#include <linux/dirent.h>
+#include <linux/syscalls.h>
+#include <linux/utime.h>
+#include <linux/file.h>
+#include <linux/kstrtox.h>
+#include <linux/memblock.h>
+#include <linux/mm.h>
+#include <linux/namei.h>
+#include <linux/init_syscalls.h>
+#include <linux/umh.h>
+
+#include "do_mounts.h"
+
+static __initdata bool csum_present;
+static __initdata u32 io_csum;
+
+static ssize_t __init xwrite(struct file *file, const unsigned char *p,
+                size_t count, loff_t *pos)
+{
+        ssize_t out = 0;
+
+        /* sys_write only can write MAX_RW_COUNT aka 2G-4K bytes at most */
+        while (count) {
+                ssize_t rv = kernel_write(file, p, count, pos);
+
+                if (rv < 0) {
+                        if (rv == -EINTR || rv == -EAGAIN)
+                                continue;
+                        return out ? out : rv;
+                } else if (rv == 0)
+                        break;
+
+                if (csum_present) {
+                        ssize_t i;
+
+                        for (i = 0; i < rv; i++)
+                                io_csum += p[i];
+                }
+
+                p += rv;
+                out += rv;
+                count -= rv;
+        }
+
+        return out;
+}
+
+static __initdata char *message;
+static void __init error(char *x)
+{
+        if (!message)
+                message = x;
+}
+
+#define panic_show_mem(fmt, ...) \
+        ({ show_mem(); panic(fmt, ##__VA_ARGS__); })
+
+/* link hash */
+
+#define N_ALIGN(len) ((((len) + 1) & ~3) + 2)
+
+static __initdata struct hash {
+        int ino, minor, major;
+        umode_t mode;
+        struct hash *next;
+        char name[N_ALIGN(PATH_MAX)];
+} *head[32];
+
+static inline int hash(int major, int minor, int ino)
+{
+        unsigned long tmp = ino + minor + (major << 3);
+        tmp += tmp >> 5;
+        return tmp & 31;
+}
+
+static char __init *find_link(int major, int minor, int ino,
+                              umode_t mode, char *name)
+{
+        struct hash **p, *q;
+        for (p = head + hash(major, minor, ino); *p; p = &(*p)->next) {
+                if ((*p)->ino != ino)
+                        continue;
+                if ((*p)->minor != minor)
+                        continue;
+                if ((*p)->major != major)
+                        continue;
+                if (((*p)->mode ^ mode) & S_IFMT)
+                        continue;
+                return (*p)->name;
+        }
+        q = kmalloc(sizeof(struct hash), GFP_KERNEL);
+        if (!q)
+                panic_show_mem("can't allocate link hash entry");
+        q->major = major;
+        q->minor = minor;
+        q->ino = ino;
+        q->mode = mode;
+        strcpy(q->name, name);
+        q->next = NULL;
+        *p = q;
+        return NULL;
+}
+
+static void __init free_hash(void)
+{
+        struct hash **p, *q;
+        for (p = head; p < head + 32; p++) {
+                while (*p) {
+                        q = *p;
+                        *p = q->next;
+                        kfree(q);
+                }
+        }
+}
+
+#ifdef CONFIG_INITRAMFS_PRESERVE_MTIME
+static void __init do_utime(char *filename, time64_t mtime)
+{
+        struct timespec64 t[2] = { { .tv_sec = mtime }, { .tv_sec = mtime } };
+        init_utimes(filename, t);
+}
+
+static void __init do_utime_path(const struct path *path, time64_t mtime)
+{
+        struct timespec64 t[2] = { { .tv_sec = mtime }, { .tv_sec = mtime } };
+        vfs_utimes(path, t);
+}
+
+static __initdata LIST_HEAD(dir_list);
+struct dir_entry {
+        struct list_head list;
+        time64_t mtime;
+        char name[];
+};
+
+static void __init dir_add(const char *name, time64_t mtime)
+{
+        size_t nlen = strlen(name) + 1;
+        struct dir_entry *de;
+
+        de = kmalloc(sizeof(struct dir_entry) + nlen, GFP_KERNEL);
+        if (!de)
+                panic_show_mem("can't allocate dir_entry buffer");
+        INIT_LIST_HEAD(&de->list);
+        strscpy(de->name, name, nlen);
+        de->mtime = mtime;
+        list_add(&de->list, &dir_list);
+}
+
+static void __init dir_utime(void)
+{
+        struct dir_entry *de, *tmp;
+        list_for_each_entry_safe(de, tmp, &dir_list, list) {
+                list_del(&de->list);
+                do_utime(de->name, de->mtime);
+                kfree(de);
+        }
+}
+#else
+static void __init do_utime(char *filename, time64_t mtime) {}
+static void __init do_utime_path(const struct path *path, time64_t mtime) {}
+static void __init dir_add(const char *name, time64_t mtime) {}
+static void __init dir_utime(void) {}
+#endif
+
+static __initdata time64_t mtime;
+
+/* cpio header parsing */
+
+static __initdata unsigned long ino, major, minor, nlink;
+static __initdata umode_t mode;
+static __initdata unsigned long body_len, name_len;
+sta
+[... output limited to 10000 bytes; 71 interior bytes omitted ...]
+amfs (%s); looks like an initrd\n",
+                        err);
+        file = filp_open("/initrd.image", O_WRONLY|O_CREAT|O_LARGEFILE, 0700);
+        if (IS_ERR(file))
+                return;
+
+        written = xwrite(file, (char *)initrd_start, initrd_end - initrd_start,
+                        &pos);
+        if (written != initrd_end - initrd_start)
+                pr_err("/initrd.image: incomplete write (%zd != %ld)\n",
+                       written, initrd_end - initrd_start);
+        fput(file);
+}
+#endif /* CONFIG_BLK_DEV_RAM */
+
+static void __init do_populate_rootfs(void *unused, async_cookie_t cookie)
+{
+        /* Load the built in initramfs */
+        char *err = unpack_to_rootfs(__initramfs_start, __initramfs_size);
+        if (err)
+                panic_show_mem("%s", err); /* Failed to decompress INTERNAL initramfs */
+
+        if (!initrd_start || IS_ENABLED(CONFIG_INITRAMFS_FORCE))
+                goto done;
+
+        if (IS_ENABLED(CONFIG_BLK_DEV_RAM))
+                printk(KERN_INFO "Trying to unpack rootfs image as initramfs...\n");
+        else
+                printk(KERN_INFO "Unpacking initramfs...\n");
+
+        err = unpack_to_rootfs((char *)initrd_start, initrd_end - initrd_start);
+        if (err) {
+#ifdef CONFIG_BLK_DEV_RAM
+                populate_initrd_image(err);
+#else
+                printk(KERN_EMERG "Initramfs unpacking failed: %s\n", err);
+#endif
+        }
+
+done:
+        /*
+         * If the initrd region is overlapped with crashkernel reserved region,
+         * free only memory that is not part of crashkernel region.
+         */
+        if (!do_retain_initrd && initrd_start && !kexec_free_initrd()) {
+                free_initrd_mem(initrd_start, initrd_end);
+        } else if (do_retain_initrd && initrd_start) {
+                bin_attr_initrd.size = initrd_end - initrd_start;
+                bin_attr_initrd.private = (void *)initrd_start;
+                if (sysfs_create_bin_file(firmware_kobj, &bin_attr_initrd))
+                        pr_err("Failed to create initrd sysfs file");
+        }
+        initrd_start = 0;
+        initrd_end = 0;
+
+        init_flush_fput();
+}
+
+static ASYNC_DOMAIN_EXCLUSIVE(initramfs_domain);
+static async_cookie_t initramfs_cookie;
+
+void wait_for_initramfs(void)
+{
+        if (!initramfs_cookie) {
+                /*
+                 * Something before rootfs_initcall wants to access
+                 * the filesystem/initramfs. Probably a bug. Make a
+                 * note, avoid deadlocking the machine, and let the
+                 * caller's access fail as it used to.
+                 */
+                pr_warn_once("wait_for_initramfs() called before rootfs_initcalls\n");
+                return;
+        }
+        async_synchronize_cookie_domain(initramfs_cookie + 1, &initramfs_domain);
+}
+EXPORT_SYMBOL_GPL(wait_for_initramfs);
+
+static int __init populate_rootfs(void)
+{
+        initramfs_cookie = async_schedule_domain(do_populate_rootfs, NULL,
+                                                 &initramfs_domain);
+        usermodehelper_enable();
+        if (!initramfs_async)
+                wait_for_initramfs();
+        return 0;
+}
+rootfs_initcall(populate_rootfs);
+root@b7ddb5872f7a:/app# head -30 /app/linux-6.9/init/main.c
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ *  linux/init/main.c
+ *
+ *  Copyright (C) 1991, 1992  Linus Torvalds
+ *
+ *  GK 2/5/95  -  Changed to support mounting root fs via NFS
+ *  Added initrd & change_root: Werner Almesberger & Hans Lermen, Feb '96
+ *  Moan early if gcc is old, avoiding bogus kernels - Paul Gortmaker, May '96
+ *  Simplified starting of init:  Michael A. Griffith <grif@acm.org>
+ */
+
+#define DEBUG           /* Enable initcall_debug */
+
+#include <linux/types.h>
+#include <linux/extable.h>
+#include <linux/module.h>
+#include <linux/proc_fs.h>
+#include <linux/binfmts.h>
+#include <linux/kernel.h>
+#include <linux/syscalls.h>
+#include <linux/stackprotector.h>
+#include <linux/string.h>
+#include <linux/ctype.h>
+#include <linux/delay.h>
+#include <linux/ioport.h>
+#include <linux/init.h>
+#include <linux/initrd.h>
+#include <linux/memblock.h>
+#include <linux/acpi.h>
+root@b7ddb5872f7a:/app# tail -30 /app/linux-6.9/init/main.c
+        padata_init();
+        page_alloc_init_late();
+
+        do_basic_setup();
+
+        kunit_run_all_tests();
+
+        wait_for_initramfs();
+        console_on_rootfs();
+
+        /*
+         * check if there is an early userspace init.  If yes, let it do all
+         * the work
+         */
+        if (init_eaccess(ramdisk_execute_command) != 0) {
+                ramdisk_execute_command = NULL;
+                prepare_namespace();
+        }
+
+        /*
+         * Ok, we have completed the initial bootup, and
+         * we're essentially up and running. Get rid of the
+         * initmem segments and start the user-mode stuff..
+         *
+         * rootfs is available now, try loading the public keys
+         * and default modules
+         */
+
+        integrity_load_keys();
+}
+root@b7ddb5872f7a:/app#

@@ -1,0 +1,81 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@9c19dc05eb46:/app# cd /app
+root@9c19dc05eb46:/app# jq -c '.rules[] | {id, pattern, threshold, severity}' /app/rules/detection_rules.json > /tmp/raw_rules.json
+root@9c19dc05eb46:/app# cat /tmp/raw_rules.json
+{"id":"SSH-BRUTE-FORCE","pattern":"Failed password for","threshold":5,"severity":"high"}
+{"id":"WEB-SCAN","pattern":"GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php","threshold":3,"severity":"medium"}
+{"id":"INVALID-USER","pattern":"invalid user","threshold":2,"severity":"low"}
+{"id":"SUDO-COMMAND","pattern":"sudo:.*COMMAND=","threshold":1,"severity":"info"}
+root@9c19dc05eb46:/app# cat > /app/debug.sh << 'EOF'
+> #!/bin/bash
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> jq -c '.rules[] | {id, pattern, threshold, severity}' "$RULES_FILE" > /tmp/raw_rules.json
+> # Read each rule
+> while IFS= read -r rule_obj; do
+>     echo "Reading rule: $rule_obj"
+>     rule_id=$(jq -r '.id' <<< "$rule_obj")
+>     pattern=$(jq -r '.pattern' <<< "$rule_obj")
+>     threshold=$(jq -r '.threshold' <<< "$rule_obj")
+>     severity=$(jq -r '.severity' <<< "$rule_obj")
+>     echo "  rule_id: $rule_id, pattern: $pattern, threshold: $threshold, severity: $severity"
+>     # Count matches
+>     AUTH_COUNT=$(grep -c "$pattern" "$LOG_DIR/auth.log")
+>     HTTP_COUNT=$(grep -c "$pattern" "$LOG_DIR/http.log")
+>     total=$((AUTH_COUNT + HTTP_COUNT))
+>     echo "    auth matches: $AUTH_COUNT, http matches: $HTTP_COUNT, total: $total"
+>     # Extract IPs
+>     AUTH_IPS=$(grep "$pattern" "$LOG_DIR/auth.log" | grep -oEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u)
+>     HTTP_IPS=$(grep "$pattern" "$LOG_DIR/http.log" | grep -oEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u)
+>     echo "    auth IPs: $AUTH_IPS"
+>     echo "    http IPs: $HTTP_IPS"
+>     ALL_IPS=$(echo "$AUTH_IPS $HTTP_IPS" | tr ' ' '\n' | sort -u)
+>     echo "    all unique IPs: $ALL_IPS"
+>     # Store
+>     # We'll simulate storing
+>     echo "    stored: $rule_id:$severity:$total:$ALL_IPS"
+> done < /tmp/raw_rules.json
+> EOF
+root@9c19dc05eb46:/app# chmod +x /app/debug.sh
+root@9c19dc05eb46:/app# ./debug.sh
+Reading rule: {"id":"SSH-BRUTE-FORCE","pattern":"Failed password for","threshold":5,"severity":"high"}
+  rule_id: SSH-BRUTE-FORCE, pattern: Failed password for, threshold: 5, severity: high
+    auth matches: 8, http matches: 0, total: 8
+    auth IPs: 198.51.100.23
+45.32.67.89
+    http IPs:
+    all unique IPs:
+198.51.100.23
+45.32.67.89
+    stored: SSH-BRUTE-FORCE:high:8:
+198.51.100.23
+45.32.67.89
+Reading rule: {"id":"WEB-SCAN","pattern":"GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php","threshold":3,"severity":"medium
+"}
+  rule_id: WEB-SCAN, pattern: GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php, threshold: 3, severity: medium
+    auth matches: 0, http matches: 0, total: 0
+    auth IPs:
+    http IPs:
+    all unique IPs:
+    stored: WEB-SCAN:medium:0:
+Reading rule: {"id":"INVALID-USER","pattern":"invalid user","threshold":2,"severity":"low"}
+  rule_id: INVALID-USER, pattern: invalid user, threshold: 2, severity: low
+    auth matches: 2, http matches: 0, total: 2
+    auth IPs: 198.51.100.23
+    http IPs:
+    all unique IPs:
+198.51.100.23
+    stored: INVALID-USER:low:2:
+198.51.100.23
+Reading rule: {"id":"SUDO-COMMAND","pattern":"sudo:.*COMMAND=","threshold":1,"severity":"info"}
+  rule_id: SUDO-COMMAND, pattern: sudo:.*COMMAND=, threshold: 1, severity: info
+    auth matches: 3, http matches: 0, total: 3
+    auth IPs:
+    http IPs:
+    all unique IPs:
+    stored: SUDO-COMMAND:info:3:
+root@9c19dc05eb46:/app#

@@ -1,0 +1,600 @@
+root@1cbcccffc615:/app# ls -la
+total 0
+drwxr-xr-x 1 root root 27 Jul  7 18:33 .
+drwxr-xr-x 1 root root 57 Jul  7 18:55 ..
+drwxr-xr-x 1 root root 30 Jul  7 18:33 logs
+drwxr-xr-x 2 root root 10 Jul  7 18:33 reports
+drwxr-xr-x 1 root root 42 Jul  7 18:33 rules
+root@1cbcccffc615:/app# ls -la logs/
+total 8
+drwxr-xr-x 1 root root   30 Jul  7 18:33 .
+drwxr-xr-x 1 root root   27 Jul  7 18:33 ..
+-rw-r--r-- 1 root root 1381 Jul  7 18:33 auth.log
+-rw-r--r-- 1 root root 1395 Jul  7 18:33 http.log
+root@1cbcccffc615:/app# ls -la rules/
+total 4
+drwxr-xr-x 1 root root  42 Jul  7 18:33 .
+drwxr-xr-x 1 root root  27 Jul  7 18:33 ..
+-rw-r--r-- 1 root root 888 Jul  7 18:33 detection_rules.json
+root@1cbcccffc615:/app# cat /app/rules/detection_rules.json
+{
+  "rules": [
+    {
+      "id": "SSH-BRUTE-FORCE",
+      "description": "SSH brute force attempt",
+      "pattern": "Failed password for",
+      "threshold": 5,
+      "timeframe": 60,
+      "severity": "high"
+    },
+    {
+      "id": "WEB-SCAN",
+      "description": "Web server scanning activity",
+      "pattern": "GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php",
+      "threshold": 3,
+      "timeframe": 300,
+      "severity": "medium"
+    },
+    {
+      "id": "INVALID-USER",
+      "description": "Login attempts with invalid users",
+      "pattern": "invalid user",
+      "threshold": 2,
+      "timeframe": 300,
+      "severity": "low"
+    },
+    {
+      "id": "SUDO-COMMAND",
+      "description": "Sudo command execution",
+      "pattern": "sudo:.*COMMAND=",
+      "threshold": 1,
+      "timeframe": 3600,
+      "severity": "info"
+    }
+  ]
+}
+root@1cbcccffc615:/app# head -5 /app/logs/auth.log
+Apr 10 08:12:33 server sshd[1234]: Accepted publickey for admin from 192.168.1.5 port 49123
+Apr 10 08:15:45 server sshd[1235]: Failed password for root from 45.32.67.89 port 54321
+Apr 10 08:15:48 server sshd[1235]: Failed password for root from 45.32.67.89 port 54322
+Apr 10 08:15:51 server sshd[1235]: Failed password for root from 45.32.67.89 port 54323
+Apr 10 08:15:54 server sshd[1235]: Failed password for root from 45.32.67.89 port 54324
+root@1cbcccffc615:/app# head -5 /app/logs/http.log
+192.168.1.5 - - [10/Apr/2023:08:30:42 +0000] "GET /index.html HTTP/1.1" 200 4523 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:15 +0000] "GET /admin HTTP/1.1" 403 1234 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:18 +0000] "GET /phpmyadmin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:20 +0000] "GET /wp-admin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:22 +0000] "GET /manager/html HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+root@1cbcccffc615:/app# ls -la
+total 0
+drwxr-xr-x 1 root root 27 Jul  7 18:33 .
+drwxr-xr-x 1 root root 57 Jul  7 18:55 ..
+drwxr-xr-x 1 root root 30 Jul  7 18:33 logs
+drwxr-xr-x 2 root root 10 Jul  7 18:33 reports
+drwxr-xr-x 1 root root 42 Jul  7 18:33 rules
+root@1cbcccffc615:/app# cat > /app/intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -euo pipefail
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> REPORT_DIR="/app/reports"
+>
+> # Parse JSON rules
+> function parse_rules() {
+>     jq -r '.rules[] | .id + "|" + .pattern + "|" + .severity + "|" + (.threshold|tostring) + "|" + (.timeframe|tostring)' "$RULES_FILE
+> }
+>
+> # Parse log line for auth.log
+> function parse_auth_line() {
+>     line="$1"
+>     # Extract timestamp (format: Apr 10 08:12:33)
+>     if [[ "$line" =~ (\w{3}) (\d{2}) (\d{2}):(\d{2}):(\d{2}) ]]; then
+>         date="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+>         time="${BASH_REMATCH[3]}:${BASH_REMATCH[4]}:${BASH_REMATCH[5]}"
+>         timestamp="$date $time"
+>         # Extract IP: "from <IP>"
+>         if [[ "$line" =~ from (\S+) ]]; then
+>             ip="${BASH_REMATCH[1]}"
+>         else
+>             ip=""
+>         fi
+>     else
+>         timestamp=""
+>         ip=""
+>     fi
+>     echo "$timestamp|$ip|$line"
+> }
+>
+> # Parse log line for http.log
+> function parse_http_line() {
+>     line="$1"
+>     # Extract timestamp: [10/Apr/2023:08:30:42 +0000]
+>     if [[ "$line" =~ \[(\d{2}/\w{3}/\d{4}):(\d{2}):(\d{2}):(\d{2}) ]]; then
+>         date="${BASH_REMATCH[1]}"
+>         time="${BASH_REMATCH[2]}:${BASH_REMATCH[3]}:${BASH_REMATCH[4]}"
+>         timestamp="$date $time"
+>         # Extract IP: first token after timestamp
+>         ip=$(echo "$line" | awk '{print $1}')
+>     else
+>         timestamp=""
+>         ip=""
+>     fi
+>     echo "$timestamp|$ip|$line"
+> }
+>
+> # Main detection
+> function main() {
+>     # Ensure report directory exists
+>     mkdir -p "$REPORT_DIR"
+>
+>     # Get current time in epoch seconds
+>     current_time=$(date +%s)
+>
+>     # Parse rules
+>     rules=$(parse_rules)
+>     while IFS="|" read -r rule_id pattern severity threshold timeframe; do
+>         # Initialize data for this rule
+>         declare -A ip_counts
+>         # Scan auth.log
+>         while IFS= read -r auth_line; do
+>             parsed=$(parse_auth_line "$auth_line")
+>             if [[ -n "$parsed" ]]; then
+>                 ts_ip_line=$(echo "$parsed" | tr '|' '\n')
+>                 timestamp=$(echo "$ts_ip_line" | head -1)
+>                 ip=$(echo "$ts_ip_line" | tail -1)
+>                 if [[ "$timestamp" =~ ^[A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then
+>                     # Convert timestamp to epoch seconds
+>                     epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
+>                     if [[ $epoch -ge $((current_time - timeframe)) ]]; then
+>                         if [[ "$line" =~ $pattern ]]; then
+>                             ((ip_counts[$ip]++))
+>                         fi
+>                     fi
+>                 fi
+>             fi
+>         done < <(grep -h "$pattern" "$LOG_DIR/auth.log")
+>
+>         # Scan http.log
+>         while IFS= read -r http_line; do
+>             parsed=$(parse_http_line "$http_line")
+>             if [[ -n "$parsed" ]]; then
+>                 ts_ip_line=$(echo "$parsed" | tr '|' '\n')
+>                 timestamp=$(echo "$ts_ip_line" | head -1)
+>                 ip=$(echo "$ts_ip_line" | tail -1)
+>                 if [[ "$timestamp" =~ ^[A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then
+>                     epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
+>                     if [[ $epoch -ge $((current_time - timeframe)) ]]; then
+>                         if [[ "$http_line" =~ $pattern ]]; then
+>                             ((ip_counts[$ip]++))
+>                         fi
+>                     fi
+>                 fi
+>             fi
+>         done < <(grep -h "$pattern" "$LOG_DIR/http.log")
+>
+>         # Prepare data for JSON
+>         # Build IPs list
+>         ips=$(echo "${!ip_counts[@]}" | tr '\n' ',' | sed 's/,$//')
+>         # Count total matches
+>         total=$(echo "${#ip_counts[@]}" | awk '{sum += $1} END {print sum}')
+>
+>         # Add to events array
+>         # We'll store in temporary files for JSON generation
+>         echo "$rule_id|$severity|$total|$ips" >> "$REPORT_DIR/events.txt"
+>
+>         # For alert generation, we need to check threshold
+>         if [[ $total -ge $threshold ]]; then
+>             echo "$rule_id|$severity|$total|$ips" >> "$REPORT_DIR/alerts.txt"
+>         fi
+>     done <<< "$rules"
+>
+>     # Generate report.json
+>     if [[ -f "$REPORT_DIR/events.txt" ]]; then
+>         # Build statistics dictionary
+>         stats=$(while IFS="|" read -r rule_id severity total ips; do
+>             echo "$rule_id:$total"
+>         done < "$REPORT_DIR/events.txt" | tr '\n' ',' | sed 's/,$//')
+>
+>         # Build events array
+>         events=$(cat "$REPORT_DIR/events.txt" | while IFS="|" read -r rule_id severity total ips; do
+>             echo "    {\n      "id": \"$rule_id\",\n      "severity": \"$severity\",\n      "matches": $total,\n      "ips": \"$ips\"\n    },"
+>         done | sed '$s/,$//')
+>
+>         # Create report.json
+>         cat > "$REPORT_DIR/report.json" << EOF
+> {
+>   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+>   "events": [
+> $events
+>   ],
+>   "statistics": {
+>     $stats
+>   }
+> }
+> EOF
+root@1cbcccffc615:/app#     fi
+bash: syntax error near unexpected token `fi'
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app#     # Generate alert.json
+root@1cbcccffc615:/app#     if [[ -f "$REPORT_DIR/alerts.txt" ]]; then
+>         alerts=$(cat "$REPORT_DIR/alerts.txt" | while IFS="|" read -r rule_id severity total ips; do
+>             echo "    {\n      "id": \"$rule_id\",\n      "severity": \"$severity\",\n      "matches": $total,\n      "ips": \"$ips\"\n    },"
+>         done | sed '$s/,$//')
+>
+>         cat > "$REPORT_DIR/alert.json" << EOF
+> {
+>   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+>   "alerts": [
+> $alerts
+>   ]
+> }
+> EOF
+>     fi
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app#     echo "Detection complete. Reports written to $REPORT_DIR/"
+Detection complete. Reports written to /
+root@1cbcccffc615:/app# }
+bash: syntax error near unexpected token `}'
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app# # Execute main
+root@1cbcccffc615:/app# main
+bash: main: command not found
+root@1cbcccffc615:/app# EOF
+bash: EOF: command not found
+root@1cbcccffc615:/app# chmod +x /app/intrusion_detector.sh
+root@1cbcccffc615:/app# cat > /app/response.sh << 'EOF'
+> #!/bin/bash
+> set -euo pipefail
+>
+> LOG_DIR="/app/logs"
+> REPORT_DIR="/app/reports"
+>
+> function parse_auth_line_for_ip() {
+>     line="$1"
+>     ip="$2"
+>     # Extract timestamp (format: Apr 10 08:12:33)
+>     if [[ "$line" =~ (\w{3}) (\d{2}) (\d{2}):(\d{2}):(\d{2}) ]]; then
+>         date="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+>         time="${BASH_REMATCH[3]}:${BASH_REMATCH[4]}:${BASH_REMATCH[5]}"
+>         timestamp="$date $time"
+>     else
+>         timestamp=""
+>     fi
+>     echo "$timestamp|$line"
+> }
+>
+> function parse_http_line_for_ip() {
+>     line="$1"
+>     ip="$2"
+>     # Extract timestamp: [10/Apr/2023:08:30:42 +0000]
+>     if [[ "$line" =~ \[(\d{2}/\w{3}/\d{4}):(\d{2}):(\d{2}):(\d{2}) ]]; then
+>         date="${BASH_REMATCH[1]}"
+>         time="${BASH_REMATCH[2]}:${BASH_REMATCH[3]}:${BASH_REMATCH[4]}"
+>         timestamp="$date $time"
+>     else
+>         timestamp=""
+>     fi
+>     echo "$timestamp|$line"
+> }
+>
+> function main() {
+>     if [[ $# -neq 1 ]]; then
+>         echo "Usage: $0 <IP>"
+>         exit 1
+>     fi
+>     ip="$1"
+>
+>     # Get current timestamp for report
+>     timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+>
+>     # Create report filename
+>     report_file="$REPORT_DIR/incident_$ip$_$timestamp.txt"
+>
+>     # Write header
+>     echo "=== INCIDENT REPORT ===" > "$report_file"
+>     echo "IP: $ip" >> "$report_file"
+>     echo "Timestamp: $timestamp" >> "$report_file"
+>     echo "" >> "$report_file"
+>
+>     # Extract from auth.log
+>     echo "=== AUTH LOG ===" >> "$report_file"
+>     grep -q "from $ip" "$LOG_DIR/auth.log" || echo "No matches found in auth.log" >> "$report_file"
+>     grep "from $ip" "$LOG_DIR/auth.log" >> "$report_file"
+>     echo "" >> "$report_file"
+>
+>     # Extract from http.log
+>     echo "=== HTTP LOG ===" >> "$report_file"
+>     grep -q "$ip" "$LOG_DIR/http.log" || echo "No matches found in http.log" >> "$report_file"
+>     grep "$ip" "$LOG_DIR/http.log" >> "$report_file"
+>
+>     # Add summary
+>     echo "" >> "$report_file"
+>     echo "=== SUMMARY ===" >> "$report_file"
+>     echo "Total lines in auth.log for IP: $(grep -c "from $ip" "$LOG_DIR/auth.log")" >> "$report_file"
+>     echo "Total lines in http.log for IP: $(grep -c "$ip" "$LOG_DIR/http.log")" >> "$report_file"
+>
+>     echo "Report written to $report_file"
+> }
+>
+> main
+> EOF
+root@1cbcccffc615:/app# chmod +x /app/response.sh
+root@1cbcccffc615:/app# cd /app
+root@1cbcccffc615:/app# ./intrusion_detector.sh
+./intrusion_detector.sh: line 136: unexpected EOF while looking for matching `"'
+root@1cbcccffc615:/app# ls -la /app/reports/
+total 0
+drwxr-xr-x 2 root root 10 Jul  7 18:33 .
+drwxr-xr-x 1 root root 66 Jul  7 18:56 ..
+root@1cbcccffc615:/app# cat /app/reports/report.json
+cat: /app/reports/report.json: No such file or directory
+root@1cbcccffc615:/app# cat /app/reports/alert.json
+cat: /app/reports/alert.json: No such file or directory
+root@1cbcccffc615:/app# cat /app/intrusion_detector.sh | head -50
+#!/bin/bash
+set -euo pipefail
+
+LOG_DIR="/app/logs"
+RULES_FILE="/app/rules/detection_rules.json"
+REPORT_DIR="/app/reports"
+
+# Parse JSON rules
+function parse_rules() {
+    jq -r '.rules[] | .id + "|" + .pattern + "|" + .severity + "|" + (.threshold|tostring) + "|" + (.timeframe|tostring)' "$RULES_FILE
+}
+
+# Parse log line for auth.log
+function parse_auth_line() {
+    line="$1"
+    # Extract timestamp (format: Apr 10 08:12:33)
+    if [[ "$line" =~ (\w{3}) (\d{2}) (\d{2}):(\d{2}):(\d{2}) ]]; then
+        date="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+        time="${BASH_REMATCH[3]}:${BASH_REMATCH[4]}:${BASH_REMATCH[5]}"
+        timestamp="$date $time"
+        # Extract IP: "from <IP>"
+        if [[ "$line" =~ from (\S+) ]]; then
+            ip="${BASH_REMATCH[1]}"
+        else
+            ip=""
+        fi
+    else
+        timestamp=""
+        ip=""
+    fi
+    echo "$timestamp|$ip|$line"
+}
+
+# Parse log line for http.log
+function parse_http_line() {
+    line="$1"
+    # Extract timestamp: [10/Apr/2023:08:30:42 +0000]
+    if [[ "$line" =~ \[(\d{2}/\w{3}/\d{4}):(\d{2}):(\d{2}):(\d{2}) ]]; then
+        date="${BASH_REMATCH[1]}"
+        time="${BASH_REMATCH[2]}:${BASH_REMATCH[3]}:${BASH_REMATCH[4]}"
+        timestamp="$date $time"
+        # Extract IP: first token after timestamp
+        ip=$(echo "$line" | awk '{print $1}')
+    else
+        timestamp=""
+        ip=""
+    fi
+    echo "$timestamp|$ip|$line"
+}
+
+root@1cbcccffc615:/app# wc -l /app/intrusion_detector.sh
+139 /app/intrusion_detector.sh
+root@1cbcccffc615:/app# rm /app/intrusion_detector.sh
+root@1cbcccffc615:/app# cat > /app/intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -euo pipefail
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> REPORT_DIR="/app/reports"
+>
+> # Parse JSON rules
+> function parse_rules() {
+>     jq -r '.rules[] | .id + "|" + .pattern + "|" + .severity + "|" + (.threshold|tostring) + "|" + (.timeframe|tostring)' "$RULES_FILE
+> }
+>
+> # Parse log line for auth.log
+> function parse_auth_line() {
+>     line="$1"
+>     # Extract timestamp (format: Apr 10 08:12:33)
+>     if [[ "$line" =~ (\w{3}) (\d{2}) (\d{2}):(\d{2}):(\d{2}) ]]; then
+>         date="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+>         time="${BASH_REMATCH[3]}:${BASH_REMATCH[4]}:${BASH_REMATCH[5]}"
+>         timestamp="$date $time"
+>         # Extract IP: "from <IP>"
+>         if [[ "$line" =~ from (\S+) ]]; then
+>             ip="${BASH_REMATCH[1]}"
+>         else
+>             ip=""
+>         fi
+>     else
+>         timestamp=""
+>         ip=""
+>     fi
+>     echo "$timestamp|$ip|$line"
+> }
+>
+> # Parse log line for http.log
+> function parse_http_line() {
+>     line="$1"
+>     # Extract timestamp: [10/Apr/2023:08:30:42 +0000]
+>     if [[ "$line" =~ \[(\d{2}/\w{3}/\d{4}):(\d{2}):(\d{2}):(\d{2}) ]]; then
+>         date="${BASH_REMATCH[1]}"
+>         time="${BASH_REMATCH[2]}:${BASH_REMATCH[3]}:${BASH_REMATCH[4]}"
+>         timestamp="$date $time"
+>         # Extract IP: first token after timestamp
+>         ip=$(echo "$line" | awk '{print $1}')
+>     else
+>         timestamp=""
+>         ip=""
+>     fi
+>     echo "$timestamp|$ip|$line"
+> }
+>
+O> # Main detection
+> function main() {
+>     # Ensure report directory exists
+>     mkdir -p "$REPORT_DIR"
+>
+>     # Get current time in epoch seconds
+>     current_time=$(date +%s)
+>
+>     # Parse rules
+>     rules=$(parse_rules)
+>     while IFS="|" read -r rule_id pattern severity threshold timeframe; do
+>         # Initialize data for this rule
+>         declare -A ip_counts
+>         # Scan auth.log
+>         while IFS= read -r auth_line; do
+>             parsed=$(parse_auth_line "$auth_line")
+>             if [[ -n "$parsed" ]]; then
+>                 ts_ip_line=$(echo "$parsed" | tr '|' '\n')
+>                 timestamp=$(echo "$ts_ip_line" | head -1)
+>                 ip=$(echo "$ts_ip_line" | tail -1)
+>                 if [[ "$timestamp" =~ ^[A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then
+>                     # Convert timestamp to epoch seconds
+>                     epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
+>                     if [[ $epoch -ge $((current_time - timeframe)) ]]; then
+>                         if [[ "$line" =~ $pattern ]]; then
+>                             ((ip_counts[$ip]++))
+>                         fi
+>                     fi
+>                 fi
+>             fi
+>         done < <(grep -h "$pattern" "$LOG_DIR/auth.log")
+>
+>         # Scan http.log
+>         while IFS= read -r http_line; do
+>             parsed=$(parse_http_line "$http_line")
+>             if [[ -n "$parsed" ]]; then
+>                 ts_ip_line=$(echo "$parsed" | tr '|' '\n')
+>                 timestamp=$(echo "$ts_ip_line" | head -1)
+>                 ip=$(echo "$ts_ip_line" | tail -1)
+>                 if [[ "$timestamp" =~ ^[A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then
+>                     epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
+>                     if [[ $epoch -ge $((current_time - timeframe)) ]]; then
+>                         if [[ "$http_line" =~ $pattern ]]; then
+>                             ((ip_counts[$ip]++))
+>                         fi
+>                     fi
+>                 fi
+>             fi
+>         done < <(grep -h "$pattern" "$LOG_DIR/http.log")
+>
+>         # Prepare data for JSON
+>         # Build IPs list
+>         ips=$(echo "${!ip_counts[@]}" | tr '\n' ',' | sed 's/,$//')
+>         # Count total matches
+>         total=$(echo "${#ip_counts[@]}" | awk '{sum += $1} END {print sum}')
+>
+>         # Add to events array
+>         # We'll store in temporary files for JSON generation
+>         echo "$rule_id|$severity|$total|$ips" >> "$REPORT_DIR/events.txt"
+>
+>         # For alert generation, we need to check threshold
+>         if [[ $total -ge $threshold ]]; then
+>             echo "$rule_id|$severity|$total|$ips" >> "$REPORT_DIR/alerts.txt"
+>         fi
+>     done <<< "$rules"
+>
+>     # Generate report.json
+>     if [[ -f "$REPORT_DIR/events.txt" ]]; then
+>         # Build statistics dictionary
+>         stats=$(while IFS="|" read -r rule_id severity total ips; do
+>             echo "$rule_id:$total"
+>         done < "$REPORT_DIR/events.txt" | tr '\n' ',' | sed 's/,$//')
+>
+>         # Build events array
+>         events=$(cat "$REPORT_DIR/events.txt" | while IFS="|" read -r rule_id severity total ips; do
+>             echo "    {\n      "id": \"$rule_id\",\n      "severity": \"$severity\",\n      "matches": $total,\n      "ips": \"$ips\"\n    },"
+>         done | sed '$s/,$//')
+>
+>         # Create report.json
+>         cat > "$REPORT_DIR/report.json" << 'EOF'
+> {
+>   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+>   "events": [
+> $events
+>   ],
+>   "statistics": {
+>     $stats
+>   }
+> }
+> EOF
+root@1cbcccffc615:/app#     fi
+bash: syntax error near unexpected token `fi'
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app#     # Generate alert.json
+root@1cbcccffc615:/app#     if [[ -f "$REPORT_DIR/alerts.txt" ]]; then
+>         alerts=$(cat "$REPORT_DIR/alerts.txt" | while IFS="|" read -r rule_id severity total ips; do
+>             echo "    {\n      "id": \"$rule_id\",\n      "severity": \"$severity\",\n      "matches": $total,\n      "ips": \"$ips\"\n    },"
+>         done | sed '$s/,$//')
+>
+>         cat > "$REPORT_DIR/alert.json" << 'EOF'
+> {
+>   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+>   "alerts": [
+> $alerts
+>   ]
+> }
+> EOF
+>     fi
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app#     echo "Detection complete. Reports written to $REPORT_DIR/"
+Detection complete. Reports written to /
+root@1cbcccffc615:/app# }
+bash: syntax error near unexpected token `}'
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app# # Execute main
+root@1cbcccffc615:/app# main
+bash: main: command not found
+root@1cbcccffc615:/app# EOF
+bash: EOF: command not found
+root@1cbcccffc615:/app# chmod +x /app/intrusion_detector.sh
+root@1cbcccffc615:/app# cd /app
+root@1cbcccffc615:/app# ./intrusion_detector.sh
+./intrusion_detector.sh: line 136: unexpected EOF while looking for matching `"'
+root@1cbcccffc615:/app# ls -la /app/reports/
+total 0
+drwxr-xr-x 2 root root 10 Jul  7 18:33 .
+drwxr-xr-x 1 root root 66 Jul  7 18:56 ..
+root@1cbcccffc615:/app# cat /app/reports/report.json
+cat: /app/reports/report.json: No such file or directory
+root@1cbcccffc615:/app# cat /app/reports/alert.json
+cat: /app/reports/alert.json: No such file or directory
+root@1cbcccffc615:/app# which jq
+/usr/bin/jq
+root@1cbcccffc615:/app# jq --version
+jq-1.6
+root@1cbcccffc615:/app# wc -l /app/logs/auth.log /app/logs/http.log
+  14 /app/logs/auth.log
+  14 /app/logs/http.log
+  28 total
+root@1cbcccffc615:/app# tail -5 /app/logs/auth.log
+Apr 10 11:45:10 server sudo: devuser : TTY=pts/1 ; PWD=/var/www ; USER=root ; COMMAND=/usr/bin/vim /etc/nginx/nginx.conf
+Apr 10 12:57:45 server sshd[1245]: Accepted password for guest from 192.168.2.10 port 52123
+Apr 10 13:10:22 server sshd[1250]: Failed password for invalid user admin123 from 198.51.100.23 port 49222
+Apr 10 13:10:25 server sshd[1250]: Failed password for invalid user admin123 from 198.51.100.23 port 49223
+Apr 10 14:25:33 server sudo: guest : command not allowed ; TTY=pts/3 ; PWD=/home/guest ; USER=root ; COMMAND=/usr/bin/less /var/log/auth.log
+root@1cbcccffc615:/app# tail -5 /app/logs/http.log
+192.168.1.5 - - [10/Apr/2023:14:33:18 +0000] "GET /documentation HTTP/1.1" 200 12532 "-" "Mozilla/5.0"
+8.8.8.8 - - [10/Apr/2023:14:35:22 +0000] "HEAD / HTTP/1.1" 200 0 "-" "curl/7.68.0"
+127.0.0.1 - - [10/Apr/2023:14:40:12 +0000] "GET /health HTTP/1.1" 200 42 "-" "Monitoring/1.0"
+45.32.67.89 - - [10/Apr/2023:15:12:35 +0000] "GET /.env HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+45.32.67.89 - - [10/Apr/2023:15:12:38 +0000] "GET /config.php HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+root@1cbcccffc615:/app# /app/response.sh 192.168.1.5
+/app/response.sh: line 11: syntax error in conditional expression: unexpected token `('
+root@1cbcccffc615:/app# cat /app/reports/incident_192.168.1.5*.txt
+cat: '/app/reports/incident_192.168.1.5*.txt': No such file or directory
+root@1cbcccffc615:/app# cd /app
+root@1cbcccffc615:/app# chmod +x /app/response.sh
+root@1cbcccffc615:/app# /app/response.sh 192.168.1.5
+/app/response.sh: line 11: syntax error in conditional expression: unexpected token `('
+root@1cbcccffc615:/app# cat /app/reports/incident_192.168.1.5*.txt
+cat: '/app/reports/incident_192.168.1.5*.txt': No such file or directory
+root@1cbcccffc615:/app#

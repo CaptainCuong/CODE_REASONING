@@ -1,0 +1,120 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@57bf9d8a0fc9:/app# cd /app
+root@57bf9d8a0fc9:/app# cat > run_sentiment.py << 'EOF'
+> import sys
+> import os
+> import json
+> from flask import Flask, request, jsonify
+> from transformers import AutoModelForSequenceClassification, AutoTokenizer
+>
+> # Model and tokenizer paths
+> model_path = '/app/model_cache/sentiment_model'
+> tokenizer_path = model_path + '/tokenizer'
+>
+> # Load model and tokenizer
+> model = AutoModelForSequenceClassification.from_pretrained(model_path)
+> tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+>
+> print('Model loaded successfully')
+>
+> # Create Flask app
+> app = Flask(__name__)
+>
+> @app.route('/sentiment', methods=['POST'])
+> def sentiment():
+>     try:
+>         data = request.get_json()
+>         if 'text' not in data:
+>             return {'error': 'Missing text field in request'}, 400
+>         text = data['text']
+>         # Tokenize
+>         inputs = tokenizer(text, return_tensors='pt')
+>         # Predict
+>         outputs = model(**inputs)
+>         # Get probabilities
+>         probabilities = outputs.logits
+>         # Assuming the model outputs two classes: positive and negative (order may vary)
+>         # We'll map to positive/negative based on the highest probability
+>         pos_prob = probabilities[0].item() if probabilities[0].item() > probabilities[1].item() else probabilities[1].item()
+>         neg_prob = probabilities[1].item() if probabilities[1].item() > probabilities[0].item() else probabilities[0].item()
+>         # Normalize to confidence scale 0-1
+>         total = pos_prob + neg_prob
+>         if total == 0:
+>             confidence = {'positive': 0.5, 'negative': 0.5}
+>         else:
+>             confidence = {'positive': pos_prob / total, 'negative': neg_prob / total}
+>         # Determine sentiment
+>         if pos_prob > neg_prob:
+>             sentiment = 'positive'
+>         else:
+>             sentiment = 'negative'
+>         # Return
+>         return {
+>             'sentiment': sentiment,
+>             'confidence': confidence
+>         }
+>     except Exception as e:
+>         return {'error': str(e)}, 500
+>
+> if __name__ == '__main__':
+>     # Run on port 5000, host 0.0.0.0
+>     app.run(host='0.0.0.0', port=5000, debug=False)
+> EOF
+root@57bf9d8a0fc9:/app# python3 run_sentiment.py &
+[1] 1693
+root@57bf9d8a0fc9:/app# Traceback (most recent call last):
+  File "/app/run_sentiment.py", line 12, in <module>
+    model = AutoModelForSequenceClassification.from_pretrained(model_path)
+  File "/usr/local/lib/python3.13/site-packages/transformers/models/auto/auto_factory.py", line 336, in from_pretrained
+    config, kwargs = AutoConfig.from_pretrained(
+                     ~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        pretrained_model_name_or_path,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        **kwargs,
+        ^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/transformers/models/auto/configuration_auto.py", line 421, in from_pretrained
+    raise ValueError(
+    ...<2 lines>...
+    )
+ValueError: Unrecognized model in /app/model_cache/sentiment_model. Should have a `model_type` key in its config.json.
+cat > test_sentiment.py << 'EOF'
+> import requests
+> import json
+>
+> # Test endpoint
+> url = 'http://localhost:5000/sentiment'
+> test_texts = [
+>     "I love this product! It's amazing.",
+>     "This is the worst experience ever.",
+>     "It's okay, not great but not bad."
+> ]
+>
+> for i, text in enumerate(test_texts):
+>     payload = {'text': text}
+>     try:
+>         response = requests.post(url, json=payload, timeout=10)
+>         if response.status_code == 200:
+>             print(f'Test {i+1}: Sentiment = {response.json().get("sentiment")}')
+>             print(f'  Confidence: {response.json().get("confidence")}')
+>         else:
+>             print(f'Test {i+1}: Error with status {response.status_code}')
+>             print(f'  Response: {response.text}')
+>     except Exception as e:
+>         print(f'Test {i+1}: Exception {e}')
+> EOF
+[1]+  Exit 1                  python3 run_sentiment.py
+root@57bf9d8a0fc9:/app# python3 test_sentiment.py
+Test 1: Exception HTTPConnectionPool(host='localhost', port=5000): Max retries exceeded with url: /sentiment (Caused by NewConnectionError("HTTPConnection(host=
+'localhost', port=5000): Failed to establish a new connection: [Errno 111] Connection refused"))
+Test 2: Exception HTTPConnectionPool(host='localhost', port=5000): Max retries exceeded with url: /sentiment (Caused by NewConnectionError("HTTPConnection(host=
+'localhost', port=5000): Failed to establish a new connection: [Errno 111] Connection refused"))
+Test 3: Exception HTTPConnectionPool(host='localhost', port=5000): Max retries exceeded with url: /sentiment (Caused by NewConnectionError("HTTPConnection(host=
+'localhost', port=5000): Failed to establish a new connection: [Errno 111] Connection refused"))
+root@57bf9d8a0fc9:/app#

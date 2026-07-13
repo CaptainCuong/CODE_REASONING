@@ -1,0 +1,35 @@
+<think>
+We are getting an error because the function `curvefit` does not exist. The correct function is ` curve_fit`. Let's update the script to use `curve_fit` and also ensure we are using the correct function name. We'll also need to adjust the function signature because `model` expects 4 parameters, but `curfit` expects a callable that returns the model value. We'll rewrite the function to return the model value.
+
+Additionally, we are loading the data incorrectly: we are splitting each line by comma and then splitting each part by whitespace, which gives us the correct numbers. However, we are taking `len(numbers)//2`? Actually, we are splitting each part by whitespace and taking the first token as x and the second token as y? Wait, the data format is: each line has two pairs of numbers separated by a tab. Example: "47183,554644    19261,547207". Splitting by comma gives two parts: "47183,554644" and "19261,547207". Then splitting each part by whitespace gives two numbers per part. So the total numbers are 4. So we should take numbers[::2] as x and numbers[1::2] as y. That's what we did.
+
+But note: the numbers are in the order: x1, y1, x2, y2, ... So our loading is correct.
+
+Now, let's fix the script and run it. We'll also print the parameters to verify.
+
+We'll create a new script that uses `curfit` and also handles the case where there might be multiple peaks in a peak? The `findpeaks` returns all peak indices, so we should only take the first two.
+
+We'll also adjust the initial guess for gamma: we can set gamma to a reasonable value (maybe 20) and let the fit adjust.
+
+Let's write the script again.
+</think>
+
+{
+  "analysis": "The error is due to using 'curvefit' instead of 'curfit'. We need to correct that. Also, we need to ensure the data loading is correct. The previous results.json still has the old values because the script failed. Let's write a corrected script and run it.",
+  "plan": "1. Write a corrected script using 'curfit' and proper function signature.\n2. Run the script and check output.\n3. Verify the JSON file content.\n4. If the gamma values are still negative, we may need to adjust the initial guess for gamma (maybe set to a larger value).",
+  "commands": [
+    {
+      "keystrokes": "cat > /app/fit8.py << 'EOF'\nimport numpy as np\nimport scipy\nfrom scipy import optimize\n\ndef load_data(filename):\n    with open(filename) as f:\n        lines = f.readlines()\n    numbers = []\n    for line in lines[1:]:\n        parts = line.strip().split(',')\n        for part in parts:\n            nums = part.split()\n            if nums:\n                numbers.append(float(nums[0]))\n                if len(nums) > 1:\n                    numbers.append(float(nums[1]))\n    if len(numbers) % 2 != 0:\n        numbers = numbers[:-1]\n    x = numbers[::2]\n    y = numbers[1::2]\n    return x, y\n\ndef fit_single_gaussian(x, y):\n    # Find the index of the maximum y\n    idx = np.argmax(y)\n    x0 = x[idx]\n    # Initial guess for gamma: let's set to 20\n    gamma = 20\n    min_y = np.min(y)\n    max_y = np.max(y)\n    amp = max_y - min_y\n    offset = min_y\n    # Use curfit with a single function.\n    def model(x, gamma, offset, amp, x0):\n        return amp * np.exp(-((x - x0)/gamma)**2) + offset\n    # We'll pass x0 as a constant in the model by using a lambda\n    model = lambda x: model(x, gamma, offset, amp, x0)\n    popt, pcov = optimize.curfit(model, x, y, p0=[gamma, offset, amp])\n    # popt: [gamma, offset, amp]\n    return x0, popt[0], popt[1], popt[2]\n\ndef main():\n    x, y = load_data('/app/graphene.dat')\n    # First find the peak indices using findpeaks\n    import scipy.signal\n    peak_indices, _ = scipy.signal.find_peaks(y)\n    print('Peak indices:', peak_indices)\n    print('Peak heights:', [y[i] for i in peak_indices])\n    # Fit each peak\n    params = []\n    for idx in peak_indices:\n        x0, gamma, offset, amp = fit_single_gaussian(x[idx-1:idx+1], y[idx-1:idx+1])\n        params.append([x0, gamma, offset, amp])\n    print('Params:', params)\n    # Combine offset and amplitudes\n    offset = params[0][2]\n    amplitudes = [p[3] for p in params]\n    # Write results\n    results = {}\n    results['G'] = {\n        'x0': float(params[0][0]),\n        'gamma': float(params[0][1]),\n        'amplitude': float(amplitudes[0]),\n        'offset': float(offset)\n    }\n    results['2D'] = {\n        'x0': float(params[1][0]),\n        'gamma': float(params[1][1]),\n        'amplitude': float(amplitudes[1]),\n        'offset': float(offset)\n    }\n    with open('/app/results.json', 'w') as f:\n        json.dump(results, f, indent=2)\n    print('Results written to /app/results.json')\n\nif __name__ == '__main__':\n    import json\n    main()\nEOF\n",
+      "duration": 1.0
+    },
+    {
+      "keystrokes": "python3 /app/fit8.py\n",
+      "duration": 2.0
+    },
+    {
+      "keystrokes": "cat /app/results.json\n",
+      "duration": 0.1
+    }
+  ],
+  "task_complete": false
+}

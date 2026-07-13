@@ -1,0 +1,202 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@9c19dc05eb46:/app# which jq
+/usr/bin/jq
+root@9c19dc05eb46:/app# apt-get update && apt-get install -y jq 2>&1 | tail -5
+Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [48.0 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [316 kB]
+Fetched 9367 kB in 1s (10.5 MB/s)
+Reading package lists... Done
+Reading package lists...
+Building dependency tree...
+Reading state information...
+jq is already the newest version (1.6-2.1+deb12u2).
+0 upgraded, 0 newly installed, 0 to remove and 47 not upgraded.
+root@9c19dc05eb46:/app# cd /app
+root@9c19dc05eb46:/app# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> OUTPUT_DIR="/app/reports"
+>
+> # Ensure output directory exists
+> mkdir -p "$OUTPUT_DIR"
+>
+> # Read JSON rules
+> RULES=$(jq -r '.rules[] | "\(.id):\(.pattern):\(.threshold):\(.severity)"' "$RULES_FILE")
+>
+> # Initialize arrays
+> ALERTS=()
+> REPORT_EVENTS=()
+> STATS=()
+>
+> # Timestamp function
+> timestamp() {
+>     date -u +'%Y-%m-%dT%H:%M:%SZ'
+> }
+>
+> # Process each rule
+> while IFS=: read -r rule_id pattern threshold severity; do
+>     # Count matches in auth.log
+>     AUTH_COUNT=$(grep -c "$pattern" "$LOG_DIR/auth.log")
+>     # Count matches in http.log
+>     HTTP_COUNT=$(grep -c "$pattern" "$LOG_DIR/http.log")
+>     total_matches=$((AUTH_COUNT + HTTP_COUNT))
+>
+>     # Collect matching IPs from both logs
+>     AUTH_IPS=$(grep "$pattern" "$LOG_DIR/auth.log" | grep -oEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u)
+>     HTTP_IPS=$(grep "$pattern" "$LOG_DIR/http.log" | grep -oEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u)
+>     # Combine unique IPs
+>     ALL_IPS=$(echo "$AUTH_IPS $HTTP_IPS" | tr ' ' '\n' | sort -u)
+>
+>     # Store for statistics
+>     STATS+=("$rule_id:$total_matches")
+>
+>     # If matches >= threshold, add to alerts
+>     if [ $total_matches -ge $threshold ]; then
+>         ALERTS+=("$rule_id:$severity:$total_matches:$ALL_IPS")
+>     fi
+>
+>     # Always add to report events
+>     REPORT_EVENTS+=("$rule_id:$severity:$total_matches:$ALL_IPS")
+>
+> done <<< "$RULES"
+>
+> # Generate alert.json
+> cat > "$OUTPUT_DIR/alert.json" << EOL
+> {
+>   "timestamp": "$(timestamp)",
+>   "alerts": [
+> EOL
+>
+> for alert in "${ALERTS[@]}"; do
+>     rule_id=${alert%%:*}
+>     severity=${alert#*:}
+>     severity=${severity%%:*}
+>     matches=${alert#*:}
+>     matches=${matches%%:*}
+>     ips=${alert#*:}
+>     ips=${ips#*:}
+>     # Format IPs as comma-separated list
+>     ip_list=$(echo "$ips" | tr '\n' ',' | sed 's/,/, /g')
+>     cat >> "$OUTPUT_DIR/alert.json" << EOL
+>     {
+>       "id": "$rule_id",
+>       "severity": "$severity",
+>       "matches": $matches,
+>       "ips": "$ip_list"
+>     },
+> EOL
+> done
+>
+> # Remove trailing comma
+> cat > "$OUTPUT_DIR/alert.json" << EOL
+> {
+>   "timestamp": "$(timestamp)",
+>   "alerts": [
+> EOL
+>
+> for alert in "${ALERTS[@]}"; do
+>     rule_id=${alert%%:*}
+>     severity=${alert#*:}
+>     severity=${severity%%:*}
+>     matches=${alert#*:}
+>     matches=${matches%%:*}
+>     ips=${alert#*:}
+>     ips=${ips#*:}
+>     ip_list=$(echo "$ips" | tr '\n' ',' | sed 's/,/, /g')
+>     cat >> "$OUTPUT_DIR/alert.json" << EOL
+>     {
+>       "id": "$rule_id",
+>       "severity": "$severity",
+>       "matches": $matches,
+>       "ips": "$ip_list"
+>     }
+> EOL
+> done
+>
+> cat >> "$OUTPUT_DIR/alert.json" << EOL
+>   ]
+> }
+> EOL
+>
+> # Generate report.json
+> cat > "$OUTPUT_DIR/report.json" << EOL
+> {
+>   "timestamp": "$(timestamp)",
+>   "events": [
+> EOL
+>
+> for event in "${REPORT_EVENTS[@]}"; do
+>     rule_id=${event%%:*}
+>     severity=${event#*:}
+>     severity=${severity%%:*}
+>     matches=${event#*:}
+>     matches=${matches%%:*}
+>     ips=${event#*:}
+>     ips=${ips#*:}
+>     ip_list=$(echo "$ips" | tr '\n' ',' | sed 's/,/, /g')
+>     cat >> "$OUTPUT_DIR/report.json" << EOL
+>     {
+>       "id": "$rule_id",
+>       "severity": "$severity",
+>       "matches": $matches,
+>       "ips": "$ip_list"
+>     },
+> EOL
+> done
+>
+> cat > "$OUTPUT_DIR/report.json" << EOL
+> {
+>   "timestamp": "$(timestamp)",
+>   "events": [
+> EOL
+>
+> for event in "${REPORT_EVENTS[@]}"; do
+>     rule_id=${event%%:*}
+>     severity=${event#*:}
+>     severity=${severity%%:*}
+>     matches=${event#*:}
+>     matches=${matches%%:*}
+>     ips=${event#*:}
+>     ips=${ips#*:}
+>     ip_list=$(echo "$ips" | tr '\n' ',' | sed 's/,/, /g')
+>     cat >> "$OUTPUT_DIR/report.json" << EOL
+>     {
+>       "id": "$rule_id",
+>       "severity": "$severity",
+>       "matches": $matches,
+>       "ips": "$ip_list"
+>     }
+> EOL
+> done
+>
+> cat >> "$OUTPUT_DIR/report.json" << EOL
+>   ],
+>   "statistics": {
+> EOL
+>
+> for stat in "${STATS[@]}"; do
+>     rule_id=${stat%%:*}
+>     matches=${stat#*:}
+>     cat >> "$OUTPUT_DIR/report.json" << EOL
+>     "${rule_id}": ${matches},
+> EOL
+> done
+>
+> cat >> "$OUTPUT_DIR/report.json" << EOL
+>   }
+> }
+> EOL
+>
+> EOF
+root@9c19dc05eb46:/app#

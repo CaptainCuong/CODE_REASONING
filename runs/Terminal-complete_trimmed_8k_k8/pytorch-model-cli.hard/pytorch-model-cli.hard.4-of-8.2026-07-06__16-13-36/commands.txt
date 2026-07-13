@@ -1,0 +1,69 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la\n'
+'which python3\n'
+'python3 --version\n'
+"pip list 2>/dev/null | grep -E 'numpy|pil|matplotlib'\n"
+'cat model.py\n'
+'python3 -c "import torch; print(\'torch available\')" 2>&1\n'
+'python3 -c "import sys; print(sys.executable)"\n'
+'file model.pth\n'
+'head -c 100 model.pth\n'
+'pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu 2>&1 | tail -20\n'
+'python3 -c "import torch; m = torch.load(\'model.pth\'); print(m)"\n'
+'python3 -c "import torch; m = torch.load(\'model.pth\'); print(m.keys())"\n'
+'python3 -c "import torch; m = torch.load(\'model.pth\'); print(\'Model keys:\', list(m.keys())); print(\'Model type:\', type(m)); print(\'Model structure:\', m)"\n'
+'python3 -c "import torch; m = torch.load(\'model.pth\'); print(\'Number of parameters:\', sum(p.numel() for p in m.parameters()))"\n'
+'cd /app\n'
+"cat > save_weights.py << 'EOF'\nimport torch\nimport json\nimport sys\n\n# Load the model\nmodel = torch.load('model.pth')\n# Convert to dictionary\ndef convert(obj):\n    if isinstance(obj, torch.nn.Module):\n        d = {}\n        for name, param in obj.named_parameters():\n            d[name] = param.tolist()\n        return d\n    elif isinstance(obj, dict):\n        return {k: convert(v) for k, v in obj.items()}\n    else:\n        return obj\n\nweights = convert(model)\n# Save to weights.json\nwith open('weights.json', 'w') as f:\n    json.dump(weights, f, indent=2)\nprint('weights.json created')\nEOF\n"
+'python3 save_weights.py\n'
+'ls -l weights.json\n'
+'head -c 200 weights.json\n'
+'cd /app\n'
+"cat > create_weights.py << 'EOF'\nimport torch\nimport json\nimport sys\n\n# Load the model\nmodel = torch.load('model.pth')\n# Convert to dictionary\ndef convert(obj):\n    if isinstance(obj, torch.nn.Module):\n        d = {}\n        for name, param in obj.named_parameters():\n            d[name] = param.tolist()\n        return d\n    elif isinstance(obj, dict):\n        return {k: convert(v) for k, v in obj.items()}\n    else:\n        return obj\n\nweights = convert(model)\n# Save to weights.json\nwith open('weights.json', 'w') as f:\n    json.dump(weights, f, indent=2)\nprint('weights.json created')\nEOF\n"
+'python3 create_weights.py\n'
+'ls -l weights.json\n'
+'head -c 200 weights.json\n'
+'cd /app\n'
+'cat weights.json | head -30\n'
+"cat > cli_tool.py << 'EOF'\n#!/usr/bin/env python3\nimport json\nimport lodepng\nimport sys\nimport math\n\n# Load weights from weights.json\nwith open('weights.json', 'r') as f:\n    weights = json.load(f)\n\n# Neural network parameters\ninput_dim = 28 * 28\nhidden_dim = 16\noutput_dim = 10\n\n# Initialize weights from JSON\nW1 = weights['input_layer.weight']\nb1 = weights['input_layer.bias']\nW2 = weights['hidden_layer.weight']\nb2 = weights['hidden_layer.bias']\nW3 = weights['output_layer.weight']\nb3 = weights['output_layer.bias']\n\n# Convert to lists (if not already)\nW1 = [float(x) for x in W1]\nb1 = [float(x) for x in b1]\nW2 = [float(x) for x in W2]\nb2 = [float(x) for x in b2]\nW3 = [float(x) for x in W3]\nb3 = [float(x) for x in b3]\n\n# Load image\ntry:\n    img_data, width, height = lodepng.load_file(sys.argv[2])\nexcept Exception as e:\n    print(f'Error loading image: {e}')\n    sys.exit(1)\n\n# Flatten image\nimg_vec = [float(p) for p in img_data.flatten()]\n\n# Neural network\n# Input layer\nx = [0.0] * hidden_dim\nfor i in range(hidden_dim):\n    s = b1[i]\n    for j in range(input_dim):\n        s += W1[i * input_dim + j] * img_vec[j]\n    x[i] = max(s, 0.0)  # ReLU\n\n# Hidden layer\ny = [0.0] * hidden_dim\nfor i in range(hidden_dim):\n    s = b2[i]\n    for j in range(hidden_dim):\n        s += W2[i * hidden_dim + j] * x[j]\n    y[i] = max(s, 0.0)\n\n# Output layer\nout = [0.0] * output_dim\nfor i in range(output_dim):\n    s = b3[i]\n    for j in range(hidden_dim):\n        s += W3[i * hidden_dim + j] * y[j]\n\n# Find predicted digit\npred = out.index(max(out))\nprint(pred)\nEOF\n"
+'chmod +x cli_tool.py\n'
+'./cli_tool.py weights.json image.png\n'
+'./cli_tool.py weights.json image.png > prediction.txt\n'
+'cat prediction.txt\n'
+'cd /app\n'
+'cat weights.json | head -50\n'
+'cat > cli_tool.c << \'EOF\'\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <cJSON.h>\n#include <lodepng.h>\n\n// Neural network parameters\n#define INPUT_DIM 28 * 28\n#define HIDDEN_DIM 16\n#define OUTPUT_DIM 10\n\n// Load weights from weights.json\nvoid load_weights(char* filename, float* W1, float* b1, float* W2, float* b2, float* W3, float* b3) {\n    FILE* f = fopen(filename, "r");\n    if (!f) {\n        fprintf(stderr, "Failed to open %s\\n", filename);\n        exit(1);\n    }\n    cJSON* root = cJSON_CreateFile(f);\n    fclose(f);\n    \n    // Get weights\n    cJSON* w1 = cJSON_GetObjectItem(root, "input_layer.weight");\n    cJSON* b1 = cJSON_GetObjectItem(root, "input_layer.bias");\n    cJSON* w2 = cJSON_GetObjectItem(root, "hidden_layer.weight");\n    cJSON* b2 = cJSON_GetObjectItem(root, "hidden_layer.bias");\n    cJSON* w3 = cJSON_GetObjectItem(root, "output_layer.weight");\n    cJSON* b3 = cJSON_GetObjectItem(root, "output_layer.bias");\n    \n    // Convert to float\n    int n = cJSON_GetArraySize(w1);\n    for (int i = 0; i < n; i++) {\n        W1[i] = (float)cJSON_GetNumberValue(cJSON_GetArrayElement(w1, i));\n    }\n    n = cJSON_GetArraySize(b1);\n    for (int i = 0; i < n; i++) {\n        b1[i] = (float)cJSON_GetNumberValue(cJSON_GetArrayElement(b1, i));\n    }\n    n = cJSON_GetArraySize(w2);\n    for (int i = 0; i < n; i++) {\n        W2[i] = (float)cJSON_GetNumberValue(cJSON_GetArrayElement(w2, i));\n    }\n    n = cJSON_GetArraySize(b2);\n    for (int i = 0; i < n; i++) {\n        b2[i] = (float)cJSON_GetNumberValue(cJSON_GetArrayElement(b2, i));\n    }\n    n = cJSON_GetArraySize(w3);\n    for (int i = 0; i < n; i++) {\n        W3[i] = (float)cJSON_GetNumberValue(cJSON_GetArrayElement(w3, i));\n    }\n    n = cJSON_GetArraySize(b3);\n    for (int i = 0; i < n; i++) {\n        b3[i] = (float)cJSON_GetNumberValue(cJSON_GetArrayElement(b3, i));\n    }\n    \n    cJSON_Delete(root);\n}\n\n// Neural network inference\nint predict(float* img_vec, float* W1, float* b1, float* W2, float* b2, float* W3, float* b3) {\n    // Input layer\n    float x[HIDDEN_DIM];\n    for (int i = 0; i < HIDDEN_DIM; i++) {\n        float s = b1[i];\n        for (int j = 0; j < INPUT_DIM; j++) {\n            s += W1[i * INPUT_DIM + j] * img_vec[j];\n        }\n        x[i] = max(s, 0.0f);\n    }\n    \n    // Hidden layer\n    float y[HIDDEN_DIM];\n    for (int i = 0; i < HIDDEN_DIM; i++) {\n        float s = b2[i];\n        for (int j = 0; j < HIDDEN_DIM; j++) {\n            s += W2[i * HIDDEN_DIM + j] * x[j];\n        }\n        y[i] = max(s, 0.0f);\n    }\n    \n    // Output layer\n    float out[OUTPUT_DIM];\n    for (int i = 0; i < OUTPUT_DIM; i++) {\n        float s = b3[i];\n        for (int j = 0; j < HIDDEN_DIM; j++) {\n            s += W3[i * HIDDEN_DIM + j] * y[j];\n        }\n        out[i] = s;\n    }\n    \n    // Find predicted digit\n    int pred = out[0];\n    for (int i = 1; i < OUTPUT_DIM; i++) {\n        if (out[i] > out[pred]) {\n            pred = i;\n        }\n    }\n    return pred;\n}\n\nint main(int argc, char* argv[]) {\n    if (argc != 3) {\n        fprintf(stderr, "Usage: %s <weights.json> <image.png>\\n", argv[0]);\n        exit(1);\n    }\n    \n    // Load weights\n    float W1[HIDDEN_DIM * INPUT_DIM];\n    float b1[HIDDEN_DIM];\n    float W2[HIDDEN_DIM * HIDDEN_DIM];\n    float b2[HIDDEN_DIM];\n    float W3[OUTPUT_DIM * HIDDEN_DIM];\n    float b3[OUTPUT_DIM];\n    load_weights(argv[1], W1, b1, W2, b2, W3, b3);\n    \n    // Load image\n    unsigned char* image_data;\n    unsigned int width, height;\n    lodepng_decode_file(&image_data, &width, &height, argv[2], 0);\n    \n    // Flatten image\n    float img_vec[INPUT_DIM];\n    for (int i = 0; i < INPUT_DIM; i++) {\n        img_vec[i] = (float)image_data[i];\n    }\n    \n    // Predict\n    int pred = predict(img_vec, W1, b1, W2, b2, W3, b3);\n    \n    // Print prediction\n    printf("%d\\n", pred);\n    \n    // Clean up\n    free(image_data);\n    return 0;\n}\nEOF\n'
+'gcc -Wall -Wextra -I./ -L./ -lcJSON -llodepng cli_tool.c -o cli_tool\n'
+'ls -l cli_tool\n'
+'./cli_tool weights.json image.png\n'
+'./cli_tool weights.json image.png > prediction.txt\n'
+'cat prediction.txt\n'
+'apt-get update && apt-get install -y gcc liblodepng-dev 2>&1 | tail -20\n'
+'gcc -Wall -Wextra -I./ -L./ -lcJSON -llodepng cli_tool.c -o cli_tool\n'
+'ls -l cli_tool\n'
+'./cli_tool weights.json image.png\n'
+'./cli_tool weights.json image.png > prediction.txt\n'
+'cat prediction.txt\n'
+'pip install Pillow\n'
+'cd /app\n'
+"cat > cli_tool.py << 'EOF'\n#!/usr/bin/env python3\nimport sys\nimport json\nimport torch\nimport PIL.Image as Image\n\n# Load weights from weights.json\ntry:\n    with open('weights.json', 'r') as f:\n        weights = json.load(f)\nexcept FileNotFoundError:\n    print('weights.json not found')\n    sys.exit(1)\n\n# Load image\ntry:\n    img = Image.open(sys.argv[2])\nexcept Exception as e:\n    print(f'Error loading image: {e}')\n    sys.exit(1)\n\n# Flatten image\nimg_vec = img.getdata()\nimg_vec = list(map(float, img_vec))\n\n# Neural network parameters\ninput_dim = 28 * 28\nhidden_dim = 16\noutput_dim = 10\n\n# Initialize weights\nW1 = torch.tensor(weights['input_layer.weight'], dtype=torch.float32)\nb1 = torch.tensor(weights['input_layer.bias'], dtype=torch.float32)\nW2 = torch.tensor(weights['hidden_layer.weight'], dtype=torch.float32)\nb2 = torch.tensor(weights['hidden_layer.bias'], dtype=torch.float32)\nW3 = torch.tensor(weights['output_layer.weight'], dtype=torch.float32)\nb3 = torch.tensor(weights['output_layer.bias'], dtype=torch.float32)\n\n# Neural network inference\nx = torch.relu(b1 + W1 @ torch.tensor(img_vec))\ny = torch.relu(b2 + W2 @ x)\nout = b3 + W3 @ y\npred = torch.argmax(out).item()\n\nprint(pred)\nEOF\n"
+'chmod +x cli_tool.py\n'
+'./cli_tool.py weights.json image.png\n'
+'./cli_tool.py weights.json image.png > prediction.txt\n'
+'cat prediction.txt\n'
+'cd /app\n'
+'cat weights.json | head -100\n'
+"cat > fix_weights.py << 'EOF'\nimport torch\nimport json\n\nmodel = torch.load('model.pth')\n# Convert to dictionary with string keys and numeric values\nweights = {}\nfor key, value in model.items():\n    # Convert tensor to list of floats\n    weights[key] = value.tolist()\n\nwith open('weights.json', 'w') as f:\n    json.dump(weights, f, indent=2)\nprint('weights.json created')\nEOF\n"
+'python3 fix_weights.py\n'
+'head -30 weights.json\n'
+"cat > create_digit.py << 'EOF'\nfrom PIL import Image\nimport numpy as np\n\n# Create a simple digit image (digit 5)\nimg = Image.new('L', (28, 28), color='white')\ndraw = img.convert('RGB').draw()\n# Draw a simple representation of digit 5\ndraw.ellipse([20, 20, 30, 30], fill='black')  # top\nfor i in range(20, 28):\n    draw.point((25, i), fill='black')\ndraw.ellipse([22, 12, 28, 18], fill='black')  # middle\nfor i in range(22, 28):\n    draw.point((25, i), fill='black')\ndraw.ellipse([22, 22, 28, 28], fill='black')  # bottom\nimg.save('image.png')\nprint('image.png created')\nEOF\n"
+'python3 create_digit.py\n'
+'./cli_tool.py weights.json image.png\n'
+'./cli_tool.py weights.json image.png > prediction.txt\n'
+'cat prediction.txt\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

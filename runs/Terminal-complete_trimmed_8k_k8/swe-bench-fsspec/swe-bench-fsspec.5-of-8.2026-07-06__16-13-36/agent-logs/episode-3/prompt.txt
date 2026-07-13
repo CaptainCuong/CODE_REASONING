@@ -1,0 +1,215 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@3a0b77fed166:/app/filesystem_spec/fsspec# grep -n open_async asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@3a0b77fed166:/app/filesystem_spec/fsspec# grep -A2 -B2 open_async asyn.py
+        pass  # not necessary to implement, may not have directories
+
+    async def open_async(self, path, mode="rb", **kwargs):
+        if "b" not in mode or kwargs.get("compression"):
+            raise ValueError
+root@3a0b77fed166:/app/filesystem_spec/fsspec# head -200 core.py
+from __future__ import annotations
+
+import io
+import logging
+import os
+import re
+from glob import has_magic
+from pathlib import Path
+
+# for backwards compat, we export cache things from here too
+from fsspec.caching import (  # noqa: F401
+    BaseCache,
+    BlockCache,
+    BytesCache,
+    MMapCache,
+    ReadAheadCache,
+    caches,
+)
+from fsspec.compression import compr
+from fsspec.config import conf
+from fsspec.registry import filesystem, get_filesystem_class
+from fsspec.utils import (
+    _unstrip_protocol,
+    build_name_function,
+    infer_compression,
+    stringify_path,
+)
+
+logger = logging.getLogger("fsspec")
+
+
+class OpenFile:
+    """
+    File-like object to be used in a context
+
+    Can layer (buffered) text-mode and compression over any file-system, which
+    are typically binary-only.
+
+    These instances are safe to serialize, as the low-level file object
+    is not created until invoked using ``with``.
+
+    Parameters
+    ----------
+    fs: FileSystem
+        The file system to use for opening the file. Should be a subclass or duck-type
+        with ``fsspec.spec.AbstractFileSystem``
+    path: str
+        Location to open
+    mode: str like 'rb', optional
+        Mode of the opened file
+    compression: str or None, optional
+        Compression to apply
+    encoding: str or None, optional
+        The encoding to use if opened in text mode.
+    errors: str or None, optional
+        How to handle encoding errors if opened in text mode.
+    newline: None or str
+        Passed to TextIOWrapper in text mode, how to handle line endings.
+    autoopen: bool
+        If True, calls open() immediately. Mostly used by pickle
+    pos: int
+        If given and autoopen is True, seek to this location immediately
+    """
+
+    def __init__(
+        self,
+        fs,
+        path,
+        mode="rb",
+        compression=None,
+        encoding=None,
+        errors=None,
+        newline=None,
+    ):
+        self.fs = fs
+        self.path = path
+        self.mode = mode
+        self.compression = get_compression(path, compression)
+        self.encoding = encoding
+        self.errors = errors
+        self.newline = newline
+        self.fobjects = []
+
+    def __reduce__(self):
+        return (
+            OpenFile,
+            (
+                self.fs,
+                self.path,
+                self.mode,
+                self.compression,
+                self.encoding,
+                self.errors,
+                self.newline,
+            ),
+        )
+
+    def __repr__(self):
+        return f"<OpenFile '{self.path}'>"
+
+    def __enter__(self):
+        mode = self.mode.replace("t", "").replace("b", "") + "b"
+
+        try:
+            f = self.fs.open(self.path, mode=mode)
+        except FileNotFoundError as e:
+            if has_magic(self.path):
+                raise FileNotFoundError(
+                    "%s not found. The URL contains glob characters: you maybe needed\n"
+                    "to pass expand=True in fsspec.open() or the storage_options of \n"
+                    "your library. You can also set the config value 'open_expand'\n"
+                    "before import, or fsspec.core.DEFAULT_EXPAND at runtime, to True.",
+                    self.path,
+                ) from e
+            raise
+
+        self.fobjects = [f]
+
+        if self.compression is not None:
+            compress = compr[self.compression]
+            f = compress(f, mode=mode[0])
+            self.fobjects.append(f)
+
+        if "b" not in self.mode:
+            # assume, for example, that 'r' is equivalent to 'rt' as in builtin
+            f = PickleableTextIOWrapper(
+                f, encoding=self.encoding, errors=self.errors, newline=self.newline
+            )
+            self.fobjects.append(f)
+
+        return self.fobjects[-1]
+
+    def __exit__(self, *args):
+        self.close()
+
+    @property
+    def full_name(self):
+        return _unstrip_protocol(self.path, self.fs)
+
+    def open(self):
+        """Materialise this as a real open file without context
+
+        The OpenFile object should be explicitly closed to avoid enclosed file
+        instances persisting. You must, therefore, keep a reference to the OpenFile
+        during the life of the file-like it generates.
+        """
+        return self.__enter__()
+
+    def close(self):
+        """Close all encapsulated file objects"""
+        for f in reversed(self.fobjects):
+            if "r" not in self.mode and not f.closed:
+                f.flush()
+            f.close()
+        self.fobjects.clear()
+
+
+class OpenFiles(list):
+    """List of OpenFile instances
+
+    Can be used in a single context, which opens and closes all of the
+    contained files. Normal list access to get the elements works as
+    normal.
+
+    A special case is made for caching filesystems - the files will
+    be down/uploaded together at the start or end of the context, and
+    this may happen concurrently, if the target filesystem supports it.
+    """
+
+    def __init__(self, *args, mode="rb", fs=None):
+        self.mode = mode
+        self.fs = fs
+        self.files = []
+        super().__init__(*args)
+
+    def __enter__(self):
+        if self.fs is None:
+            raise ValueError("Context has already been used")
+
+        fs = self.fs
+        while True:
+            if hasattr(fs, "open_many"):
+                # check for concurrent cache download; or set up for upload
+                self.files = fs.open_many(self)
+                return self.files
+            if hasattr(fs, "fs") and fs.fs is not None:
+                fs = fs.fs
+            else:
+                break
+        return [s.__enter__() for s in self]
+
+    def __exit__(self, *args):
+        fs = self.fs
+        [s.__exit__(*args) for s in self]
+        if "r" not in self.mode:
+            while True:
+                if hasattr(fs, "open_many"):
+                    # check for concurrent cache upload
+                    fs.commit_many(self.files)
+                    return
+root@3a0b77fed166:/app/filesystem_spec/fsspec#

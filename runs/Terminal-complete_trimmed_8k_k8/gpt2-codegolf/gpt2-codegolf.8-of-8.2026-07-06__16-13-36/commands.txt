@@ -1,0 +1,107 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la\n'
+"head -c 100 gpt2-124M.ckpt 2>/dev/null || echo 'File not found'\n"
+"file gpt2-124M.ckpt 2>/dev/null || echo 'No file'\n"
+"wc -c gpt2-124M.ckpt 2>/dev/null || echo 'No file'\n"
+"head -c 100 vocab.bpe 2>/dev/null || echo 'No vocab file'\n"
+'od -c gpt2-124M.ckpt | head -20\n'
+'head -n 10 gpt2-124M.ckpt\n'
+'tail -n 10 gpt2-124M.ckpt\n'
+"ls -la * 2>/dev/null | grep -v '^d'\n"
+'wc -l vocab.bpe\n'
+'xxd gpt2-124M.ckpt | head -5\n'
+'head -1 gpt2-124M.ckpt | cat -A\n'
+'grep -n \'"\' gpt2-124M.ckpt | head -5\n'
+"grep -n ',' gpt2-124M.ckpt | head -5\n"
+'wc -l gpt2-124M.ckpt\n'
+'head -2 gpt2-124M.ckpt | cat -v\n'
+'hexdump -C gpt2-124M.ckpt | head -20\n'
+'od -x gpt2-124M.ckpt | head -20\n'
+"grep -b -a2 -A2 'tf.GraphDef\\|tf.Saver' gpt2-124M.ckpt | head -5\n"
+'python3 -c "import sys; data=open(\'gpt2-124M.ckpt\', \'rb\').read(1000); print(data[:1000].decode(\'utf-8\', errors=\'ignore\'))"\n'
+'python3 -c "import sys; data=open(\'gpt2-124M.ckpt\', \'rb\').read(1000); print(\'Length:\', len(data)); print(\'First 100 bytes:\', data[:100])"\n'
+"cat > examine.py << 'EOF'\nimport sys\nimport struct\nwith open('gpt2-124M.ckpt', 'rb') as f:\n    data = f.read(2000)\nprint('First 2000 bytes as hex:')\nfor i in range(0, len(data), 2):\n    print(f'{data[i]:02x}', end='')\n    if (i+1) % 16 == 0:\n        print()\nprint()\nprint('First 2000 bytes as ASCII:')\nfor i in range(0, len(data), 1):\n    if data[i] >= 32 and data[i] <= 126:\n        print(chr(data[i]), end='')\n    else:\n        print('.', end='')\n    if (i+1) % 16 == 0:\n        print()\nprint()\nprint('Length:', len(data))\n# Check for tf.GraphDef magic bytes (0x0a,0x0f,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a)\n# Actually the standard magic is 0x0a,0x0f,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a,0x0a\n# Let's search for 'tf.GraphDef' as string in the bytes (but it's binary).\n# We'll try to decode as UTF-8 with errors='ignore' and look for the substring.\nutf8 = data.decode('utf-8', errors='ignore')\nprint('UTF-8 decoded (first 2000):')\nprint(repr(utf8))\n# Look for 'tf.GraphDef'\nif b'tf.GraphDef' in data:\n    print('Found tf.GraphDef')\n    idx = data.find(b'tf.GraphDef')\n    print(f'  at position {idx}')\n# Look for 'tf.Saver'\nif b'tf.Saver' in data:\n    print('Found tf.Saver')\n    idx = data.find(b'tf.Saver')\n    print(f'  at position {idx}')\n# Look for 'tf.train.Saver'\nif b'tf.train.Saver' in data:\n    print('Found tf.train.Saver')\n    idx = data.find(b'tf.train.Saver')\n    print(f'  at position {idx}')\n# Check if it's a protobuf\nif data.startswith(b'\\x1a\\x0a'):\n    print('Starts with protobuf magic')\nif data.startswith(b'\\x0a\\x0f\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a\\x0a'):\n    print('Starts with tf.GraphDef magic')\nEOF\n"
+'python3 examine.py\n'
+"cat > examine2.py << 'EOF'\nimport struct\nwith open('gpt2-124M.ckpt', 'rb') as f:\n    data = f.read(4000)\n# Try to parse as protobuf\ntry:\n    import protobuf\nexcept ImportError:\n    pass\n# Try to decode as JSON\nimport json\ntry:\n    obj = json.loads(data)\n    print('JSON decode succeeded')\n    print(json.dumps(obj, indent=2)[:2000])\nexcept Exception as e:\n    print('JSON decode failed:', e)\n# Try to decode as YAML\nimport yaml\ntry:\n    obj = yaml.safe_load(data)\n    print('YAML decode succeeded')\nexcept Exception as e:\n    print('YAML decode failed:', e)\nEOF\n"
+'python3 examine2.py 2>&1\n'
+'head -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+"cat > examine3.py << 'EOF'\nimport sys\nimport re\nwith open('gpt2-124M.ckpt', 'rb') as f:\n    data = f.read()\nprint('Total size:', len(data))\n# Extract ASCII characters\nascii_chars = [b for b in data if 32 <= b <= 126]\nprint('Number of ASCII characters:', len(ascii_chars))\n# Try to parse as JSON\nimport json\nascii_str = ''.join(chr(b) for b in ascii_chars)\ntry:\n    obj = json.loads(ascii_str)\n    print('JSON decode succeeded')\n    print(json.dumps(obj, indent=2)[:5000])\nexcept Exception as e:\n    print('JSON decode failed:', e)\n    # Try to see if there are any known tensor names\n    # Look for 'dense', 'attention', 'layer' as substrings in the ASCII string\n    if 'dense' in ascii_str:\n        print('Found dense in ASCII')\n    if 'attention' in ascii_str:\n        print('Found attention in ASCII')\n    if 'layer' in ascii_str:\n        print('Found layer in ASCII')\n    # Try to see if there is a pattern like 'weights' or 'bias'\n    if 'weights' in ascii_str:\n        print('Found weights in ASCII')\n    if 'bias' in ascii_str:\n        print('Found bias in ASCII')\n    # Print first 1000 characters\n    print('First 1000 ASCII chars:')\n    print(ascii_str[:1000])\nEOF\n"
+'python3 examine3.py\n'
+"cat > examine4.py << 'EOF'\nimport struct\nwith open('gpt2-124M.ckpt', 'rb') as f:\n    data = f.read()\n# Search for known tensor names in bytes\npattern = b'dense|attention|layer|weights|bias'\nfor i in range(len(data) - 100, len(data)):\n    substring = data[i:i+5]\n    if substring in pattern:\n        print('Found pattern at position', i, 'substring:', substring)\n        break\n# Also search for 'tensorflow' or 'tf' in bytes\nif b'tensorflow' in data:\n    print('Found tensorflow')\nif b'tf' in data:\n    print('Found tf')\n# Try to see if the file contains a dictionary structure (key-value pairs)\n# We'll look for lines that look like key: value\nlines = ascii_str.split('\\n')\nfor line in lines[:10]:\n    print(line)\nEOF\n"
+'python3 examine4.py\n'
+'head -20 vocab.bpe\n'
+"grep -n 'dense' vocab.bpe\n"
+'python3 examine3.py 2>&1\n'
+'python3 examine4.py 2>&1\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+"grep -c 'dense' vocab.bpe\n"
+'python3 examine3.py\n'
+'python3 examine4.py\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+'ls -la\n'
+'python3 examine3.py 2>&1\n'
+'python3 examine4.py 2>&1\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+'ls -la\n'
+'python3 examine3.py 2>&1\n'
+'python3 examine4.py 2>&1\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+'\n'
+'ls -la\n'
+'python3 examine3.py 2>&1\n'
+'python3 examine4.py 2>&1\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+'C-c'
+'\n'
+'python3 examine3.py 2>&1\n'
+'python3 examine4.py 2>&1\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+'C-c'
+'\n'
+'ls -la\n'
+'python3 examine3.py 2>&1\n'
+'python3 examine4.py 2>&1\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+'C-c'
+'\n'
+'ls -la\n'
+'python3 examine3.py 2>&1\n'
+'python3 examine4.py 2>&1\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+'C-c'
+'\n'
+'ls -la\n'
+'python3 examine3.py 2>&1\n'
+'python3 examine4.py 2>&1\n'
+'head -20 vocab.bpe\n'
+'tail -5 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+'head -30 vocab.bpe\n'
+'tail -10 vocab.bpe\n'
+'wc -l vocab.bpe\n'
+"cat > examine5.py << 'EOF'\nimport sys\nwith open('vocab.bpe', 'r') as f:\n    lines = f.readlines()\nprint('Number of lines:', len(lines))\nprint('First line:', lines[0].strip())\nprint('Second line:', lines[1].strip())\nprint('Third line:', lines[2].strip())\n# Check if it's a dictionary mapping token index to bytes\nfor line in lines[:5]:\n    if line.strip():\n        print(repr(line))\nEOF\n"
+'python3 examine5.py\n'
+"cat > examine6.py << 'EOF'\nimport sys\nwith open('gpt2-124M.ckpt', 'rb') as f:\n    data = f.read(100000)\n# Try to parse as JSON\nimport json\ntry:\n    obj = json.loads(data.decode('utf-8', errors='ignore'))\n    print('JSON decode succeeded')\n    print(json.dumps(obj, indent=2)[:5000])\nexcept Exception as e:\n    print('JSON decode failed:', e)\n    # Try to parse as dictionary of strings\n    # Look for lines that look like key: value\n    ascii_chars = [b for b in data if 32 <= b <= 126]\n    ascii_str = ''.join(chr(b) for b in ascii_chars)\n    lines = ascii_str.split('\\n')\n    for line in lines[:10]:\n        print(line)\nEOF\n"
+'python3 examine6.py\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

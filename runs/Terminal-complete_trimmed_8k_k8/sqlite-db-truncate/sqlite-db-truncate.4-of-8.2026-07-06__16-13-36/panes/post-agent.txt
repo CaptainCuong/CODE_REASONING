@@ -1,0 +1,403 @@
+root@f1514ed14f7f:/app# ls -la
+total 4
+drwxr-xr-x 1 root root   30 Jul  7 20:22 .
+drwxr-xr-x 1 root root   57 Jul  7 20:33 ..
+-rw-rw-r-- 1 root root 4096 Jun 24 11:01 trunc.db
+root@f1514ed14f7f:/app# sqlite3 --version
+bash: sqlite3: command not found
+root@f1514ed14f7f:/app# sqlite3 trunc.db '.dump'
+bash: sqlite3: command not found
+root@f1514ed14f7f:/app# python3 --version
+Python 3.12.3
+root@f1514ed14f7f:/app# python3 -c "import sqlite3; print('sqlite3 module available')"
+sqlite3 module available
+root@f1514ed14f7f:/app# cat > /app/recover.py << 'EOF'
+> import sqlite3
+> import json
+> import re
+> import tempfile
+> import os
+>
+> def try_sqlite_connection():
+>     db_path = '/app/trunc.db'
+>     conn = sqlite3.connect(db_path, timeout=5, isolation_level='IMMEDIATE')
+>     cursor = conn.cursor()
+>     try:
+>         # List tables
+>         cursor.execute('SELECT name FROM sqlite_master WHERE type = "table";')
+>         tables = cursor.fetchall()
+>         print(f'Found tables: {tables}')
+>         rows = []
+>         for table in tables:
+>             table_name = table[0]
+>             try:
+>                 # Get column names
+>                 cursor.execute(f'PRAGMA table_info({table_name});')
+>                 info = cursor.fetchall()
+>                 col_names = [info[i][1] for i in range(len(info))]
+>                 # Query all rows
+>                 cursor.execute(f'SELECT * FROM {table_name};')
+>                 table_rows = cursor.fetchall()
+>                 print(f'Table {table_name} has {len(table_rows)} rows')
+>                 for row in table_rows:
+>                     row_dict = {}
+>                     for idx, val in enumerate(row):
+>                         row_dict[col_names[idx]] = val
+>                     rows.append(row_dict)
+>             except sqlite3.Error as e:
+>                 print(f'Failed to query rows from {table_name}: {e}')
+>                 continue
+>         conn.close()
+>         return rows
+>     except sqlite3.Error as e:
+>         conn.close()
+>         print(f'Sqlite error during connection: {e}')
+>         return None
+>
+> def fallback():
+>     db_path = '/app/trunc.db'
+>     with open(db_path, 'r') as f:
+>         content = f.read()
+>     # Split by semicolon (SQL statements)
+>     statements = re.split(r';\s*', content)
+>     rows = []
+>     for stmt in statements:
+>         stmt = stmt.strip()
+>         if not stmt:
+>             continue
+>         # Try to execute the statement using a temporary database
+>         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+>             tmp_path = tmp.name
+>         try:
+>             conn = sqlite3.connect(tmp_path, timeout=5)
+>             cursor = conn.cursor()
+>             cursor.execute(stmt)
+>             # Get column names from the executed statement
+>             # We can get the column names from the cursor's description
+>             col_names = cursor.description
+>             if col_names:
+>                 # Get rows
+>                 table_rows = cursor.fetchall()
+>                 for row in table_rows:
+>                     row_dict = {}
+>                     for idx, val in enumerate(row):
+>                         row_dict[col_names[idx]] = val
+>                     rows.append(row_dict)
+>             conn.close()
+>             os.unlink(tmp_path)
+>         except sqlite3.Error as e:
+>             print(f'Failed to execute statement: {e}')
+>     return rows
+>
+> def main():
+>     rows = try_sqlite_connection()
+>     if rows is None:
+>         rows = fallback()
+>     # Now we need to output only rows that have 'word' and 'value' columns.
+>     # If column names are different, we can map.
+>     # We'll create a new list with the desired format.
+>     output = []
+>     for row in rows:
+>         # Determine which column is word and which is value.
+>         # We'll assume the column named 'word' is the word column and 'value' is the value.
+>         # If not, we'll look for a column that looks like a word (string) and a numeric column.
+>         # For simplicity, we'll assume the row has a column named 'word' and a column named 'value'.
+>         # If not, we'll try to find a string column and a numeric column.
+>         word_col = None
+>         value_col = None
+>         for key in row.keys():
+>             if 'word' in key.lower():
+>                 word_col = key
+>             if 'value' in key.lower():
+>                 value_col = key
+>         if word_col is None and value_col is None:
+>             # Try to find a column that looks like a word (string) and a numeric column.
+>             # We'll just skip this row.
+>             continue
+>         if word_col is None:
+>             word_col = [k for k in row.keys() if isinstance(row[k], str) and len(row[k]) > 2][0]
+>         if value_col is None:
+>             value_col = [k for k in row.keys() if isinstance(row[k], (int, float))][0]
+>         output.append({'word': row[word_col], 'value': row[value_col]})
+>     # Write to file
+>     with open('/app/recover.json', 'w') as f:
+>         json.dump(output, f, indent=2)
+>     print(f'Recovered {len(output)} rows')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f1514ed14f7f:/app# python3 /app/recover.py
+Sqlite error during connection: file is not a database
+Traceback (most recent call last):
+  File "/app/recover.py", line 114, in <module>
+    main()
+  File "/app/recover.py", line 81, in main
+    rows = fallback()
+           ^^^^^^^^^^
+  File "/app/recover.py", line 46, in fallback
+    content = f.read()
+              ^^^^^^^^
+  File "<frozen codecs>", line 322, in decode
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xf0 in position 9: invalid continuation byte
+root@f1514ed14f7f:/app# head -c 100 /app/trunc.db | xxd
+bash: xxd: command not found
+root@f1514ed14f7f:/app# wc -c /app/trunc.db
+4096 /app/trunc.db
+root@f1514ed14f7f:/app# apt-get update && apt-get install -y sqlite3 2>&1 | tail -20
+Get:1 http://archive.ubuntu.com/ubuntu noble InRelease [256 kB]
+Get:2 http://security.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+Get:3 http://security.ubuntu.com/ubuntu noble-security/main amd64 Packages [1022 kB]
+Get:4 http://security.ubuntu.com/ubuntu noble-security/multiverse amd64 Packages [43.8 kB]
+Get:5 http://archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+Get:6 http://security.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1417 kB]
+Get:7 http://security.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1490 kB]
+Get:8 http://archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+Get:9 http://archive.ubuntu.com/ubuntu noble/restricted amd64 Packages [117 kB]
+Get:10 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages [19.3 MB]
+Get:11 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages [1808 kB]
+Get:12 http://archive.ubuntu.com/ubuntu noble/multiverse amd64 Packages [331 kB]
+Get:13 http://archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1490 kB]
+Get:14 http://archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [2111 kB]
+Get:15 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1342 kB]
+Get:16 http://archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Packages [49.5 kB]
+Get:17 http://archive.ubuntu.com/ubuntu noble-backports/multiverse amd64 Packages [671 B]
+Get:18 http://archive.ubuntu.com/ubuntu noble-backports/main amd64 Packages [48.9 kB]
+Get:19 http://archive.ubuntu.com/ubuntu noble-backports/universe amd64 Packages [35.9 kB]
+Fetched 31.3 MB in 1s (21.5 MB/s)
+Reading package lists... Done
+The following NEW packages will be installed:
+  sqlite3
+The following packages will be upgraded:
+  libsqlite3-0
+1 upgraded, 1 newly installed, 0 to remove and 50 not upgraded.
+Need to get 845 kB of archives.
+After this operation, 584 kB of additional disk space will be used.
+Get:1 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libsqlite3-0 amd64 3.45.1-1ubuntu2.6 [701 kB]
+Get:2 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 sqlite3 amd64 3.45.1-1ubuntu2.6 [144 kB]
+debconf: delaying package configuration, since apt-utils is not installed
+Fetched 845 kB in 0s (17.0 MB/s)
+(Reading database ... 6337 files and directories currently installed.)
+Preparing to unpack .../libsqlite3-0_3.45.1-1ubuntu2.6_amd64.deb ...
+Unpacking libsqlite3-0:amd64 (3.45.1-1ubuntu2.6) over (3.45.1-1ubuntu2.3) ...
+Selecting previously unselected package sqlite3.
+Preparing to unpack .../sqlite3_3.45.1-1ubuntu2.6_amd64.deb ...
+Unpacking sqlite3 (3.45.1-1ubuntu2.6) ...
+Setting up libsqlite3-0:amd64 (3.45.1-1ubuntu2.6) ...
+Setting up sqlite3 (3.45.1-1ubuntu2.6) ...
+Processing triggers for libc-bin (2.39-0ubuntu8.4) ...
+root@f1514ed14f7f:/app# od -c /app/trunc.db | head -20
+0000000  \r  \0  \0  \0  \n 017   I  \0 017 360 017 337 017 316 017 275
+0000020 017 254 017 233 017 212 017   y 017   a 017   I  \0  \0  \0  \0
+0000040  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0
+*
+0007500  \0  \0  \0  \0  \0  \0  \0  \0  \0 026  \n 004  \0   !  \a   t
+0007520   e   s   t   w   o   r   d   0   9   ? 340  \0  \0  \0  \0  \0
+0007540  \0 026  \t 004  \0   !  \a   t   e   s   t   w   o   r   d   0
+0007560   8   @   X 377   \   ( 365 302 217 017  \b 004  \0   ! 001   t
+0007600   e   s   t   w   o   r   d   0   7   c 017  \a 004  \0   ! 001
+0007620   t   e   s   t   w   o   r   d   0   6   K 017 006 004  \0   !
+0007640 001   t   e   s   t   w   o   r   d   0   5   2 017 005 004  \0
+0007660   ! 001   t   e   s   t   w   o   r   d   0   4   * 017 004 004
+0007700  \0   ! 001   t   e   s   t   w   o   r   d   0   3 031 017 003
+0007720 004  \0   ! 001   t   e   s   t   w   o   r   d   0   2  \n 017
+0007740 002 004  \0   ! 001   t   e   s   t   w   o   r   d   0   1 002
+0007760 016 001 004  \0   !  \t   t   e   s   t   w   o   r   d   0   0
+0010000
+root@f1514ed14f7f:/app# sqlite3 /app/trunc.db '.dump'
+sql error: file is not a database (26)
+PRAGMA foreign_keys=OFF;
+BEGIN TRANSACTION;
+/**** ERROR: (26) file is not a database *****/
+ROLLBACK; -- due to errors
+root@f1514ed14f7f:/app# cat > /app/extract.py << 'EOF'
+> import sqlite3
+> import re
+> import tempfile
+> import os
+>
+> def extract_sql_statements():
+>     with open('/app/trunc.db', 'rb') as f:
+>         data = f.read()
+>     # Try to split by semicolon
+>     statements = re.split(b';', data)
+>     # Also consider that statements may be separated by newline
+>     # We'll join by newline and split by semicolon
+>     data_str = data.decode('utf-8', errors='ignore')
+>     statements = re.split(r';', data_str)
+>     # Clean up empty strings
+>     statements = [s.strip() for s in statements if s.strip()]
+>     return statements
+>
+> def execute_statements(statements):
+>     rows = []
+>     for stmt in statements:
+>         # Remove any leading/trailing whitespace
+>         stmt = stmt.strip()
+>         if not stmt:
+>             continue
+>         # Try to execute the statement
+>         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+>             tmp_path = tmp.name
+>         try:
+>             conn = sqlite3.connect(tmp_path, timeout=5)
+>             cursor = conn.cursor()
+>             cursor.execute(stmt)
+>             col_names = cursor.description
+>             if col_names:
+>                 table_rows = cursor.fetchall()
+>                 for row in table_rows:
+>                     row_dict = {}
+>                     for idx, val in enumerate(row):
+>                         row_dict[col_names[idx]] = val
+>                     rows.append(row_dict)
+>             conn.close()
+>             os.unlink(tmp_path)
+>         except sqlite3.Error as e:
+>             print(f'Failed to execute statement: {e}')
+>             print(f'Statement: {stmt}')
+>     return rows
+>
+> def main():
+>     statements = extract_sql_statements()
+>     print('Extracted statements:')
+>     for i, stmt in enumerate(statements):
+>         print(f'{i}: {stmt[:100]}')
+>     rows = execute_statements(statements)
+>     print(f'Found {len(rows)} rows')
+>     # Format as JSON
+>     output = []
+>     for row in rows:
+>         word_col = None
+>         value_col = None
+>         for key in row.keys():
+>             if 'word' in key.lower():
+>                 word_col = key
+>             if 'value' in key.lower():
+>                 value_col = key
+>         if word_col is None and value_col is None:
+>             # Try to find a column that looks like a word (string) and a numeric column
+>             # We'll just skip this row.
+>             continue
+>         if word_col is None:
+>             word_col = [k for k in row.keys() if isinstance(row[k], str) and len(row[k]) > 2][0]
+>         if value_col is None:
+>             value_col = [k for k in row.keys() if isinstance(row[k], (int, float))][0]
+>         output.append({'word': row[word_col], 'value': row[value_col]})
+>     with open('/app/recover.json', 'w') as f:
+>         json.dump(output, f, indent=2)
+>     print('Rows written to /app/recover.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f1514ed14f7f:/app# python3 /app/extract.py
+Extracted statements:
+0:
+IyaI
+Failed to execute statement: the query contains a null character
+Statement:
+IyaI
+!testword09?    !testword08@X\!testword07c!testword06K!testword052!testword04*!testword03!testword02
+!testword01!    testword00
+Found 0 rows
+Traceback (most recent call last):
+  File "/app/extract.py", line 79, in <module>
+    main()
+  File "/app/extract.py", line 75, in main
+    json.dump(output, f, indent=2)
+    ^^^^
+NameError: name 'json' is not defined. Did you forget to import 'json'?
+root@f1514ed14f7f:/app# cat -A /app/trunc.db
+^M^@^@^@$
+^OI^@^OM-p^OM-_^OM-N^OM-=^OM-,^OM-^[^OM-^J^Oy^Oa^OI^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^
+@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^@^V$
+^D^@!^Gtestword09?M-`^@^@^@^@^@^@^V^I^D^@!^Gtestword08@XM-^?\(M-uM-BM-^O^O^H^D^@!^Atestword07c^O^G^D^@!^Atestword06K^O^F^D^@!^Atestword052^O^E^D^@!^Atestword04*
+^O^D^D^@!^Atestword03^Y^O^C^D^@!^Atestword02$
+^O^B^D^@!^Atestword01^B^N^A^D^@!^Itestword00root@f1514ed14f7f:/app# wc -l /app/trunc.db
+3 /app/trunc.db
+root@f1514ed14f7f:/app# head -20 /app/trunc.db
+
+IyaI
+!testword09?    !testword08@X\!testword07c!testword06K!testword052!testword04*!testword03!testword02
+!testword01!    testword00root@f1514ed14f7f:/app# grep -n 'testword' /app/trunc.db | head -5
+grep: /app/trunc.db: binary file matches
+root@f1514ed14f7f:/app# od -c /app/trunc.db | head -30
+0000000  \r  \0  \0  \0  \n 017   I  \0 017 360 017 337 017 316 017 275
+0000020 017 254 017 233 017 212 017   y 017   a 017   I  \0  \0  \0  \0
+0000040  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0
+*
+0007500  \0  \0  \0  \0  \0  \0  \0  \0  \0 026  \n 004  \0   !  \a   t
+0007520   e   s   t   w   o   r   d   0   9   ? 340  \0  \0  \0  \0  \0
+0007540  \0 026  \t 004  \0   !  \a   t   e   s   t   w   o   r   d   0
+0007560   8   @   X 377   \   ( 365 302 217 017  \b 004  \0   ! 001   t
+0007600   e   s   t   w   o   r   d   0   7   c 017  \a 004  \0   ! 001
+0007620   t   e   s   t   w   o   r   d   0   6   K 017 006 004  \0   !
+0007640 001   t   e   s   t   w   o   r   d   0   5   2 017 005 004  \0
+0007660   ! 001   t   e   s   t   w   o   r   d   0   4   * 017 004 004
+0007700  \0   ! 001   t   e   s   t   w   o   r   d   0   3 031 017 003
+0007720 004  \0   ! 001   t   e   s   t   w   o   r   d   0   2  \n 017
+0007740 002 004  \0   ! 001   t   e   s   t   w   o   r   d   0   1 002
+0007760 016 001 004  \0   !  \t   t   e   s   t   w   o   r   d   0   0
+0010000
+root@f1514ed14f7f:/app# python3 -c "
+> with open('/app/trunc.db', 'rb') as f:
+>     data = f.read()
+> print('First 200 bytes:', data[:200])
+> print('Length:', len(data))
+> "
+First 200 bytes: b'\r\x00\x00\x00\n\x0fI\x00\x0f\xf0\x0f\xdf\x0f\xce\x0f\xbd\x0f\xac\x0f\x9b\x0f\x8a\x0fy\x0fa\x0fI\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\
+x00'
+Length: 4096
+root@f1514ed14f7f:/app#

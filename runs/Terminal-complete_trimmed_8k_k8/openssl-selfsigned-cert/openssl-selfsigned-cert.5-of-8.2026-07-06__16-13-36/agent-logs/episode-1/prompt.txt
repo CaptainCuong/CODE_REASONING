@@ -1,0 +1,102 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+root@8b6b3d06105a:/app# mkdir -p /app/ssl
+root@8b6b3d06105a:/app# cd /app/ssl
+root@8b6b3d06105a:/app/ssl# openssl genrsa -out server.key 2048
+root@8b6b3d06105a:/app/ssl# chmod 600 server.key
+root@8b6b3d06105a:/app/ssl# openssl req -new -key server.key -x509 -days 365 -subj "/C=US/O=DevOps Team/CN=dev-internal.company.local" -out server.crt
+root@8b6b3d06105a:/app/ssl# cat server.key server.crt > server.pem
+root@8b6b3d06105a:/app/ssl# cd /app
+root@8b6b3d06105a:/app# # Create verification.txt with subject, dates, and SHA-256 fingerprint
+root@8b6b3d06105a:/app# openssl x509 -in ssl/server.crt -noout -subject > ssl/verification.txt
+root@8b6b3d06105a:/app# echo '---' >> ssl/verification.txt
+root@8b6b3d06105a:/app# openssl x509 -in ssl/server.crt -noout -dates >> ssl/verification.txt
+root@8b6b3d06105a:/app# echo '---' >> ssl/verification.txt
+root@8b6b3d06105a:/app# openssl x509 -in ssl/server.crt -noout -fingerprint >> ssl/verification.txt
+root@8b6b3d06105a:/app# # Create Python script at /app/check_cert.py
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Create a simple SSL context to load the certificate
+>     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     # Get the subject
+>     subject = context.get_subject()
+>     common_name = subject.get('CN')
+>     print(f'Common Name: {common_name}')
+>
+>     # Get the certificate's validity date
+>     cert = context.get_certificate()
+>     not_before = cert.get_not_before().decode('utf-8')
+>     not_after = cert.get_not_after().decode('utf-8')
+>     print(f'Not Before: {not_before}')
+>     print(f'Not After: {not_after}')
+>
+>     # Convert dates to YYYY-MM-DD format
+>     # OpenSSL dates are in 'YYYY-MM-DD HH:MM:SS' format
+>     # We'll take the date part only
+>     not_before_date = not_before.split()[0]
+>     not_after_date = not_after.split()[0]
+>     print(f'Expiration Date: {not_after_date}')
+>
+>     # Verify that the certificate is valid (not expired)
+>     from datetime import datetime
+>     now = datetime.now()
+>     cert_not_before = datetime.strptime(not_before, '%Y-%m-%d %H:%M:%S')
+>     cert_not_after = datetime.strptime(not_after, '%Y-%m-%d %H:%M:%S')
+>     if cert_not_before <= now <= cert_not_after:
+>         print('Certificate verification successful')
+>     else:
+>         print('ERROR: Certificate is expired or not valid')
+>         sys.exit(1)
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# # Verify that all files are present and have correct permissions
+root@8b6b3d06105a:/app# ls -la /app/ssl/
+total 20
+drwxr-xr-x 2 root root  104 Jul  7 17:16 .
+drwxr-xr-x 1 root root   50 Jul  7 17:16 ..
+-rw-r--r-- 1 root root 1253 Jul  7 17:16 server.crt
+-rw------- 1 root root 1704 Jul  7 17:16 server.key
+-rw-r--r-- 1 root root 2957 Jul  7 17:16 server.pem
+-rw-r--r-- 1 root root  219 Jul  7 17:16 verification.txt
+root@8b6b3d06105a:/app# # Test the Python script
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:25: DeprecationWarning: ssl.PROTOCOL_TLSv1_2 is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 59, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 29, in verify_certificate
+    subject = context.get_subject()
+              ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'SSLContext' object has no attribute 'get_subject'
+root@8b6b3d06105a:/app#

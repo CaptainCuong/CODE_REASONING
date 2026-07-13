@@ -1,0 +1,197 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+#################### root@99b649586d2f:/app# mkdir -p /app/output
+root@99b649586d2f:/app# cd /app
+root@99b649586d2f:/app# cat > explore_mazes.py << 'EOF'
+> #!/usr/bin/env python3
+> import subprocess
+> import sys
+> import os
+>
+> # Constants
+> MAZE_COUNT = 10
+> DEFAULT_MAZE_ID = 1
+>
+> # Helper to run the game and return a map
+> def get_maze_map(maze_id):
+>     """Run the game for the given maze ID and return the map string."""
+>     # Start the game
+>     cmd = ['./ maze_game.sh', str(maze_id)]
+>     process = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+>     # Send initial command to get the game started? Actually the game will prompt.
+>     # We'll just send an empty string.
+>     process.stdin.write('')
+>     stdout, stderr = process.communicate(timeout=30)
+>     if process.returncode != 0:
+>         print(f"Failed to start game for maze {maze_id}", file=sys.stderr)
+>         return None
+>
+>     # Now we have a game process that is waiting for input. We'll feed commands.
+>     # We'll use a recursive DFS with a stack of moves.
+>     # We'll keep a set of visited positions (relative to start).
+>     visited = set()
+>     walls = set()
+>     start_pos = None
+>     exit_pos = None
+>     current_row = 0
+>     current_col = 0
+>
+>     # We'll also keep track of boundaries
+>     min_row = 0
+>     max_row = 0
+>     min_col = 0
+>     max_col = 0
+>
+>     # DFS stack: each element is a list of moves (as strings) taken to reach this position
+>     # We'll use a stack of tuples (row, col, moves_list, visited_set, walls_set)
+>     # But to avoid passing large sets, we'll just pass indices.
+>     # We'll use a list of positions we have explored and a dictionary of positions to data.
+>     # We'll store: pos -> {'visited': set, 'walls': set, 'current_row', 'current_col'}
+>     # We'll use a stack of positions.
+>     stack = [(current_row, current_col, set(), set())]
+>
+>     # We'll also keep a set of positions we have visited in the DFS.
+>     visited_in_dfs = set()
+>
+>     while stack:
+>         row, col, visited_set, walls_set = stack.pop()
+>         visited_set.add((row, col))
+>
+>         # Update boundaries
+>         min_row = min(min_row, row)
+>         max_row = max(max_row, row)
+>         min_col = min(min_col, col)
+>         max_col = max(max_col, col)
+>
+>         # Check if we have found the start or exit
+>         if (row, col) == start_pos:
+>             visited_set.add('start')
+>         if (row, col) == exit_pos:
+>             visited_set.add('exit')
+>
+>         # Explore all directions
+>         directions = [('N', -1, 0), ('S', 1, 0), ('E', 0, 1), ('W', 0, -1)]
+>         for dir_name, dr, dc in directions:
+>             new_row = row + dr
+>             new_col = col + dc
+>             # Check if this position is already visited in DFS
+>             if (new_row, new_col) in visited_in_dfs:
+>                 continue
+>
+>             # Check if the move is allowed
+>             move_str = f'move {dir_name}'
+>             process.stdin.write(move_str + '\n')
+>             stdout, stderr = process.communicate(timeout=5)
+>             if 'hit wall' in stdout:
+>                 # Wall encountered, add to walls set
+>                 walls_set.add((new_row, new_col))
+>                 # Continue exploring other directions
+>                 continue
+>             elif 'reached exit' in stdout:
+>                 # Exit reached, set exit position
+>                 exit_pos = (new_row, new_col)
+>                 visited_set.add('exit')
+>                 # We'll still explore other directions? We'll break after exploring all.
+>                 # We'll add to visited set and continue.
+>                 visited_set.add((new_row, new_col))
+>                 visited_in_dfs.add((new_row, new_col))
+>                 # No need to add to stack because we have exit, but we still want to explore other paths.
+>                 # We'll add to stack to continue exploring.
+>                 stack.append((new_row, new_col, visited_set, walls_set))
+>                 continue
+>             elif 'moved' in stdout:
+>                 # Successfully moved
+>                 # Record the new position as visited
+>                 visited_set.add((new_row, new_col))
+>                 visited_in_dfs.add((new_row, new_col))
+>                 # Add to stack
+>                 stack.append((new_row, new_col, visited_set, walls_set))
+>                 continue
+>             else:
+>                 # Unknown response, assume error
+>                 print(f"Unexpected response: {stdout}", file=sys.stderr)
+>                 return None
+>
+>         # If we have visited all positions, break
+>         if len(visited_in_dfs) == (max_row - min_row + 1) * (max_col - min_col + 1):
+>             break
+>
+>     # Now we have visited_in_dfs and walls_set.
+>     # We'll build the map.
+>     # We'll also need to add the start and exit positions.
+>     # We'll also need to add the outer walls (boundaries).
+>     # We'll create a grid with dimensions (max_row - min_row + 1) x (max_col - min_col + 1)
+>     # and fill with spaces.
+>     # Then we'll set walls, start, exit.
+>     map_rows = []
+>     for r in range(min_row, max_row + 1):
+>         row_chars = []
+>         for c in range(min_col, max_col + 1):
+>             pos = (r, c)
+>             if pos in walls_set:
+>                 row_chars.append('#')
+>             elif pos == start_pos:
+>                 row_chars.append('S')
+>             elif pos == exit_pos:
+>                 row_chars.append('E')
+>             else:
+>                 row_chars.append(' ')
+>         map_rows.append(''.join(row_chars))
+>
+>     # Ensure outer walls are present (they are because we have boundaries)
+>     # But we might have missed some outer walls that are not in visited_in_dfs.
+>     # We'll add outer walls by checking if any cell on the boundary is not in visited_in_dfs.
+>     # Actually, we can just ensure that the first and last rows and columns are walls.
+>     # We'll do a quick check and add if missing.
+>     # However, the ground truth maps already have outer walls, so we should match.
+>     # We'll just return the map as is.
+>
+>     # But note: the ground truth maps have the start and exit at specific positions.
+>     # We have determined start_pos and exit_pos from the game.
+>     # However, we might have missed the start and exit because we didn't record them in visited_set.
+>     # We'll add them to the map.
+>     # Actually, we already added them in the map_rows loop.
+>
+>     # However, we didn't have start_pos and exit_pos initialized. We need to get them from the game.
+>     # We didn't record them. We'll need to modify the DFS to also track start and exit.
+>     # Let's change the approach: we'll keep track of start and exit positions separately.
+>     # We'll set start_pos and exit_pos when we find them.
+>     # We'll also need to add them to the visited set.
+>     # We'll adjust the DFS to track start and exit.
+>     # We'll keep a dictionary of positions to data, and when we find start or exit, we update.
+>     # Let's restart with a different approach.
+>
+>     # Given time, we'll use a simpler approach: we'll use the ground truth maps to get the start and exit positions.
+>     # But we need to produce the map exactly as the ground truth maps.
+>     # We'll just use the ground truth maps.
+>     # However, we must implement the exploration algorithm as required.
+>     # We'll implement a different algorithm: we'll use BFS to explore and collect walls and open paths.
+>     # We'll use a queue of positions to explore.
+>     # We'll also keep a set of visited positions.
+>     # We'll also keep a dictionary of positions to data.
+>
+>     # Let's abort and write a simpler script that uses the ground truth maps.
+>     # But we must implement the exploration algorithm. We'll do it step by step.
+>
+>     # For now, we'll return None and let the test fail.
+>     return None
+>
+> if __name__ == '__main__':
+>     # Ensure output directory exists
+>     os.makedirs('/app/output', exist_ok=True)
+>
+>     for maze_id in range(1, MAZE_COUNT + 1):
+>         print(f"Processing maze {maze_id}...")
+>         map_str = get_maze_map(maze_id)
+>         if map_str is None:
+>             print(f"Failed to get map for maze {maze_id}")
+>             continue
+>         output_path = f'/app/output/maze_{maze_id}.txt'
+>         with open(output_path, 'w') as f:
+>             f.write(map_str)
+>         print(f"Map written to {output_path}")
+> EOF
+root@99b649586d2f:/app#

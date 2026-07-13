@@ -1,0 +1,151 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@0b2128aaa6c8:/app# cat > fit_peaks_accurate.py << 'EOF'
+> import json
+> import math
+>
+> def load_data():
+>     w = []
+>     i = []
+>     with open('graphene.dat', 'r') as f:
+>         for line in f:
+>             parts = line.strip().split(',')
+>             if len(parts) < 3:
+>                 continue
+>             w.append(float(parts[0]))
+>             i.append(float(parts[2]))
+>     return w, i
+>
+> def find_peak_index(w, i, target_w):
+>     idx = min(range(len(w)), key=lambda x: abs(w[x] - target_w))
+>     return idx
+>
+> def fit_peak(w, i, idx):
+>     # take window around peak
+>     window_size = 20
+>     start = max(0, idx - window_size)
+>     end = min(len(w), idx + window_size + 1)
+>     w_sub = w[start:end]
+>     i_sub = i[start:end]
+>     # find index of max intensity in window
+>     max_idx = i_sub.index(max(i_sub))
+>     x0 = w_sub[max_idx]
+>     i_max = i_sub[max_idx]
+>     # compute variance of w_sub
+>     variance = sum((x - x0) ** 2 for x in w_sub) / len(w_sub)
+>     gamma = math.sqrt(variance)
+>     # compute log of intensities
+>     logi = [math.log(y) for y in i_sub]
+>     # quadratic fit: logi = a*(x-x0)^2 + b*(x-x0) + c
+>     # use least squares on transformed variable z = x - x0
+>     z = [x - x0 for x in w_sub]
+>     logz = logi
+>     n = len(z)
+>     # solve for coefficients a, b, c
+>     # we know c = log(A) where A is amplitude.
+>     # We'll fit using linear regression: logz = a*z^2 + b*z + c
+>     # but we need to estimate a and b.
+>     # Let's do a simple fit using three points symmetric around peak.
+>     # Use central three points for simplicity.
+>     # If window has at least 3 points, use them.
+>     if n >= 3:
+>         # central three points
+>         idx1 = (n-1)//2
+>         z1, z2, z3 = z[idx1-1], z[idx1], z[idx1+1]
+>         log1, log2, log3 = logz[idx1-1], logz[idx1], logz[idx1+1]
+>         # solve for a, b, c using three equations
+>         # log1 = a*z1^2 + b*z1 + c
+>         # log2 = a*z2^2 + b*z2 + c
+>         # log3 = a*z3^2 + b*z3 + c
+>         # subtract to eliminate c
+>         eq1 = log1 - log2
+>         eq2 = log1 - log3
+>         eq3 = log2 - log3
+>         a = (eq1 + eq2 + 2*eq3) / (2*(z1**2 - 2*z1*z2 + z2**2 + z1**2 - 2*z1*z3 + z3**2))
+>         b = (2*(z2**2 - z1**2) + (eq1 - eq2)) / (2*(z1**2 - 2*z1*z2 + z2**2 + z1**2 - 2*z1*z3 + z3**2))
+>         c = log1 - a*z1**2 - b*z1
+>         # gamma from variance
+>         gamma = math.sqrt(variance)
+>         # amplitude = exp(c)
+>         amplitude = math.exp(c)
+>         # offset = i_max - amplitude
+>         offset = i_max - amplitude
+>     else:
+>         # fallback to previous method
+>         offset = 0.0
+>         amplitude = i_max - offset
+>     return x0, gamma, amplitude, offset
+>
+> def main():
+>     w, i = load_data()
+>     idx_g = find_peak_index(w, i, 1648)  # use actual peak location
+>     idx_2d = find_peak_index(w, i, 2700)
+>     print('G peak index:', idx_g, 'w=', w[idx_g], 'i=', i[idx_g])
+>     print('2D peak index:', idx_2d, 'w=', w[idx_2d], 'i=', i[idx_2d])
+>     params_g = fit_peak(w, i, idx_g)
+>     params_2d = fit_peak(w, i, idx_2d)
+>     results = {
+>         "G": {},
+>         "2D": {}
+>     }
+>     if params_g:
+>         x0, gamma, amp, offset = params_g
+>         results["G"]["x0"] = x0
+>         results["G"]["gamma"] = gamma
+>         results["G"]["amplitude"] = amp
+>         results["G"]["offset"] = offset
+>     else:
+>         results["G"]["x0"] = 0.0
+>         results["G"]["gamma"] = 0.0
+>         results["G"]["amplitude"] = 0.0
+>         results["G"]["offset"] = 0.0
+>     if params_2d:
+>         x0, gamma, amp, offset = params_2d
+>         results["2D"]["x0"] = x0
+>         results["2D"]["gamma"] = gamma
+>         results["2D"]["amplitude"] = amp
+>         results["2D"]["offset"] = offset
+>     else:
+>         results["2D"]["x0"] = 0.0
+>         results["2D"]["gamma"] = 0.0
+>         results["2D"]["amplitude"] = 0.0
+>         results["2D"]["offset"] = 0.0
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>     print(json.dumps(results, indent=2))
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@0b2128aaa6c8:/app# python3 fit_peaks_accurate.py
+G peak index: 3563 w= 1648.0 i= 446799.0
+2D peak index: 1670 w= 2701.0 i= 99301.0
+Traceback (most recent call last):
+  File "/app/fit_peaks_accurate.py", line 116, in <module>
+    main()
+    ~~~~^^
+  File "/app/fit_peaks_accurate.py", line 82, in main
+    params_g = fit_peak(w, i, idx_g)
+  File "/app/fit_peaks_accurate.py", line 61, in fit_peak
+    a = (eq1 + eq2 + 2*eq3) / (2*(z1**2 - 2*z1*z2 + z2**2 + z1**2 - 2*z1*z3 + z3**2))
+        ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ZeroDivisionError: float division by zero
+root@0b2128aaa6c8:/app# cat results.json
+{
+  "G": {
+    "x0": 1650.9545454545455,
+    "gamma": 1.6916176423571267,
+    "amplitude": 950951.0,
+    "offset": 0.0
+  },
+  "2D": {
+    "x0": 2700.6341463414633,
+    "gamma": 13.822491564539112,
+    "amplitude": 958016.0,
+    "offset": 0.0
+  }
+}root@0b2128aaa6c8:/app#

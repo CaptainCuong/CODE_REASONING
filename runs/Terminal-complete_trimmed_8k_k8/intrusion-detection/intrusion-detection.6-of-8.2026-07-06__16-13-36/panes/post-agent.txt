@@ -1,0 +1,715 @@
+root@ce0c9143efbb:/app# ls -la
+total 0
+drwxr-xr-x 1 root root 27 Jul  7 18:33 .
+drwxr-xr-x 1 root root 57 Jul  7 18:49 ..
+drwxr-xr-x 1 root root 22 Jul  7 18:33 logs
+drwxr-xr-x 2 root root 10 Jul  7 18:33 reports
+drwxr-xr-x 1 root root 42 Jul  7 18:33 rules
+root@ce0c9143efbb:/app# find . -type f -name '*.log' -o -name '*.json' -o -name '*.sh' 2>/dev/null | head -20
+./rules/detection_rules.json
+./logs/http.log
+./logs/auth.log
+root@ce0c9143efbb:/app# cat /app/rules/detection_rules.json
+{
+  "rules": [
+    {
+      "id": "SSH-BRUTE-FORCE",
+      "description": "SSH brute force attempt",
+      "pattern": "Failed password for",
+      "threshold": 5,
+      "timeframe": 60,
+      "severity": "high"
+    },
+    {
+      "id": "WEB-SCAN",
+      "description": "Web server scanning activity",
+      "pattern": "GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php",
+      "threshold": 3,
+      "timeframe": 300,
+      "severity": "medium"
+    },
+    {
+      "id": "INVALID-USER",
+      "description": "Login attempts with invalid users",
+      "pattern": "invalid user",
+      "threshold": 2,
+      "timeframe": 300,
+      "severity": "low"
+    },
+    {
+      "id": "SUDO-COMMAND",
+      "description": "Sudo command execution",
+      "pattern": "sudo:.*COMMAND=",
+      "threshold": 1,
+      "timeframe": 3600,
+      "severity": "info"
+    }
+  ]
+}
+root@ce0c9143efbb:/app# head -5 /app/logs/auth.log
+Apr 10 08:12:33 server sshd[1234]: Accepted publickey for admin from 192.168.1.5 port 49123
+Apr 10 08:15:45 server sshd[1235]: Failed password for root from 45.32.67.89 port 54321
+Apr 10 08:15:48 server sshd[1235]: Failed password for root from 45.32.67.89 port 54322
+Apr 10 08:15:51 server sshd[1235]: Failed password for root from 45.32.67.89 port 54323
+Apr 10 08:15:54 server sshd[1235]: Failed password for root from 45.32.67.89 port 54324
+root@ce0c9143efbb:/app# head -5 /app/logs/http.log
+192.168.1.5 - - [10/Apr/2023:08:30:42 +0000] "GET /index.html HTTP/1.1" 200 4523 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:15 +0000] "GET /admin HTTP/1.1" 403 1234 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:18 +0000] "GET /phpmyadmin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:20 +0000] "GET /wp-admin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:22 +0000] "GET /manager/html HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+root@ce0c9143efbb:/app# which jq
+/usr/bin/jq
+root@ce0c9143efbb:/app# date
+Tue Jul  7 18:49:52 UTC 2026
+root@ce0c9143efbb:/app# cd /app
+root@ce0c9143efbb:/app# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> OUTPUT_DIR="/app/reports"
+>
+> # Ensure output directory exists
+> mkdir -p "$OUTPUT_DIR"
+>
+ > # Read rules
+> if [ ! -f "$RULES_FILE" ]; then
+>     echo "Rules file not found: $RULES_FILE"
+>     exit 1
+> fi
+>
+> # Parse JSON rules into associative array
+> rules=()
+> while IFS="" read -r line; do
+>     if [[ -n "$line" ]]; then
+>         rules+=("$line")
+>     fi
+> done < "$RULES_FILE"
+>
+> # We'll use jq if available, else parse with grep/sed
+> if command -v jq >/dev/null 2>&1; then
+>     # Use jq to get each rule
+>     jq -r '.rules[] | "\(.id):\(.pattern):\(.threshold):\(.timeframe):\(.severity)"' "$RULES_FILE" > /tmp/rules.txt
+> else
+>     # Fallback: parse manually
+>     grep -o '"id":"[^"]*"' "$RULES_FILE" | sed 's/"id":"//' | sed 's/"$//' > /tmp/rule_ids.txt
+>     grep -o '"pattern":"[^"]*"' "$RULES_FILE" | sed 's/"pattern":"//' | sed 's/"$//' > /tmp/patterns.txt
+>     grep -o '"threshold":"[^"]*"' "$RULES_FILE" | sed 's/"threshold":"//' | sed 's/"$//' > /tmp/thresholds.txt
+>     grep -o '"timeframe":"[^"]*"' "$RULES_FILE" | sed 's/"timeframe":"//' | sed 's/"$//' > /tmp/timeframes.txt
+>     grep -o '"severity":"[^"]*"' "$RULES_FILE" | sed 's/"severity":"//' | sed 's/"$//' > /tmp/severities.txt
+> fi
+>
+> # We'll use jq for simplicity; if not installed, we'll need to implement differently.
+> # Let's assume jq is installed.
+>
+> # Function to convert timestamp to epoch seconds
+> timestamp_to_epoch() {
+>     local ts="$1"
+>     # Convert to epoch using date command
+>     # For auth.log: "Apr 10 08:12:33"
+>     # For http.log: "10/Apr/2023:08:30:42 +0000"
+>     # We'll try to parse both.
+>     if [[ $ts =~ ^[A-Za-z]\ [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then
+>         # Format: Month DD HH:MM:SS
+>         local dt="${ts// /_}"
+>         date -Iseconds -d "$dt" +'%s'
+>     elif [[ $ts =~ ^[0-9]{2}/[A-Za-z]{3}/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}$ ]]; then
+>         # Format: DD/Mon/YYYY:HH:MM:SS +0000
+>         # Remove leading +
+>         local dt="${ts// /_}"
+>         date -Iseconds -d "$dt" +'%s'
+>     else
+>         echo "Warning: Unknown timestamp format: $ts"
+>         echo 0
+>     fi
+> }
+>
+> # Parse auth.log
+> echo "Parsing auth.log..."
+> auth_matches=()
+> while IFS= read -r line; do
+>     # Extract IP
+>     ip=$(echo "$line" | grep -oEo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+>     if [ -z "$ip" ]; then
+>         continue
+>     fi
+>     # Extract timestamp
+>     # Example: Apr 10 08:12:33
+>     ts=$(echo "$line" | grep -oEo '[A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}')
+>     epoch=$(timestamp_to_epoch "$ts")
+>     # Store match
+>     auth_matches+=("$epoch|$ip|$line")
+> done < "$LOG_DIR/auth.log"
+>
+> # Parse http.log
+> echo "Parsing http.log..."
+> http_matches=()
+> while IFS= read -r line; do
+>     # Extract IP (first token)
+>     ip=$(echo "$line" | awk '{print $1}')
+>     if [ -z "$ip" ]; then
+>         continue
+>     fi
+>     # Extract timestamp: between '[' and ']' after date
+>     ts=$(echo "$line" | grep -oEo '\[[^]]*\]' | grep -oEo '[0-9]{2}/[A-Za-z]{3}/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}' | head -1)
+>     epoch=$(timestamp_to_epoch "$ts")
+>     # Store match
+>     http_matches+=("$epoch|$ip|$line")
+> done < "$LOG_DIR/http.log"
+>
+t> # Combine matches
+> all_matches=("${auth_matches[@]}" "${http_matches[@]}")
+>
+> # Now process each rule
+> alerts=()
+> events=()
+> # We'll use associative arrays to store per rule data
+> # rule_id -> list of matches (epoch, ip, line)
+> # We'll use jq to parse rules and loop
+> if command -v jq >/dev/null 2>&1; then
+>     # Use jq to iterate over rules
+>     jq -c '.rules[] | .id, .pattern, .threshold, .timeframe, .severity' "$RULES_FILE" > /tmp/rule_entries.txt
+>     while IFS="" read -r rule_id pattern threshold timeframe severity; do
+>         # Collect matches for this rule
+>         matches_for_rule=()
+>         for match in "${all_matches[@]}"; do
+>             epoch=$(echo "$match" | cut -d'|' -f1)
+>             ip=$(echo "$match" | cut -d'|' -f2)
+>             line=$(echo "$match" | cut -d'|' -f3)
+>             if [[ $line =~ $pattern ]]; then
+>                 matches_for_rule+=("$epoch|$ip|$line")
+>             fi
+>         done
+>         # Now check each match within timeframe
+>         # We'll sort matches by epoch and then for each match, count matches within the last timeframe seconds
+>         # We'll store matches sorted by epoch
+>         sorted_matches=($(echo "${matches_for_rule[@]}" | sort -t'|' -k1,1n))
+>         # For each match, we check the window from epoch - timeframe to epoch
+>         # We'll use a sliding window approach
+>         for match in "${sorted_matches[@]}"; do
+>             epoch=$(echo "$match" | cut -d'|' -f1)
+>             ip=$(echo "$match" | cut -d'|' -f2)
+>             line=$(echo "$match" | cut -d'|' -f3)
+>             # Count matches within [epoch - timeframe, epoch]
+>             window_matches=()
+>             for m in "${sorted_matches[@]}"; do
+>                 mepoch=$(echo "$m" | cut -d'|' -f1)
+>                 if [ $mepoch -ge $((epoch - timeframe)) ] && [ $mepoch -le $epoch ]; then
+>                     window_matches+=("$m")
+>                 fi
+>             done
+>             if [ ${#window_matches[@]} -ge $threshold ]; then
+>                 # Alert triggered
+>                 # Collect unique IPs for this rule
+>                 ip_set=()
+>                 for m in "${window_matches[@]}"; do
+>                     mip=$(echo "$m" | cut -d'|' -f2)
+>                     ip_set+=("$mip")
+>                 done
+>                 unique_ips=$(echo "${ip_set[@]}" | sort -u)
+>                 # Add to alerts
+>                 alerts+=("$rule_id|$severity|${#window_matches[@]}|$unique_ips")
+>                 # Also add to events (same as alerts)
+>                 events+=("$rule_id|$severity|${#window_matches[@]}|$unique_ips")
+>                 break  # only need one alert per rule? The spec says per rule, we can break after first alert.
+>             fi
+>         done
+>     done
+> else
+>     # Fallback: not implemented
+>     echo "jq not available, using fallback"
+> fi
+>
+> # Generate alert.json
+> if [ ${#alerts[@]} -gt 0 ]; then
+>     # Build alerts array
+>     alert_json="{"timestamp": "$(date -Iseconds)", "alerts": ["
+>     for alert in "${alerts[@]}"; do
+>         rule_id=$(echo $alert | cut -d'|' -f1)
+>         severity=$(echo $alert | cut -d'|' -f2)
+>         matches=$(echo $alert | cut -d'|' -f3)
+>         ips=$(echo $alert | cut -d'|' -f4)
+>         # Escape quotes and commas
+>         alert_json+="{"id": "$rule_id", "severity": "$severity", "matches": $matches, "ips": "$ips""\n        if [ $rule_id != "${alerts[-1]%|$*}" ]; then
+>             alert_json+=","
+>         fi
+>     done
+>     alert_json+="]"}
+>     echo "$alert_json" > "$OUTPUT_DIR/alert.json"
+> else
+>     echo "{\"timestamp\": \"$(date -Iseconds)\", \"alerts\": []}" > "$OUTPUT_DIR/alert.json"
+> fi
+>
+> # Generate report.json
+> # We need statistics: number of matches per rule
+> stats=()
+> for alert in "${alerts[@]}"; do
+>     rule_id=$(echo $alert | cut -d'|' -f1)
+>     matches=$(echo $alert | cut -d'|' -f3)
+>     stats+=("$rule_id:$matches")
+> done
+>
+> # Build statistics object
+> stats_json="{"timestamp": "$(date -Iseconds)", "events": ["
+> for alert in "${events[@]}"; do
+>     rule_id=$(echo $alert | cut -d'|' -f1)
+>     severity=$(echo $alert | cut -d'|' -f2)
+>     matches=$(echo $alert | cut -d'|' -f3)
+>     ips=$(echo $alert | cut -d'|' -f4)
+>     events_json+="{"id": "$rule_id", "severity": "$severity", "matches": $matches, "ips": "$ips""\n    if [ $rule_id != "${events[-1]%|$*}" ]; then
+>         events_json+=","
+>     fi
+> done
+> events_json+="]"}
+>
+> # Add statistics
+> stats_json+=", """\n    """
+>     stats_json+="    """\n    """
+>
+> # We'll just do it with jq if available, else we'll construct manually.
+> # For simplicity, we'll use jq to generate report.json with the same structure as alert.json but with events array.
+> # We'll create a temporary JSON with events array and then merge statistics.
+> # Let's do it with jq.
+> if command -v jq >/dev/null 2>&1; then
+>     # Build events array
+>     events_array=""
+>     for alert in "${events[@]}"; do
+>         rule_id=$(echo $alert | cut -d'|' -f1)
+>         severity=$(echo $alert | cut -d'|' -f2)
+>         matches=$(echo $alert | cut -d'|' -f3)
+>         ips=$(echo $alert | cut -d'|' -f4)
+>         events_array+="{"id": \"$rule_id\", "severity": \"$severity\", "matches": $matches, "ips": \"$ips\"}"
+>         if [ $rule_id != "${events[-1]%|$*}" ]; then
+>             events_array+=",
+> "
+>         fi
+>     done
+>     # Create JSON object with events and statistics
+>     jq -n --arg events "$events_array" --arg timestamp "$(date -Iseconds)" '{timestamp: $timestamp, events: ($events | from_json), statistics: {}}' > "$OUTPUT
+_DIR/report.json"
+>     # Now add statistics
+>     stats_json="$(jq -n --arg stats_json "$(cat "$OUTPUT_DIR/report.json" | grep -A 10 'statistics')" '' 2>/dev/null || true)
+>     # We'll just replace the file with a properly formatted one.
+>     # Let's do a simpler approach: create a temporary file with events array and then add statistics.
+>     echo "{\"timestamp\": \"$(date -Iseconds)\", \"events\": [$events_array], \"statistics\": {" > "$OUTPUT_DIR/report.json"
+>     for stat in "${stats[@]}"; do
+>         rule_id=$(echo $stat | cut -d':' -f1)
+>         count=$(echo $stat | cut -d':' -f2)
+>         echo "    \"$rule_id\": $count" >> "$OUTPUT_DIR/report.json"
+>     done
+>     echo "  }}" >> "$OUTPUT_DIR/report.json"
+> else
+>     # Fallback
+>     echo "{\"timestamp\": \"$(date -Iseconds)\", \"events\": [], \"statistics\": {" > "$OUTPUT_DIR/report.json"
+>     for stat in "${stats[@]}"; do
+>         rule_id=$(echo $stat | cut -d':' -f1)
+>         count=$(echo $stat | cut -d':' -f2)
+>         echo "    \"$rule_id\": $count" >> "$OUTPUT_DIR/report.json"
+>     done
+>     echo "  }}" >> "$OUTPUT_DIR/report.json"
+> fi
+>
+> echo "Detection complete. Alerts written to $OUTPUT_DIR/"
+> EOF
+root@ce0c9143efbb:/app# chmod +x intrusion_detector.sh
+root@ce0c9143efbb:/app# cat > response.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_DIR="/app/rules"
+> OUTPUT_DIR="/app/reports"
+>
+> if [ $# -ne 1 ]; then
+>     echo "Usage: $0 <IP_ADDRESS>"
+>     exit 1
+> fi
+>
+> IP="$1"
+> TIMESTAMP=$(date -Iseconds)
+> INCIDENT_FILE="${OUTPUT_DIR}/incident_${IP}_${TIMESTAMP}.txt"
+>
+> # Check if IP exists in logs
+> if [ ! -f "$LOG_DIR/auth.log" ] || [ ! -f "$LOG_DIR/http.log" ]; then
+>     echo "Log files not found."
+>     exit 1
+> fi
+>
+> # Function to extract IPs from log lines
+> echo "Extracting activity for IP: $IP" > "$INCIDENT_FILE"
+> echo "=============================" >> "$INCIDENT_FILE"
+> echo "Timestamp: $TIMESTAMP" >> "$INCIDENT_FILE"
+> echo "" >> "$INCIDENT_FILE"
+>
+> # Extract lines from auth.log with this IP
+> grep -E "from $IP" "$LOG_DIR/auth.log" >> "$INCIDENT_FILE"
+> if [ $? -eq 0 ]; then
+>     echo "" >> "$INCIDENT_FILE"
+>     echo "SSH auth.log matches:" >> "$INCIDENT_FILE"
+>     grep -E "from $IP" "$LOG_DIR/auth.log" | wc -l >> "$INCIDENT_FILE"
+> else
+>     echo "No matches in auth.log" >> "$INCIDENT_FILE"
+> fi
+>
+> echo "" >> "$INCIDENT_FILE"
+>
+> # Extract lines from http.log with this IP
+> grep -E "^$IP" "$LOG_DIR/http.log" >> "$INCIDENT_FILE"
+> if [ $? -eq 0 ]; then
+>     echo "" >> "$INCIDENT_FILE"
+>     echo "HTTP http.log matches:" >> "$INCIDENT_FILE"
+>     grep -E "^$IP" "$LOG_DIR/http.log" | wc -l >> "$INCIDENT_FILE"
+> else
+>     echo "No matches in http.log" >> "$INCIDENT_FILE"
+> fi
+>
+> # Check for suspicious activities (using detection rules)
+> echo "" >> "$INCIDENT_FILE"
+> echo "Suspicious activities detected:" >> "$INCIDENT_FILE"
+> # Read detection rules
+> cat "$RULES_DIR/detection_rules.json" | jq -r '.rules[] | "\(.id):\(.pattern):\(.severity)"' 2>/dev/null || cat "$RULES_DIR/detection_rules.json" | grep -o '"
+id":"[^"]*"' | sed 's/"id":"//' | sed 's/"$//' > /tmp/rule_ids.txt
+> cat "$RULES_DIR/detection_rules.json" | grep -o '"pattern":"[^"]*"' | sed 's/"pattern":"//' | sed 's/"$//' > /tmp/patterns.txt
+> cat "$RULES_DIR/detection_rules.json" | grep -o '"severity":"[^"]*"' | sed 's/"severity":"//' | sed 's/"$//' > /tmp/severities.txt
+>
+> while IFS="" read -r rule_id pattern severity; do
+>     # Check auth.log lines for this rule pattern
+>     matches_auth=$(grep -c "$pattern" "$LOG_DIR/auth.log" 2>/dev/null || true)
+>     # Check http.log lines for this rule pattern
+>     matches_http=$(grep -c "$pattern" "$LOG_DIR/http.log" 2>/dev/null || true)
+>     total_matches=$((matches_auth + matches_http))
+>     if [ $total_matches -gt 0 ]; then
+>         echo "Rule $rule_id ($severity): $total_matches matches" >> "$INCIDENT_FILE"
+>     fi
+> done < /tmp/rule_ids.txt
+>
+> # Clean up temporary files
+> rm -f /tmp/rule_ids.txt /tmp/patterns.txt /tmp/severities.txt
+>
+> echo "Incident report generated: $INCIDENT_FILE"
+> EOF
+root@ce0c9143efbb:/app# chmod +x response.sh
+root@ce0c9143efbb:/app# ls -la
+total 16
+drwxr-xr-x 1 root root   66 Jul  7 18:49 .
+drwxr-xr-x 1 root root   72 Jul  7 18:49 ..
+-rwxr-xr-x 1 root root 9648 Jul  7 18:49 intrusion_detector.sh
+drwxr-xr-x 1 root root   22 Jul  7 18:33 logs
+drwxr-xr-x 2 root root   10 Jul  7 18:33 reports
+-rwxr-xr-x 1 root root 2652 Jul  7 18:49 response.sh
+drwxr-xr-x 1 root root   42 Jul  7 18:33 rules
+root@ce0c9143efbb:/app# head -20 /app/reports/
+head: error reading '/app/reports/': Is a directory
+root@ce0c9143efbb:/app# cd /app
+root@ce0c9143efbb:/app# ./intrusion_detector.sh 2>&1
+./intrusion_detector.sh: line 48: syntax error in conditional expression
+root@ce0c9143efbb:/app# ls -la /app/reports/
+total 0
+drwxr-xr-x 2 root root 10 Jul  7 18:33 .
+drwxr-xr-x 1 root root 66 Jul  7 18:49 ..
+root@ce0c9143efbb:/app# cat /app/reports/alert.json
+cat: /app/reports/alert.json: No such file or directory
+root@ce0c9143efbb:/app# cat /app/reports/report.json
+cat: /app/reports/report.json: No such file or directory
+root@ce0c9143efbb:/app# ./response.sh 45.32.67.89 2>&1
+SSH-BRUTE-FORCE:Failed password for:high
+WEB-SCAN:GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php:medium
+INVALID-USER:invalid user:low
+SUDO-COMMAND:sudo:.*COMMAND=:info
+./response.sh: line 68: /tmp/rule_ids.txt: No such file or directory
+root@ce0c9143efbb:/app# ls -la /app/reports/
+total 4
+drwxr-xr-x 1 root root   72 Jul  7 18:50 .
+drwxr-xr-x 1 root root   85 Jul  7 18:49 ..
+-rw-r--r-- 1 root root 1313 Jul  7 18:50 incident_45.32.67.89_2026-07-07T18:50:03+00:00.txt
+root@ce0c9143efbb:/app# head -30 /app/reports/incident_*.txt 2>/dev/null || echo "No incident file"
+Extracting activity for IP: 45.32.67.89
+=============================
+Timestamp: 2026-07-07T18:50:03+00:00
+
+Apr 10 08:15:45 server sshd[1235]: Failed password for root from 45.32.67.89 port 54321
+Apr 10 08:15:48 server sshd[1235]: Failed password for root from 45.32.67.89 port 54322
+Apr 10 08:15:51 server sshd[1235]: Failed password for root from 45.32.67.89 port 54323
+Apr 10 08:15:54 server sshd[1235]: Failed password for root from 45.32.67.89 port 54324
+Apr 10 08:15:57 server sshd[1235]: Failed password for root from 45.32.67.89 port 54325
+Apr 10 08:16:00 server sshd[1235]: Failed password for root from 45.32.67.89 port 54326
+
+SSH auth.log matches:
+6
+
+45.32.67.89 - - [10/Apr/2023:08:32:15 +0000] "GET /admin HTTP/1.1" 403 1234 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:18 +0000] "GET /phpmyadmin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:20 +0000] "GET /wp-admin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:22 +0000] "GET /manager/html HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:15:12:35 +0000] "GET /.env HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+45.32.67.89 - - [10/Apr/2023:15:12:38 +0000] "GET /config.php HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+
+HTTP http.log matches:
+6
+
+Suspicious activities detected:
+root@ce0c9143efbb:/app# cd /app
+root@ce0c9143efbb:/app# cat > /app/intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> OUTPUT_DIR="/app/reports"
+>
+> mkdir -p "$OUTPUT_DIR"
+>
+> # Ensure jq is available
+> if ! command -v jq >/dev/null 2>&1; then
+>     echo "jq not installed, installing..."
+>     apt-get update && apt-get install -y jq
+> fi
+>
+> # Parse rules using jq
+> jq -c '.rules[] | {id, pattern, threshold, timeframe, severity}' "$RULES_FILE" > /tmp/rules.json
+>
+> # Initialize arrays
+> alerts=()
+> events=()
+>
+> # For each rule
+> while IFS= read -r rule; do
+>     rule_id=$(echo "$rule" | jq -r '.id')
+>     pattern=$(echo "$rule" | jq -r '.pattern')
+>     threshold=$(echo "$rule" | jq -r '.threshold')
+>     timeframe=$(echo "$rule" | jq -r '.timeframe')
+>     severity=$(echo "$rule" | jq -r '.severity')
+>
+>     # Count matches in auth.log
+>     auth_count=$(grep -c "$pattern" "$LOG_DIR/auth.log")
+>     # Count matches in http.log
+>     http_count=$(grep -c "$pattern" "$LOG_DIR/http.log")
+>     total_matches=$((auth_count + http_count))
+>
+>     if [ $total_matches -eq 0 ]; then
+>         continue
+>     fi
+>
+>     # Collect unique IPs
+>     ips=$(grep "$pattern" "$LOG_DIR/auth.log" 2>/dev/null || true; grep "$pattern" "$LOG_DIR/http.log" 2>/dev/null || true) | grep -oE '([0-9]{1,3}\.){3}[0-9]
+{1,3}' | sort -u | tr '\n' ',' | sed 's/,$//')
+>
+>     # Add to alerts (one alert per rule)
+>     alerts+=("$rule_id|$severity|$total_matches|$ips")
+>     # Add to events (same as alerts)
+>     events+=("$rule_id|$severity|$total_matches|$ips")
+>
+> done < /tmp/rules.json
+>
+> # Generate alert.json
+> timestamp=$(date -Iseconds)
+> if [ ${#alerts[@]} -eq 0 ]; then
+>     echo '{"timestamp": "'$timestamp'", "alerts": []}' > "$OUTPUT_DIR/alert.json"
+> else
+>     # Build alerts array
+>     local alerts_json="{"timestamp": "'$timestamp'", "alerts": ["
+>     for alert in "${alerts[@]}"; do
+>         rule_id=$(echo $alert | cut -d'|' -f1)
+>         severity=$(echo $alert | cut -d'|' -f2)
+>         matches=$(echo $alert | cut -d'|' -f3)
+>         ips=$(echo $alert | cut -d'|' -f4)
+>         # Escape JSON
+>         local severity_escaped=$(echo $severity | jq -Rs .)
+>         local ips_escaped=$(echo $ips | jq -Rs .)
+>         alerts_json+="{"id": "'$rule_id'", "severity": "'$severity_escaped'", "matches": '$matches', "ips": "'$ips_escaped'""\n"
+>         # Use a variable to track last rule ID
+>         local last_rule_id=$rule_id
+>     done
+>     alerts_json+="]"}
+>     echo "$alerts_json" > "$OUTPUT_DIR/alert.json"
+> fi
+>
+> # Generate report.json
+> # Statistics: number of matches per rule
+> stats_json="{"timestamp": "'$timestamp'", "events": ["
+> for event in "${events[@]}"; do
+>     rule_id=$(echo $event | cut -d'|' -f1)
+>     severity=$(echo $event | cut -d'|' -f2)
+>     matches=$(echo $event | cut -d'|' -f3)
+>     ips=$(echo $event | cut -d'|' -f4)
+>     local severity_escaped=$(echo $severity | jq -Rs .)
+>     local ips_escaped=$(echo $ips | jq -Rs .)
+>     stats_json+="{"id": "'$rule_id'", "severity": "'$severity_escaped'", "matches": '$matches', "ips": "'$ips_escaped'""\n"
+>     if [ $rule_id != "$last_rule_id" ]; then
+>         stats_json+=",
+> "
+>     fi
+>     # Count matches for statistics
+>     local stat_count=$(echo $matches)
+>     # Store for later statistics
+>     # We'll just add to stats array
+>     stats+=("$rule_id:$stat_count")
+>     last_rule_id=$rule_id
+> done
+> stats_json+="]"}
+>
+> # Add statistics object
+> stats_json+=", """\n    """
+>     stats_json+="    """\n    """
+>     # Create a temporary file with stats array
+>     echo "$stats_json" > /tmp/stats.json
+>     # Use jq to add statistics
+>     jq -n --arg events_json "$stats_json" --arg timestamp "$timestamp" '{timestamp: $timestamp, events: ($events_json | from_json), statistics: {}}' > "$OUTPU
+T_DIR/report.json"
+>     # Add statistics
+>     jq -n --arg stats_json "$(cat /tmp/stats.json | jq -r '.statistics')" '{statistics: ($stats_json | from_json)}' > /tmp/patch.json
+>     jq --argfile patch /tmp/patch -n '{timestamp: $timestamp, events: ($events_json | from_json), statistics: ($patch | from_json)}' > "$OUTPUT_DIR/report.jso
+n"
+>
+> rm -f /tmp/rules.json /tmp/stats.json /tmp/patch.json
+>
+> echo "Detection complete. Alerts written to $OUTPUT_DIR/"
+> EOF
+root@ce0c9143efbb:/app# chmod +x /app/intrusion_detector.sh
+root@ce0c9143efbb:/app# cat > /app/response.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_DIR="/app/rules"
+> OUTPUT_DIR="/app/reports"
+>
+> if [ $# -ne 1 ]; then
+>     echo "Usage: $0 <IP_ADDRESS>"
+>     exit 1
+> fi
+>
+> IP="$1"
+> TIMESTAMP=$(date -Iseconds)
+> INCIDENT_FILE="${OUTPUT_DIR}/incident_${IP}_${TIMESTAMP}.txt"
+>
+> # Check if IP exists in logs
+> if [ ! -f "$LOG_DIR/auth.log" ] || [ ! -f "$LOG_DIR/http.log" ]; then
+>     echo "Log files not found."
+>     exit 1
+> fi
+>
+> echo "Extracting activity for IP: $IP" > "$INCIDENT_FILE"
+> echo "=============================" >> "$INCIDENT_FILE"
+> echo "Timestamp: $TIMESTAMP" >> "$INCIDENT_FILE"
+> echo "" >> "$INCIDENT_FILE"
+>
+> # Extract lines from auth.log with this IP
+> grep -E "from $IP" "$LOG_DIR/auth.log" >> "$INCIDENT_FILE"
+> if [ $? -eq 0 ]; then
+>     echo "" >> "$INCIDENT_FILE"
+>     echo "SSH auth.log matches:" >> "$INCIDENT_FILE"
+>     grep -E "from $IP" "$LOG_DIR/auth.log" | wc -l >> "$INCIDENT_FILE"
+> else
+>     echo "No matches in auth.log" >> "$INCIDENT_FILE"
+> fi
+>
+> echo "" >> "$INCIDENT_FILE"
+>
+> # Extract lines from http.log with this IP
+> grep -E "^$IP" "$LOG_DIR/http.log" >> "$INCIDENT_FILE"
+> if [ $? -eq 0 ]; then
+>     echo "" >> "$INCIDENT_FILE"
+>     echo "HTTP http.log matches:" >> "$INCIDENT_FILE"
+>     grep -E "^$IP" "$LOG_DIR/http.log" | wc -l >> "$INCIDENT_FILE"
+> else
+>     echo "No matches in http.log" >> "$INCIDENT_FILE"
+> fi
+>
+> echo "" >> "$INCIDENT_FILE"
+>
+> # Check for suspicious activities (using detection rules)
+> echo "Suspicious activities detected:" >> "$INCIDENT_FILE"
+> # Use jq to parse rules
+> jq -c '.rules[] | {id, pattern, severity}' "$RULES_DIR/detection_rules.json" > /tmp/rules.json
+>
+> while IFS= read -r rule; do
+>     rule_id=$(echo "$rule" | jq -r '.id')
+>     pattern=$(echo "$rule" | jq -r '.pattern')
+>     severity=$(echo "$rule" | jq -r '.severity')
+>     matches_auth=$(grep -c "$pattern" "$LOG_DIR/auth.log" 2>/dev/null || true)
+>     matches_http=$(grep -c "$pattern" "$LOG_DIR/http.log" 2>/dev/null || true)
+>     total_matches=$((matches_auth + matches_http))
+>     if [ $total_matches -gt 0 ]; then
+>         echo "Rule $rule_id ($severity): $total_matches matches" >> "$INCIDENT_FILE"
+>     fi
+> done < /tmp/rules.json
+>
+> rm -f /tmp/rules.json
+>
+> echo "Incident report generated: $INCIDENT_FILE"
+> EOF
+root@ce0c9143efbb:/app# chmod +x /app/response.sh
+root@ce0c9143efbb:/app# ./intrusion_detector.sh 2>&1
+./intrusion_detector.sh: line 42: syntax error near unexpected token `)'
+root@ce0c9143efbb:/app# ls -la /app/reports/
+total 4
+drwxr-xr-x 1 root root   72 Jul  7 18:50 .
+drwxr-xr-x 1 root root   85 Jul  7 18:49 ..
+-rw-r--r-- 1 root root 1313 Jul  7 18:50 incident_45.32.67.89_2026-07-07T18:50:03+00:00.txt
+root@ce0c9143efbb:/app# cat /app/reports/alert.json
+cat: /app/reports/alert.json: No such file or directory
+root@ce0c9143efbb:/app# cat /app/reports/report.json
+cat: /app/reports/report.json: No such file or directory
+root@ce0c9143efbb:/app# ./response.sh 45.32.67.89 2>&1
+Incident report generated: /app/reports/incident_45.32.67.89_2026-07-07T18:51:04+00:00.txt
+root@ce0c9143efbb:/app# head -50 /app/reports/incident_*.txt
+==> /app/reports/incident_45.32.67.89_2026-07-07T18:50:03+00:00.txt <==
+Extracting activity for IP: 45.32.67.89
+=============================
+Timestamp: 2026-07-07T18:50:03+00:00
+
+Apr 10 08:15:45 server sshd[1235]: Failed password for root from 45.32.67.89 port 54321
+Apr 10 08:15:48 server sshd[1235]: Failed password for root from 45.32.67.89 port 54322
+Apr 10 08:15:51 server sshd[1235]: Failed password for root from 45.32.67.89 port 54323
+Apr 10 08:15:54 server sshd[1235]: Failed password for root from 45.32.67.89 port 54324
+Apr 10 08:15:57 server sshd[1235]: Failed password for root from 45.32.67.89 port 54325
+Apr 10 08:16:00 server sshd[1235]: Failed password for root from 45.32.67.89 port 54326
+
+SSH auth.log matches:
+6
+
+45.32.67.89 - - [10/Apr/2023:08:32:15 +0000] "GET /admin HTTP/1.1" 403 1234 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:18 +0000] "GET /phpmyadmin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:20 +0000] "GET /wp-admin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:22 +0000] "GET /manager/html HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:15:12:35 +0000] "GET /.env HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+45.32.67.89 - - [10/Apr/2023:15:12:38 +0000] "GET /config.php HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+
+HTTP http.log matches:
+6
+
+Suspicious activities detected:
+
+==> /app/reports/incident_45.32.67.89_2026-07-07T18:51:04+00:00.txt <==
+Extracting activity for IP: 45.32.67.89
+=============================
+Timestamp: 2026-07-07T18:51:04+00:00
+
+Apr 10 08:15:45 server sshd[1235]: Failed password for root from 45.32.67.89 port 54321
+Apr 10 08:15:48 server sshd[1235]: Failed password for root from 45.32.67.89 port 54322
+Apr 10 08:15:51 server sshd[1235]: Failed password for root from 45.32.67.89 port 54323
+Apr 10 08:15:54 server sshd[1235]: Failed password for root from 45.32.67.89 port 54324
+Apr 10 08:15:57 server sshd[1235]: Failed password for root from 45.32.67.89 port 54325
+Apr 10 08:16:00 server sshd[1235]: Failed password for root from 45.32.67.89 port 54326
+
+SSH auth.log matches:
+6
+
+45.32.67.89 - - [10/Apr/2023:08:32:15 +0000] "GET /admin HTTP/1.1" 403 1234 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:18 +0000] "GET /phpmyadmin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:20 +0000] "GET /wp-admin HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:08:32:22 +0000] "GET /manager/html HTTP/1.1" 404 512 "-" "Mozilla/5.0"
+45.32.67.89 - - [10/Apr/2023:15:12:35 +0000] "GET /.env HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+45.32.67.89 - - [10/Apr/2023:15:12:38 +0000] "GET /config.php HTTP/1.1" 404 512 "-" "Go-http-client/1.1"
+
+HTTP http.log matches:
+6
+
+Suspicious activities detected:
+Rule SSH-BRUTE-FORCE (high): 8 matches
+Rule INVALID-USER (low): 2 matches
+Rule SUDO-COMMAND (info): 3 matches
+root@ce0c9143efbb:/app#

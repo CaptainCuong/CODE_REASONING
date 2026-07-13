@@ -1,0 +1,94 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@f6f43e6a3f2c:/app# pip3 install scipy
+Collecting scipy
+  Downloading scipy-1.18.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+Collecting numpy<2.8,>=2.0.0 (from scipy)
+  Downloading numpy-2.5.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+Downloading scipy-1.18.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (35.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.3/35.3 MB 371.4 MB/s eta 0:00:00
+Downloading numpy-2.5.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 388.3 MB/s eta 0:00:00
+Installing collected packages: numpy, scipy
+Successfully installed numpy-2.5.1 scipy-1.18.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you ar
+e doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@f6f43e6a3f2c:/app# python3 -c "import scipy; print('scipy installed')"
+scipy installed
+root@f6f43e6a3f2c:/app# cat > /app/fit.py << 'EOF'
+> import numpy as np
+> import json
+> from scipy import optimize, signal
+>
+> def fit_peak(x, y, peak_name):
+>     """Fit a single peak."""
+>     # Use a simple least squares fit of a function
+>     # Function: y = A * exp(- (x - x0)^2 / (2 * gamma^2)) + offset
+>     # We'll use scipy's optimize.curvefit.
+>     def f(x, x0, gamma, amp, offset):
+>         return amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset
+>     # We'll guess initial parameters.
+>     # For G peak, likely around 1600? Let's assume we know.
+>     # We'll let the algorithm find.
+>     # We'll use the first data point's x as x0 initial.
+>     popt, pcov = optimize.curvefit(f, x, y, p0=[x[0], 5, 1, 0.5])
+>     return {
+>         'x0': popt[0],
+>         'gamma': popt[1],
+>         'amplitude': popt[2],
+>         'offset': popt[3]
+>     }
+>
+> def main():
+>     # Load data
+>     data = np.loadtxt('graphene.dat', delimiter=",")
+>     x = data[:, 0]
+>     y = data[:, 1]
+>     # Find indices of maxima
+>     max_idx, _ = signal.findpeaks(y)
+>     # We expect two peaks: G and 2D.
+>     # Let's take the first two maxima.
+>     peak_indices = max_idx[:2]
+>     results = {}
+>     for idx in peak_indices:
+>         # Determine which peak it is by x value.
+>         x_val = x[idx]
+>         if 1500 < x_val < 1700:
+>             peak_name = 'G'
+>         elif 2500 < x_val < 2900:
+>             peak_name = '2D'
+>         else:
+>             # If it's not one of the two, skip (should not happen)
+>             continue
+>         # Extract the peak segment: from the start of the peak to the end.
+>         # We'll find the nearest index with y > threshold before and after.
+>         # For simplicity, we'll take from idx-10 to idx+10.
+>         start = max(0, idx-10)
+>         end = min(len(x), idx+10)
+>         x_sub = x[start:end]
+>         y_sub = y[start:end]
+>         # Fit
+>         popt, pcov = optimize.curvefit(lambda x, x0, gamma, amp, offset: amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset, x_sub, y_sub, p0=[x_sub[0], 5,
+ 1, 0.5])
+>         results[peak_name] = {
+>             'x0': popt[0],
+>             'gamma': popt[1],
+>             'amplitude': popt[2],
+>             'offset': popt[3]
+>         }
+>     # Write to file
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f6f43e6a3f2c:/app#

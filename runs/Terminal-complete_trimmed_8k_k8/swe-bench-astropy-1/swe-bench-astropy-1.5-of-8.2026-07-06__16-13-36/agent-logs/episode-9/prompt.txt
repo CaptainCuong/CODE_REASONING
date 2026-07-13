@@ -1,0 +1,125 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@90fe78cbc7cb:/app# cd /app
+root@90fe78cbc7cb:/app# grep -A 50 -B 5 '_cstack' /usr/local/lib/python3.9/site-packages/astropy/modeling/separable.py
+        if pos == "right":
+            mat = np.roll(mat, (noutp - model.n_outputs))
+    return mat
+
+
+def _cstack(left, right):
+    """
+    Function corresponding to '&' operation.
+
+    Parameters
+    ----------
+    left, right : `astropy.modeling.Model` or ndarray
+        If input is of an array, it is the output of `coord_matrix`.
+
+    Returns
+    -------
+    result : ndarray
+        Result from this operation.
+
+    """
+    noutp = _compute_n_outputs(left, right)
+
+    if isinstance(left, Model):
+        cleft = _coord_matrix(left, "left", noutp)
+    else:
+        cleft = np.zeros((noutp, left.shape[1]))
+        cleft[: left.shape[0], : left.shape[1]] = left
+    if isinstance(right, Model):
+        cright = _coord_matrix(right, "right", noutp)
+    else:
+        cright = np.zeros((noutp, right.shape[1]))
+        cright[-right.shape[0] :, -right.shape[1] :] = right
+
+    return np.hstack([cleft, cright])
+
+
+def _cdot(left, right):
+    """
+    Function corresponding to "|" operation.
+
+    Parameters
+    ----------
+    left, right : `astropy.modeling.Model` or ndarray
+        If input is of an array, it is the output of `coord_matrix`.
+
+    Returns
+    -------
+    result : ndarray
+        Result from this operation.
+    """
+    left, right = right, left
+
+    def _n_inputs_outputs(input, position):
+        """
+        Return ``n_inputs``, ``n_outputs`` for a model or coord_matrix.
+        """
+--
+
+
+# Maps modeling operators to a function computing and represents the
+# relationship of axes as an array of 0-es and 1-s
+_operators = {
+    "&": _cstack,
+    "|": _cdot,
+    "+": _arith_oper,
+    "-": _arith_oper,
+    "*": _arith_oper,
+    "/": _arith_oper,
+    "**": _arith_oper,
+}
+root@90fe78cbc7cb:/app# cat > examine.py << 'EOF'
+> import numpy as np
+> from astropy.modeling import models as m
+> from astropy.modeling.separable import _separable, _cstack
+>
+> # Let's examine the _cstack function
+> print('Examining _cstack:')
+> print('_cstack documentation:')
+> import inspect
+> print(inspect.getdoc(_cstack))
+> print()
+>
+> sky = m.Pix2Sky_TAN()
+> linear1 = m.Linear1D(10)
+> linear2 = m.Linear1D(5)
+> cm = linear1 & linear2
+>
+> print('coord matrix of sky:')
+> print(_coord_matrix(sky, 'left', 2))
+> print('coord matrix of cm:')
+> print(_coord_matrix(cm, 'left', 16))
+> print('coord matrix of sky & cm:')
+> print(_cstack(_coord_matrix(sky, 'left', 2), _coord_matrix(cm, 'left', 16)))
+> print('separability matrix of sky & cm:')
+> print(separability_matrix(sky & cm))
+> print()
+> # Let's also compute the separability matrix manually
+> sep_sky = separability_matrix(sky)
+> sep_linear1 = separability_matrix(linear1)
+> sep_linear2 = separability_matrix(linear2)
+> expected = np.block([
+>     [sep_sky, sep_linear1],
+>     [sep_sky, sep_linear2],
+>     [sep_linear1, np.zeros((1,2))],
+>     [sep_linear2, np.zeros((1,2))]
+> ])
+> print('Expected separability matrix:')
+> print(expected)
+> print()
+> print('Now let's print the actual separability matrix again:')
+> print(separability_matrix(sky & cm))
+> EOF
+root@90fe78cbc7cb:/app# python3 examine.py
+  File "/app/examine.py", line 39
+    print('Now let's print the actual separability matrix again:')
+                   ^
+SyntaxError: invalid syntax
+root@90fe78cbc7cb:/app#

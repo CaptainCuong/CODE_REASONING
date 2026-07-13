@@ -1,0 +1,122 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+Server running on port 5000
+cat > /app/server2.py << 'EOF'
+import json
+import urllib.request
+import urllib.error
+import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import re
+
+def get_network_status():
+    url = 'https://api.mainnet-beta.solanafoundation.org/status'
+    try:
+        with urllib.request.urlopen(url) as f:
+            data = json.load(f)
+        return data
+    except urllib.error.URLError as e:
+        return {'error': str(e)}
+
+def get_block(block_number):
+    url = f'https://api.mainnet-beta.solanafoundation.org/blocks/{ block_number }'
+    try:
+        with urllib.request.urlopen(url) as f:
+            data = json.load(f)
+        return data
+    except urllib.error.URLError:
+        return {'error': 'Block not found'}
+
+def get_transaction(txn_signature):
+    url = f'https://api.mainnet-beta.solanafoundation.org/transactions/{ txn_signature }'
+    try:
+        with urllib.request.urlopen(url) as f:
+            data = json.load(f)
+        return data
+    except urllib.error.URLError:
+        return {'error': 'Transaction not found'}
+
+def get_account(account_addr):
+    url = f'https://api.mainnet-beta.solanafoundation.org/accounts/{ account_addr }'
+    try:
+        with urllib.request.urlopen(url) as f:
+            data = json.load(f)
+        return data
+    except urllib.error.URLError:
+        return {'error': 'Account not found'}
+
+def get_program_accounts(program_id, limit=10, offset=0):
+    url = f'https://api.mainnet-beta.solanafoundation.org/programs/{ program_id }/accounts'
+    query = f'?limit={limit}&offset={offset}'
+    url += query
+    try:
+        with urllib.request.urlopen(url) as f:
+            data = json.load(f)
+        return data
+    except urllib.error.URLError:
+        return {'error': 'Program accounts not found'}
+
+def main():
+    # Define patterns and corresponding functions
+    patterns = [
+        ('/status', get_network_status),
+        (r'/block/\d+', get_block),
+        (r'/transaction/\w+', get_transaction),
+        (r'/account/\w+', get_account),
+        (r'/program/\w+/accounts', get_program_accounts),
+    ]
+
+    # Map pattern to function
+    pattern_to_func = {p[0]: p[1] for p in patterns}
+
+    # Server handler
+    class ServerHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            path = self.path
+            if path in pattern_to_func:
+                # If it's a simple pattern without placeholders, call directly
+                func = pattern_to_func[path]
+                try:
+                    result = func()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.write(json.dumps(result))
+                except Exception as e:
+                    self.send_response(500)
+                    self.write(json.dumps({'error': str(e)}))
+            else:
+                # Try to match with regex patterns
+                matched = False
+                for pattern, func in patterns:
+                    match = re.match(pattern, path)
+                    if match:
+                        # Extract the captured group
+                        captured = match.group(1)
+                        result = func(captured)
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.write(json.dumps(result))
+                        matched = True
+                        break
+                if not matched:
+                    self.send_response(404)
+                    self.write(json.dumps({'error': 'Endpoint not found'}))
+        def do_POST(self):
+            self.send_response(405)
+            self.write(json.dumps({'error': 'POST method not allowed'}))
+
+    port = 5000
+    server_address = ('', port)
+    httpd = HTTPServer(server_address, ServerHandler, bind_and_activate=True)
+    print(f'Server running on port {port}')
+    httpd.serve_forever()
+
+if __name__ == '__main__':
+    main()
+EOF
+python3 /app/server2.py
+apt-get update && apt-get install -y curl
+

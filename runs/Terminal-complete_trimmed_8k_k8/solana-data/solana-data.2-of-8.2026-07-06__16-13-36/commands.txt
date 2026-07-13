@@ -1,0 +1,110 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'pwd\n'
+'ls -la\n'
+'python3 --version\n'
+'pip3 list\n'
+'pip3 install Flask solana-rpc\n'
+'cd /app\n'
+'cat > server.py << \'EOF\'\n#!/usr/bin/env python3\nimport json\nfrom flask import Flask, request, abort\nfrom solana import Solana\nfrom solana.rpc import RpcClient\nfrom solana.rpc.requests import GetBlockWithTransactions, GetTransaction, GetAccountInfo, GetProgramAccounts\nimport sys\n\napp = Flask(__name__)\n\n# Connect to mainnet-beta\nclient = RpcClient("https://api.mainnet-beta.solana.com")\nsolana = Solana(client)\n\n# Helper to get network status\ndef get_network_status():\n    # Get network info\n    network = "mainnet-beta"\n    # Get current slot\n    slot = solana.get_slot()\n    # Get node count (approximate via RPC)\n    # We can use get_nodes_in_cluster\n    nodes = solana.get_nodes_in_cluster()\n    node_count = len(nodes) if nodes else 0\n    # Get version\n    version = solana.get_version()\n    return {\n        "status": "online",  # assuming we can connect\n        "network": network,\n        "current_slot": slot,\n        "node_count": node_count,\n        "version": version\n    }\n\n# /status endpoint\n@app.route(\'/status\', methods=[\'GET\'])\ndef status():\n    try:\n        return json.dumps(get_network_status())\n    except Exception as e:\n        return json.dumps({"error": str(e)})\n\n# /block/<slot_number>\n@app.route(\'/block/<int:slot>\', methods=[\'GET\'])\ndef block_details(slot):\n    try:\n        block = solana.get_block_by_slot(slot)\n        if block is None:\n            return json.dumps({"error": f"Block not found for slot {slot}"})\n        blockhash = block.blockhash\n        parent_slot = block.parent_slot\n        previous_blockhash = block.previous_blockhash\n        block_height = block.block_height\n        block_time = block.block_time\n        return json.dumps({\n            "blockhash": blockhash,\n            "parent_slot": parent_slot,\n            "previous_blockhash": previous_blockhash,\n            "block_height": block_height,\n            "block_time": block_time\n        })\n    except Exception as e:\n        return json.dumps({"error": str(e)})\n\n# /transaction/<signature>\n@app.route(\'/transaction/<signature>\', methods=[\'GET\'])\ndef transaction_details(signature):\n    try:\n        tx = solana.get_transaction(signature)\n        if tx is None:\n            return json.dumps({"error": f"Transaction not found with signature {signature}"})\n        # Extract fields\n        slot = tx.slot\n        block_time = tx.block_time\n        success = tx.success\n        fee = tx.fee\n        # token_transfers\n        token_transfers = []\n        for transfer in tx.token_transfers:\n            token_transfers.append({\n                "account": transfer.account,\n                "mint": transfer.mint,\n                "amount": transfer.amount\n            })\n        return json.dumps({\n            "signature": signature,\n            "slot": slot,\n            "block_time": block_time,\n            "success": success,\n            "fee": fee,\n            "token_transfers": token_transfers\n        })\n    except Exception as e:\n        return json.dumps({"error": str(e)})\n\n# /account/<address>\n@app.route(\'/account/<address>\', methods=[\'GET\'])\ndef account_details(address):\n    try:\n        account = solana.get_account_info(address)\n        if account is None:\n            return json.dumps({"error": f"Account not found with address {address}"})\n        lamports = account.lamports\n        owner = account.owner\n        rent_epoch = account.rent_epoch\n        executable = account.executable\n        return json.dumps({\n            "address": address,\n            "executable": executable,\n            "lamports": lamports,\n            "owner": owner,\n            "rent_epoch": rent_epoch\n        })\n    except Exception as e:\n        return json.dumps({"error": str(e)})\n\n# /program/<program_id>/accounts\n@app.route(\'/program/<program_id>/accounts\', methods=[\'GET\'])\ndef program_accounts(program_id):\n    try:\n        # Default limit and offset\n        limit = request.args.get(\'limit\', 10)\n        offset = request.args.get(\'offset\', 0)\n        accounts = solana.get_program_accounts(program_id, limit=limit, offset=offset)\n        total = solana.get_program_accounts_count(program_id)\n        result = []\n        for acc in accounts:\n            result.append({\n                "pubkey": acc.pubkey,\n                "account": {\n                    "executable": acc.executable,\n                    "lamports": acc.lamports,\n                    "owner": acc.owner,\n                    "rent_epoch": acc.rent_epoch\n                }\n            })\n        return json.dumps({\n            "program_id": program_id,\n            "total_accounts": total,\n            "limit": limit,\n            "offset": offset,\n            "accounts": result\n        })\n    except Exception as e:\n        return json.dumps({"error": str(e)})\n\nif __name__ == \'__main__\':\n    app.run(port=5000, debug=True)\nEOF\n'
+'pip3 install Flask\n'
+'pip3 install solana\n'
+"pip3 list | grep -E 'Flask|solana'\n"
+'cd /app\n'
+'python3 -c "import solana; print(\'solana version:\', solana.__version__)"\n'
+'cd /app\n'
+'cat > test_solana.py << \'EOF\'\nimport solana\nfrom solana import Solana\nfrom solana.rpc import RpcClient\nfrom solana.rpc.requests import GetBlockWithTransactions, GetTransaction, GetAccountInfo, GetProgramAccounts\n\nclient = RpcClient("https://api.mainnet-beta.solana.com")\nsolana = Solana(client)\nprint(\'Testing...\')\n# Check network status\nprint(\'Network status:\', solana.get_network())\n# Get current slot\nprint(\'Current slot:\', solana.get_slot())\n# Get block by slot\nblock = solana.get_block_by_slot(1000)\nprint(\'Block:\', block)\n# Get transaction by signature\ntrans = solana.get_transaction(\'some signature\')\nprint(\'Transaction:\', trans)\n# Get account info\nacc = solana.get_account_info(\'some address\')\nprint(\'Account:\', acc)\n# Get program accounts\nprog = solana.get_program_accounts(\'some program id\')\nprint(\'Program accounts:\', prog)\n# Get program accounts count\ntotal = solana.get_program_accounts_count(\'some program id\')\nprint(\'Total accounts:\', total)\nEOF\n'
+'python3 test_solana.py\n'
+'cd /app\n'
+"cat > explore.py << 'EOF'\nimport solana\nprint('solana module attributes:')\nfor attr in dir(solana):\n    print(f'  {attr}')\nprint('\\nNow from solana.rpc:')\nfor attr in dir(solana.rpc):\n    print(f'  {attr}')\nprint('\\nNow from solana.rpc.requests:')\nfor attr in dir(solana.rpc.requests):\n    print(f'  {attr}')\nEOF\n"
+'python3 explore.py\n'
+'cd /app\n'
+'cat /usr/local/lib/python3.13/site-packages/solana/__init__.py\n'
+'cat /usr/local/lib/python3.13/site-packages/solana/__init__.py | head -30\n'
+'cd /usr/local/lib/python3.13/site-packages/solana/\n'
+'ls -la\n'
+'cat __init__.py\n'
+'cat __init__.py | wc -l\n'
+'cd /usr/local/lib/python3.13/site-packages/solana/rpc\n'
+'ls -la\n'
+'cat __init__.py\n'
+'cat constants.py\n'
+'cat models.py\n'
+'cd /usr/local/lib/python3.13/site-packages/solana/rpc\n'
+'cat core.py\n'
+'cat jsonrpc.py\n'
+'cat async_http_provider.py\n'
+'cd /usr/local/lib/python3.13/site-packages/solana/rpc\n'
+'cat async_http_provider.py\n'
+'cd /app\n'
+'cat > explore_api.py << \'EOF\'\nimport sys\nsys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\')\nimport solana\nfrom solana import Solana\nfrom solana.rpc import RpcClient\nfrom solana.rpc.requests import GetBlockWithTransactions, GetTransaction, GetAccountInfo, GetProgramAccounts\n\nprint(\'Testing Solana client...\')\n# Create a client with mainnet-beta\nclient = RpcClient("https://api.mainnet-beta.solana.com")\nsolana = Solana(client)\nprint(\'Client created:\', client)\nprint(\'Solana object:\', solana)\n\n# Check available attributes\nprint(\'\\nAvailable attributes:\')\nfor attr in dir(solana):\n    print(f\'  {attr}\')\n\n# Check methods\nprint(\'\\nAvailable methods:\')\nfor method in dir(solana):\n    if callable(getattr(solana, method)):\n        print(f\'  {method}\')\n\n# Try to get network status\nprint(\'\\nTrying to get network status...\')\ntry:\n    print(\'solana.get_network():\', solana.get_network())\nexcept Exception as e:\n    print(\'Error:\', e)\n\n# Try to get current slot\ntry:\n    print(\'solana.get_slot():\', solana.get_slot())\nexcept Exception as e:\n    print(\'Error:\', e)\n\n# Try to get block by slot\ntry:\n    block = solana.get_block_by_slot(1000)\n    print(\'Block:\', block)\nexcept Exception as e:\n    print(\'Error:\', e)\n\n# Try to get transaction by signature\ntry:\n    trans = solana.get_transaction(\'some signature\')\n    print(\'Transaction:\', trans)\nexcept Exception as e:\n    print(\'Error:\', e)\n\n# Try to get account info\ntry:\n    acc = solana.get_account_info(\'some address\')\n    print(\'Account:\', acc)\nexcept Exception as e:\n    print(\'Error:\', e)\n\n# Try to get program accounts\ntry:\n    prog = solana.get_program_accounts(\'some program id\')\n    print(\'Program accounts:\', prog)\nexcept Exception as e:\n    print(\'Error:\', e)\n\n# Try to get program accounts count\ntry:\n    total = solana.get_program_accounts_count(\'some program id\')\n    print(\'Total accounts:\', total)\nexcept Exception as e:\n    print(\'Error:\', e)\n\n# Check if there is a method for network status via ClusterUrls\nfrom solana.rpc.models import ClusterUrls\nprint(\'\\nClusterUrls:\')\nprint(ClusterUrls.mainnet_beta())\nEOF\n'
+'python3 explore_api.py\n'
+'cd /app\n'
+"cat > explore_package.py << 'EOF'\nimport sys\nsys.path.insert(0, '/usr/local/lib/python3.13/site-packages')\nimport solana\nprint('Top-level solana module attributes:')\nfor attr in dir(solana):\n    print(f'  {attr}')\nprint('\\nNow exploring submodules:')\nimport pkgutil\nfor _, module_name, is_pkg in pkgutil.iter_modules(solana.__path__):\n    print(f'  {module_name}')\n    try:\n        module = getattr(solana, module_name)\n        print('    Methods:')\n        for method in dir(module):\n            if callable(getattr(module, method)):\n                print(f'      {method}')\n    except:\n        pass\nEOF\n"
+'python3 explore_package.py\n'
+'cd /app\n'
+'cat /usr/local/lib/python3.13/site-packages/solana/constants.py\n'
+'cat /usr/local/lib/python3.13/site-packages/solana/utils.py\n'
+"cat /usr/local/lib/python3.13/site-packages/solana/rpc/core.py | grep -A 2 -B 2 'get_network'\n"
+'cd /app\n'
+"cat > explore_package.py << 'EOF'\nimport sys\nsys.path.insert(0, '/usr/local/lib/python3.13/site-packages')\nimport solana\nprint('Top-level solana module attributes:')\nfor attr in dir(solana):\n    print(f'  {attr}')\nprint('\\nNow exploring submodules:')\nimport pkgutil\nfor _, module_name, is_pkg in pkgutil.iter_modules(solana.__path__):\n    print(f'  {module_name}')\n    try:\n        module = getattr(solana, module_name)\n        print('    Methods:')\n        for method in dir(module):\n            if callable(getattr(module, method)):\n                print(f'      {method}')\n    except:\n        pass\nEOF\n"
+'python3 explore_package.py\n'
+'cd /app\n'
+"cat > explore_package.py << 'EOF'\nimport sys\nsys.path.insert(0, '/usr/local/lib/python3.13/site-packages')\nimport solana\nprint('Top-level solana module attributes:')\nfor attr in dir(solana):\n    print(f'  {attr}')\nprint('\\nNow exploring submodules:')\nimport pkgutil\nfor _, module_name, is_pkg in pkgutil.iter_modules(solana.__path__):\n    print(f'  {module_name}')\n    try:\n        module = getattr(solana, module_name)\n        print('    Methods:')\n        for method in dir(module):\n            if callable(getattr(module, method)):\n                print(f'      {method}')\n    except:\n        pass\nEOF\n"
+'python3 explore_package.py\n'
+'cd /app\n'
+"cat > explore_package.py << 'EOF'\nimport sys\nsys.path.insert(0, '/usr/local/lib/python3.13/site-packages')\nimport solana\nprint('Top-level solana module attributes:')\nfor attr in dir(solana):\n    print(f'  {attr}')\nprint('\\nNow exploring submodules:')\nimport pkgutil\nfor _, module_name, is_pkg in pkgutil.iter_modules(solana.__path__):\n    print(f'  {module_name}')\n    try:\n        module = getattr(solana, module_name)\n        print('    Methods:')\n        for method in dir(module):\n            if callable(getattr(module, method)):\n                print(f'      {method}')\n    except:\n        pass\nEOF\n"
+'python3 explore_package.py\n'
+'cd /app\n'
+"cat > explore_package.py << 'EOF'\nimport sys\nsys.path.insert(0, '/usr/local/lib/python3.13/site-packages')\nimport solana\nprint('Top-level solana module attributes:')\nfor attr in dir(solana):\n    print(f'  {attr}')\nprint('\\nNow exploring submodules:')\nimport pkgutil\nfor _, module_name, is_pkg in pkgutil.iter_modules(solana.__path__):\n    print(f'  {module_name}')\n    try:\n        module = getattr(solana, module_name)\n        print('    Methods:')\n        for method in dir(module):\n            if callable(getattr(module, method)):\n                print(f'      {method}')\n    except:\n        pass\nEOF\n"
+'python3 explore_package.py\n'
+'cd /app\n'
+"cat > explore_package.py << 'EOF'\nimport sys\nsys.path.insert(0, '/usr/local/lib/python3.13/site-packages')\nimport solana\nprint('Top-level solana module attributes:')\nfor attr in dir(solana):\n    print(f'  {attr}')\nprint('\\nNow exploring submodules:')\nimport pkgutil\nfor _, module_name, is_pkg in pkgutil.iter_modules(solana.__path__):\n    print(f'  {module_name}')\n    try:\n        module = getattr(solana, module_name)\n        print('    Methods:')\n        for method in dir(module):\n            if callable(getattr(module, method)):\n                print(f'      {method}')\n    except:\n        pass\nEOF\n"
+'python3 explore_package.py\n'
+'cd /app\n'
+"cat > explore_package.py << 'EOF'\nimport sys\nsys.path.insert(0, '/usr/local/lib/python3.13/site-packages')\nimport solana\nprint('Top-level solana module attributes:')\nfor attr in dir(solana):\n    print(f'  {attr}')\nprint('\\nNow exploring submodules:')\nimport pkgutil\nfor _, module_name, is_pkg in pkgutil.iter_modules(solana.__path__):\n    print(f'  {module_name}')\n    try:\n        module = getattr(solana, module_name)\n        print('    Methods:')\n        for method in dir(module):\n            if callable(getattr(module, method)):\n                print(f'      {method}')\n    except:\n        pass\nEOF\n"
+'python3 explore_package.py\n'
+'cd /usr/local/lib/python3.13/site-packages/solana/rpc\n'
+'cat __init__.py\n'
+"cat core.py | grep -A 2 -B 2 'get_network'\n"
+"cat core.py | grep -A 2 -B 2 'get_slot'\n"
+"cat core.py | grep -A 2 -B 2 'get_block_by_slot'\n"
+"cat core.py | grep -A 2 -B 2 'get_transaction'\n"
+"cat core.py | grep -A 2 -B 2 'get_account_info'\n"
+"cat core.py | grep -A 2 -B 2 'get_program_accounts'\n"
+"cat core.py | grep -A 2 -B 2 'get_program_accounts_count'\n"
+'cd /usr/local/lib/python3.13/site-packages/solana\n'
+"grep -r 'get_network' . --include='*.py'\n"
+"grep -r 'get_network' . --include='*.py' 2>/dev/null || echo 'no get_network found'\n"
+"cat core.py | grep -A 10 -B 10 'def get'\n"
+"cat core.py | grep -A 10 -B 10 'def get' | head -30\n"
+'cd /usr/local/lib/python3.13/site-packages/solana\n'
+"grep -r 'get_network' . --include='*.py'\n"
+"grep -r 'get_network' . --include='*.py' 2>/dev/null || echo 'no get_network found'\n"
+"cat core.py | grep -A 10 -B 10 'def get'\n"
+"cat core.py | grep -A 10 -B 10 'def get' | head -30\n"
+'cd /usr/local/lib/python3.13/site-packages/solana/rpc\n'
+'ls -la\n'
+"grep -r 'network' . --include='*.py'\n"
+"grep -r 'network' . --include='*.py' 2>/dev/null || echo 'no network found'\n"
+'cat async_http_provider.py | head -30\n'
+'cat core.py | head -50\n'
+'cd /usr/local/lib/python3.13/site-packages/solana\n'
+"grep -r 'getNetwork' . --include='*.py'\n"
+"grep -r 'getNetwork' . --include='*.py' 2>/dev/null || echo 'no getNetwork found'\n"
+"grep -r 'network' . --include='*.py'\n"
+"cat models.py | grep -A 2 -B 2 'ClusterUrls'\n"
+"cat types.py | grep -A 2 -B 2 'ClusterUrls'\n"
+"cat core.py | grep -A 2 -B 2 'get_network'\n"
+'cd /usr/local/lib/python3.13/site-packages/solana\n'
+"grep -r 'getNetwork' . --include='*.py'\n"
+"grep -r 'getNetwork' . --include='*.py' 2>/dev/null || echo 'no getNetwork found'\n"
+"grep -r 'network' . --include='*.py'\n"
+"cat models.py | grep -A 2 -B 2 'ClusterUrls'\n"
+"cat types.py | grep -A 2 -B 2 'ClusterUrls'\n"
+"cat core.py | grep -A 2 -B 2 'get_network'\n"
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

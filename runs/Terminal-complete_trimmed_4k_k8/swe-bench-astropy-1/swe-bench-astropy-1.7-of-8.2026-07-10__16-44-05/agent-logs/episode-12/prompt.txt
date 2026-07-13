@@ -1,0 +1,143 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@3645ab3bc7f5:/app# grep -A 30 '_coord_matrix' /app/astropy/astropy/modeling/separable.py
+def _coord_matrix(model, pos, noutp):
+    """
+    Create an array representing inputs and outputs of a simple model.
+
+    The array has a shape (noutp, model.n_inputs).
+
+    Parameters
+    ----------
+    model : `astropy.modeling.Model`
+        model
+    pos : str
+        Position of this model in the expression tree.
+        One of ['left', 'right'].
+    noutp : int
+        Number of outputs of the compound model of which the input model
+        is a left or right child.
+
+    """
+    if isinstance(model, Mapping):
+        axes = []
+        for i in model.mapping:
+            axis = np.zeros((model.n_inputs,))
+            axis[i] = 1
+            axes.append(axis)
+        m = np.vstack(axes)
+        mat = np.zeros((noutp, model.n_inputs))
+        if pos == 'left':
+            mat[: model.n_outputs, :model.n_inputs] = m
+        else:
+            mat[-model.n_outputs:, -model.n_inputs:] = m
+        return mat
+--
+        cleft = _coord_matrix(left, 'left', noutp)
+    else:
+        cleft = np.zeros((noutp, left.shape[1]))
+        cleft[: left.shape[0], : left.shape[1]] = left
+    if isinstance(right, Model):
+        cright = _coord_matrix(right, 'right', noutp)
+    else:
+        cright = np.zeros((noutp, right.shape[1]))
+        cright[-right.shape[0]:, -right.shape[1]:] = 1
+
+    return np.hstack([cleft, cright])
+
+
+def _cdot(left, right):
+    """
+    Function corresponding to "|" operation.
+
+    Parameters
+    ----------
+    left, right : `astropy.modeling.Model` or ndarray
+        If input is of an array, it is the output of `coord_matrix`.
+
+    Returns
+    -------
+    result : ndarray
+        Result from this operation.
+    """
+
+    left, right = right, left
+
+    def _n_inputs_outputs(input, position):
+        """
+        Return ``n_inputs``, ``n_outputs`` for a model or coord_matrix.
+        """
+        if isinstance(input, Model):
+            coords = _coord_matrix(input, position, input.n_outputs)
+        else:
+            coords = input
+        return coords
+
+    cleft = _n_inputs_outputs(left, 'left')
+    cright = _n_inputs_outputs(right, 'right')
+
+    try:
+        result = np.dot(cleft, cright)
+    except ValueError:
+        raise ModelDefinitionError(
+            'Models cannot be combined with the "|" operator; '
+            'left coord_matrix is {}, right coord_matrix is {}'.format(
+                cright, cleft))
+    return result
+
+
+def _separable(transform):
+    """
+    Calculate the separability of outputs.
+
+    Parameters
+    ----------
+    transform : `astropy.modeling.Model`
+        A transform (usually a compound model).
+
+    Returns :
+    is_separable : ndarray of dtype np.bool
+        An array of shape (transform.n_outputs,) of boolean type
+        Each element represents the separablity of the corresponding output.
+--
+        return _coord_matrix(transform, 'left', transform.n_outputs)
+
+
+# Maps modeling operators to a function computing and represents the
+# relationship of axes as an array of 0-es and 1-s
+_operators = {'&': _cstack, '|': _cdot, '+': _arith_oper, '-': _arith_oper,
+              '*': _arith_oper, '/': _arith_oper, '**': _arith_oper}
+root@3645ab3bc7f5:/app# python3 -c "
+> import astropy.modeling.separable as sep
+> from astropy.modeling import models as m
+> left = m.Linear1D(10)
+> right = m.Linear1D(5)
+> cm = left & right
+> print('cm matrix:', sep.separability_matrix(cm))
+> print('\nNow, let\'s test _cstack:')
+> from astropy.modeling import models as m
+> left = m.Pix2Sky_TAN()
+> right = cm
+> noutp = sep._compute_n_outputs(left, right)
+> cleft = sep._coord_matrix(left, 'left', noutp)
+> cright = sep._coord_matrix(right, 'right', noutp)
+> print('cleft:', cleft)
+> print('cright:', cright)
+> result = np.hstack([cleft, cright])
+> print('result:', result)
+> "
+cm matrix: [[ True False]
+ [False  True]]
+
+Now, let's test _cstack:
+Traceback (most recent call last):
+  File "<string>", line 14, in <module>
+  File "/usr/local/lib/python3.9/site-packages/astropy/modeling/separable.py", line 200, in _coord_matrix
+    if not model.separable:
+  File "/usr/local/lib/python3.9/site-packages/astropy/modeling/core.py", line 1590, in separable
+    raise NotImplementedError(
+NotImplementedError: The "separable" property is not defined for model CompoundModel
+root@3645ab3bc7f5:/app#

@@ -1,0 +1,564 @@
+root@b403f5daed5f:/app# python3 --version
+Python 3.12.3
+root@b403f5daed5f:/app# pip list 2>/dev/null | grep -i flask
+root@b403f5daed5f:/app# cd /app
+root@b403f5daed5f:/app# cat > server.py << 'EOF'
+> import sys
+> import json
+> import re
+> from http.server import HTTPServer, BaseHTTPRequestHandler
+>
+> def fibonacci(n):
+>     if n < 0:
+>         return None
+>     a, b = 0, 1
+>     for _ in range(n):
+>         a, b = b, a + b
+>     return a
+>
+> class FibonacciHandler(BaseHTTPRequestHandler):
+>     def do_GET(self):
+>         # Check query string
+>         query = self.path.split('?')[1] if '?' in self.path else None
+>         if not query:
+>             self.send_error(400, 'Missing query parameter n')
+>             return
+>         # Parse n
+>         # Use regex to extract n value
+>         match = re.search(r'n=([0-9]+)', query)
+>         if not match:
+>             self.send_error(400, 'Parameter n not found or not integer')
+>             return
+>         n_str = match.group(1)
+>         try:
+>             n = int(n_str)
+>         except ValueError:
+>             self.send_error(400, 'Parameter n must be an integer')
+>             return
+>         result = fibonacci(n)
+>         if result is None:
+>             self.send_error(400, 'n must be non-negative')
+>             return
+>         # Return JSON
+>         self.send_response(200)
+>         self.send_header('Content-Type', 'application/json')
+>         self.end_headers()
+>         self.wfile.write(json.dumps({'result': result}).encode())
+>
+> if __name__ == '__main__':
+>     server = HTTPServer(('0.0.0.0', 3000), FibonacciHandler)
+>     print('Starting server on port 3000...')
+>     server.serve_forever()
+> EOF
+root@b403f5daed5f:/app# python3 server.py
+Starting server on port 3000...
+curl http://localhost:3000/fib?n=10
+curl http://localhost:3000/fib
+curl http://localhost:3000/fib?n=abc
+^CTraceback (most recent call last):
+  File "/app/server.py", line 46, in <module>
+    server.serve_forever()
+  File "/usr/lib/python3.12/socketserver.py", line 235, in serve_forever
+    ready = selector.select(poll_interval)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/selectors.py", line 415, in select
+    fd_event_list = self._selector.poll(timeout)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+
+root@b403f5daed5f:/app# ^C
+root@b403f5daed5f:/app# ps aux | grep python
+root          49  0.2  0.0 103316 22824 pts/0    Sl+  06:48   0:00 /usr/bin/python3 /usr/bin/asciinema rec --stdin /logs/agent.cast
+root          50  0.0  0.0  29552 15828 pts/0    S+   06:48   0:00 /usr/bin/python3 /usr/bin/asciinema rec --stdin /logs/agent.cast
+root          51  0.0  0.0  29564 16388 pts/0    S+   06:48   0:00 /usr/bin/python3 /usr/bin/asciinema rec --stdin /logs/agent.cast
+root         230  0.0  0.0   3920  2048 pts/1    S+   06:48   0:00 grep --color=auto python
+root@b403f5daed5f:/app# curl http://localhost:3000/fib?n=10
+bash: curl: command not found
+root@b403f5daed5f:/app# curl http://localhost:3000/fib
+bash: curl: command not found
+root@b403f5daed5f:/app# curl http://localhost:3000/fib?n=abc
+bash: curl: command not found
+root@b403f5daed5f:/app# python3 server.py
+Starting server on port 3000...
+cat > test_server.py << 'EOF'
+import sys
+import urllib.parse
+import urllib.request
+import json
+import re
+
+def test():
+    url = 'http://localhost:3000/fib'
+    # Test n=10
+    params = {'n': 10}
+    query = urllib.parse.urlencode(params)
+    full_url = f'{url}?{query}'
+    resp = urllib.request.urlopen(full_url)
+    data = resp.read().decode('utf-8')
+    expected = {'result': 55}
+    if json.loads(data) == expected:
+        print('PASS: n=10 -> 55')
+    else:
+        print('FAIL: n=10')
+        print('Got:', data)
+        sys.exit(1)
+    # Test missing n
+    resp = urllib.request.urlopen(url)
+    if resp.code == 400:
+        print('PASS: missing n -> 400')
+    else:
+        print('FAIL: missing n')
+        print('Got:', resp.code, resp.read())
+        sys.exit(1)
+    # Test non-integer n
+    params = {'n': 'abc'}
+    query = urllib.parse.urlencode(params)
+    full_url = f'{url}?{query}'
+    resp = urllib.request.urlopen(full_url)
+    if resp.code == 400:
+        print('PASS: non-integer n -> 400')
+    else:
+        print('FAIL: non-integer n')
+        print('Got:', resp.code, resp.read())
+        sys.exit(1)
+    print('All tests passed')
+
+if __name__ == '__main__':
+    test()
+EOF
+python3 test_server.py
+
+ps aux | grep server.py
+python3 test_server.py
+^CTraceback (most recent call last):
+  File "/app/server.py", line 46, in <module>
+    server.serve_forever()
+  File "/usr/lib/python3.12/socketserver.py", line 235, in serve_forever
+    ready = selector.select(poll_interval)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/selectors.py", line 415, in select
+    fd_event_list = self._selector.poll(timeout)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+
+root@b403f5daed5f:/app# netstat -tulpn 2>/dev/null | grep :3000
+root@b403f5daed5f:/app# python3 server.py
+Starting server on port 3000...
+cat > test2.py << 'EOF'
+import urllib.parse
+import urllib.request
+import json
+import sys
+
+url = 'http://localhost:3000/fib'
+# Test n=10
+params = {'n': 10}
+query = urllib.parse.urlencode(params)
+full_url = f'{url}?{query}'
+try:
+    resp = urllib.request.urlopen(full_url)
+    data = resp.read().decode('utf-8')
+    print('n=10:', data)
+    expected = {'result': 55}
+    if json.loads(data) == expected:
+        print('PASS: n=10 -> 55')
+    else:
+        print('FAIL: n=10')
+except Exception as e:
+    print('Error:', e)
+    sys.exit(1)
+# Test missing n
+try:
+    resp = urllib.request.urlopen(url)
+    if resp.code == 400:
+        print('PASS: missing n -> 400')
+    else:
+        print('FAIL: missing n, code:', resp.code, 'data:', resp.read())
+except Exception as e:
+    print('Error:', e)
+    sys.exit(1)
+# Test non-integer n
+params = {'n': 'abc'}
+query = urllib.parse.urlencode(params)
+full_url = f'{url}?{query}'
+try:
+    resp = urllib.request.urlopen(full_url)
+    if resp.code == 400:
+        print('PASS: non-integer n -> 400')
+    else:
+        print('FAIL: non-integer n, code:', resp.code, 'data:', resp.read())
+except Exception as e:
+    print('Error:', e)
+    sys.exit(1)
+print('All tests passed')
+EOF
+python3 test2.py
+ps aux | grep server.py
+if ! ps aux | grep -q server.py; then python3 server.py; fi
+netstat -tulpn 2>/dev/null | grep :3000
+python3 -c "import urllib.parse, urllib.request, json; url='http://localhost:3000/fib'; params={'n':10}; query=urllib.parse.urlencode(params); full=f'{url}?{que
+ry}'; resp=urllib.request.urlopen(full); print('n=10:', resp.read().decode()); assert json.loads(resp.read().decode())['result']==55; print('Pass')"
+python3 -c "import urllib.request; url='http://localhost:3000/fib'; resp=urllib.request.urlopen(url); print('Missing n:', resp.code); assert resp.code==400; pri
+nt('Pass')"
+python3 -c "import urllib.parse, urllib.request; url='http://localhost:3000/fib'; params={'n':'abc'}; query=urllib.parse.urlencode(params); full=f'{url}?{query}
+'; resp=urllib.request.urlopen(full); print('Non-int n:', resp.code); assert resp.code==400; print('Pass')"
+
+ps aux | grep server.py
+if ! ps aux | grep -q server.py; then python3 server.py; fi
+netstat -tulpn 2>/dev/null | grep :3000
+python3 -c "import urllib.parse, urllib.request, json; url='http://localhost:3000/fib'; params={'n':10}; query=urllib.parse.urlencode(params); full=f'{url}?{que
+ry}'; resp=urllib.request.urlopen(full); print('n=10:', resp.read().decode()); assert json.loads(resp.read().decode())['result']==55; print('Pass')"
+^CTraceback (most recent call last):
+  File "/app/server.py", line 46, in <module>
+    server.serve_forever()
+  File "/usr/lib/python3.12/socketserver.py", line 235, in serve_forever
+    ready = selector.select(poll_interval)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/selectors.py", line 415, in select
+    fd_event_list = self._selector.poll(timeout)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+
+root@b403f5daed5f:/app#
+root@b403f5daed5f:/app# ps aux | grep server.py
+root         542  0.0  0.0   3920  2112 pts/1    S+   06:49   0:00 grep --color=auto server.py
+root@b403f5daed5f:/app# if ! ps aux | grep -q server.py; then python3 server.py; fi
+root@b403f5daed5f:/app# netstat -tulpn 2>/dev/null | grep :3000
+root@b403f5daed5f:/app# python3 -c "import urllib.parse, urllib.request, json; url='http://localhost:3000/fib'; params={'n':10}; query=urllib.parse.urlencode(pa
+rams); full=f'{url}?{query}'; resp=urllib.request.urlopen(full); print('n=10:', resp.read().decode()); assert json.loads(resp.read().decode())['result']==55; pr
+int('Pass')"
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/urllib/request.py", line 1344, in do_open
+    h.request(req.get_method(), req.selector, req.data, headers,
+  File "/usr/lib/python3.12/http/client.py", line 1336, in request
+    self._send_request(method, url, body, headers, encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1382, in _send_request
+    self.endheaders(body, encode_chunked=encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1331, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1091, in _send_output
+    self.send(msg)
+  File "/usr/lib/python3.12/http/client.py", line 1035, in send
+    self.connect()
+  File "/usr/lib/python3.12/http/client.py", line 1001, in connect
+    self.sock = self._create_connection(
+                ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/socket.py", line 852, in create_connection
+    raise exceptions[0]
+  File "/usr/lib/python3.12/socket.py", line 837, in create_connection
+    sock.connect(sa)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1347, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>
+root@b403f5daed5f:/app# python3 server.py
+Starting server on port 3000...
+netstat -tulpn 2>/dev/null | grep :3000
+python3 -c "import urllib.parse, urllib.request, json; url='http://localhost:3000/fib'; params={'n':10}; query=urllib.parse.urlencode(params); full=f'{url}?{que
+ry}'; resp=urllib.request.urlopen(full); print('n=10:', resp.read().decode()); assert json.loads(resp.read().decode())['result']==55; print('Pass')"
+python3 -c "import urllib.request; url='http://localhost:3000/fib'; resp=urllib.request.urlopen(url); print('Missing n:', resp.code); assert resp.code==400; pri
+nt('Pass')"
+python3 -c "import urllib.parse, urllib.request; url='http://localhost:3000/fib'; params={'n':'abc'}; query=urllib.parse.urlencode(params); full=f'{url}?{query}
+'; resp=urllib.request.urlopen(full); print('Non-int n:', resp.code); assert resp.code==400; print('Pass')"
+^CTraceback (most recent call last):
+  File "/app/server.py", line 46, in <module>
+    server.serve_forever()
+  File "/usr/lib/python3.12/socketserver.py", line 235, in serve_forever
+    ready = selector.select(poll_interval)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/selectors.py", line 415, in select
+    fd_event_list = self._selector.poll(timeout)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+
+root@b403f5daed5f:/app#
+root@b403f5daed5f:/app# ps aux | grep server.py
+root         661  0.0  0.0   3920  2064 pts/1    S+   06:50   0:00 grep --color=auto server.py
+root@b403f5daed5f:/app# if ! ps aux | grep -q server.py; then python3 server.py; fi
+root@b403f5daed5f:/app# netstat -tulpn 2>/dev/null | grep :3000
+root@b403f5daed5f:/app# python3 -c "import urllib.parse, urllib.request, json; url='http://localhost:3000/fib'; params={'n':10}; query=urllib.parse.urlencode(pa
+rams); full=f'{url}?{query}'; resp=urllib.request.urlopen(full); print('n=10:', resp.read().decode()); assert json.loads(resp.read().decode())['result']==55; pr
+int('Pass')"
+Traceback (most recent call last):
+  File "/usr/lib/python3.12/urllib/request.py", line 1344, in do_open
+    h.request(req.get_method(), req.selector, req.data, headers,
+  File "/usr/lib/python3.12/http/client.py", line 1336, in request
+    self._send_request(method, url, body, headers, encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1382, in _send_request
+    self.endheaders(body, encode_chunked=encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1331, in endheaders
+    self._send_output(message_body, encode_chunked=encode_chunked)
+  File "/usr/lib/python3.12/http/client.py", line 1091, in _send_output
+    self.send(msg)
+  File "/usr/lib/python3.12/http/client.py", line 1035, in send
+    self.connect()
+  File "/usr/lib/python3.12/http/client.py", line 1001, in connect
+    self.sock = self._create_connection(
+                ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/socket.py", line 852, in create_connection
+    raise exceptions[0]
+  File "/usr/lib/python3.12/socket.py", line 837, in create_connection
+    sock.connect(sa)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 515, in open
+    response = self._open(req, data)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 532, in _open
+    result = self._call_chain(self.handle_open, protocol, protocol +
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1373, in http_open
+    return self.do_open(http.client.HTTPConnection, req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 1347, in do_open
+    raise URLError(err)
+urllib.error.URLError: <urlopen error [Errno 111] Connection refused>
+root@b403f5daed5f:/app# cat server.py
+import sys
+import json
+import re
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+def fibonacci(n):
+    if n < 0:
+        return None
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+
+class FibonacciHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        # Check query string
+        query = self.path.split('?')[1] if '?' in self.path else None
+        if not query:
+            self.send_error(400, 'Missing query parameter n')
+            return
+        # Parse n
+        # Use regex to extract n value
+        match = re.search(r'n=([0-9]+)', query)
+        if not match:
+            self.send_error(400, 'Parameter n not found or not integer')
+            return
+        n_str = match.group(1)
+        try:
+            n = int(n_str)
+        except ValueError:
+            self.send_error(400, 'Parameter n must be an integer')
+            return
+        result = fibonacci(n)
+        if result is None:
+            self.send_error(400, 'n must be non-negative')
+            return
+        # Return JSON
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({'result': result}).encode())
+
+if __name__ == '__main__':
+    server = HTTPServer(('0.0.0.0', 3000), FibonacciHandler)
+    print('Starting server on port 3000...')
+    server.serve_forever()
+root@b403f5daed5f:/app# python3 server.py &
+[1] 720
+root@b403f5daed5f:/app# Starting server on port 3000...
+sleep 2
+ps aux | grep server.py
+python3 -c "import urllib.parse, urllib.request, json; url='http://localhost:3000/fib'; params={'n':10}; query=urllib.parse.urlencode(params); full=f'{url}?{que
+ry}'; resp=urllib.request.urlopen(full); print('n=10:', resp.read().decode()); assert json.loads(resp.read().decode())['result']==55; print('Pass')"
+root@b403f5daed5f:/app# ps aux | grep server.py
+root         720  0.9  0.0  26572 19528 pts/1    S    06:50   0:00 python3 server.py
+root         747  0.0  0.0   3920  2152 pts/1    S+   06:50   0:00 grep --color=auto server.py
+root@b403f5daed5f:/app# python3 -c "import urllib.parse, urllib.request, json; url='http://localhost:3000/fib'; params={'n':10}; query=urllib.parse.urlencode(pa
+rams); full=f'{url}?{query}'; resp=urllib.request.urlopen(full); print('n=10:', resp.read().decode()); assert json.loads(resp.read().decode())['result']==55; pr
+int('Pass')"
+127.0.0.1 - - [08/Jul/2026 06:50:27] "GET /fib?n=10 HTTP/1.1" 200 -
+n=10: {"result": 55}
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.12/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/json/decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+root@b403f5daed5f:/app#
+root@b403f5daed5f:/app# ps aux | grep server.py
+root         720  0.4  0.0  26572 19596 pts/1    S    06:50   0:00 python3 server.py
+root         778  0.0  0.0   3920  2084 pts/1    S+   06:50   0:00 grep --color=auto server.py
+root@b403f5daed5f:/app# python3 -c "import urllib.parse, urllib.request, json; url='http://localhost:3000/fib'; params={'n':10}; query=urllib.parse.urlencode(pa
+rams); full=f'{url}?{query}'; resp=urllib.request.urlopen(full); print('n=10:', resp.read().decode()); assert json.loads(resp.read().decode())['result']==55; pr
+int('Pass')"
+127.0.0.1 - - [08/Jul/2026 06:50:31] "GET /fib?n=10 HTTP/1.1" 200 -
+n=10: {"result": 55}
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.12/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/json/decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+root@b403f5daed5f:/app# python3 -c "import urllib.request; url='http://localhost:3000/fib'; resp=urllib.request.urlopen(url); print('Missing n:', resp.code); as
+sert resp.code==400; print('Pass')"
+127.0.0.1 - - [08/Jul/2026 06:50:32] code 400, message Missing query parameter n
+127.0.0.1 - - [08/Jul/2026 06:50:32] "GET /fib HTTP/1.1" 400 -
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 521, in open
+    response = meth(req, response)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 630, in http_response
+    response = self.parent.error(
+               ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 559, in error
+    return self._call_chain(*args)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 639, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 400: Missing query parameter n
+root@b403f5daed5f:/app# python3 -c "import urllib.parse, urllib.request; url='http://localhost:3000/fib'; params={'n':'abc'}; query=urllib.parse.urlencode(param
+s); full=f'{url}?{query}'; resp=urllib.request.urlopen(full); print('Non-int n:', resp.code); assert resp.code==400; print('Pass')"
+127.0.0.1 - - [08/Jul/2026 06:50:33] code 400, message Parameter n not found or not integer
+127.0.0.1 - - [08/Jul/2026 06:50:33] "GET /fib?n=abc HTTP/1.1" 400 -
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.12/urllib/request.py", line 215, in urlopen
+    return opener.open(url, data, timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 521, in open
+    response = meth(req, response)
+               ^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 630, in http_response
+    response = self.parent.error(
+               ^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 559, in error
+    return self._call_chain(*args)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 492, in _call_chain
+    result = func(*args)
+             ^^^^^^^^^^^
+  File "/usr/lib/python3.12/urllib/request.py", line 639, in http_error_default
+    raise HTTPError(req.full_url, code, msg, hdrs, fp)
+urllib.error.HTTPError: HTTP Error 400: Parameter n not found or not integer
+root@b403f5daed5f:/app# cat > debug.py << 'EOF'
+> import urllib.parse
+> import urllib.request
+> import json
+>
+> url = 'http://localhost:3000/fib'
+> params = {'n': 10}
+> query = urllib.parse.urlencode(params)
+> full_url = f'{url}?{query}'
+>
+> req = urllib.request.Request(full_url)
+> with urllib.request.urlopen(req) as resp:
+>     raw = resp.read()
+>     print('Raw bytes:', raw)
+>     print('Raw bytes repr:', repr(raw))
+>     try:
+>         data = resp.read().decode('utf-8')
+>         print('Decoded:', data)
+>         print('JSON parsed:', json.loads(data))
+>     except Exception as e:
+>         print('Error decoding:', e)
+> EOF
+root@b403f5daed5f:/app# python3 debug.py
+127.0.0.1 - - [08/Jul/2026 06:50:51] "GET /fib?n=10 HTTP/1.1" 200 -
+Raw bytes: b'{"result": 55}'
+Raw bytes repr: b'{"result": 55}'
+Decoded:
+Error decoding: Expecting value: line 1 column 1 (char 0)
+root@b403f5daed5f:/app# cat > final_test.py << 'EOF'
+> import http.client
+> import json
+> import urllib.parse
+>
+> def test_valid():
+>     conn = http.client.HTTPConnection('localhost', 3000)
+>     conn.request('GET', '/fib?n=10')
+>     resp = conn.getresponse()
+>     assert resp.status == 200
+>     data = resp.read().decode('utf-8')
+>     d = json.loads(data)
+>     assert d == {'result': 55}
+>     print('PASS: n=10')
+>
+> def test_missing():
+>     conn = http.client.HTTPConnection('localhost', 3000)
+>     conn.request('GET', '/fib')
+>     resp = conn.getresponse()
+>     assert resp.status == 400
+>     data = resp.read().decode('utf-8')
+>     assert 'Missing query parameter n' in data
+>     print('PASS: missing n')
+>
+> def test_non_int():
+>     conn = http.client.HTTPConnection('localhost', 3000)
+>     conn.request('GET', '/fib?n=abc')
+>     resp = conn.getresponse()
+>     assert resp.status == 400
+>     data = resp.read().decode('utf-8')
+>     assert 'Parameter n not found or not integer' in data
+>     print('PASS: non-int n')
+>
+> if __name__ == '__main__':
+>     test_valid()
+>     test_missing()
+>     test_non_int()
+>     print('All tests passed')
+> EOF
+root@b403f5daed5f:/app# python3 final_test.py
+127.0.0.1 - - [08/Jul/2026 06:51:04] "GET /fib?n=10 HTTP/1.1" 200 -
+PASS: n=10
+127.0.0.1 - - [08/Jul/2026 06:51:04] code 400, message Missing query parameter n
+127.0.0.1 - - [08/Jul/2026 06:51:04] "GET /fib HTTP/1.1" 400 -
+PASS: missing n
+127.0.0.1 - - [08/Jul/2026 06:51:04] code 400, message Parameter n not found or not integer
+127.0.0.1 - - [08/Jul/2026 06:51:04] "GET /fib?n=abc HTTP/1.1" 400 -
+PASS: non-int n
+All tests passed
+root@b403f5daed5f:/app#

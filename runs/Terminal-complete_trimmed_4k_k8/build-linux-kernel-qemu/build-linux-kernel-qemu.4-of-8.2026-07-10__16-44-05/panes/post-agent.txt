@@ -1,0 +1,1930 @@
+                { 0x0290, 0x690290 },
+                { 0x0298, 0x690298 },
+                { 0x029c, 0x69029c },
+                { 0x02a0, 0x6902a0 },
+                { 0x02a4, 0x6902a4 },
+                { 0x02a8, 0x6902a8 },
+                { 0x02ac, 0x6902ac },
+                { 0x02b0, 0x6902b0 },
+                { 0x02b4, 0x6902b4 },
+                { 0x02b8, 0x6902b8 },
+                { 0x02bc, 0x6902bc },
+                { 0x02c0, 0x6902c0 },
+                { 0x02c4, 0x6902c4 },
+                { 0x02c8, 0x6902c8 },
+                { 0x02cc, 0x6902cc },
+                { 0x02d0, 0x6902d0 },
+                { 0x02d4, 0x6902d4 },
+                { 0x02d8, 0x6902d8 },
+                { 0x02dc, 0x6902dc },
+                { 0x02e0, 0x6902e0 },
+                { 0x02e4, 0x6902e4 },
+                { 0x02e8, 0x6902e8 },
+                { 0x02ec, 0x6902ec },
+                { 0x02f0, 0x6902f0 },
+                { 0x02f4, 0x6902f4 },
+                { 0x02f8, 0x6902f8 },
+                { 0x02fc, 0x6902fc },
+                { 0x0300, 0x690300 },
+                { 0x0304, 0x690304 },
+                { 0x0308, 0x690308 },
+                { 0x0310, 0x690310 },
+                { 0x0314, 0x690314 },
+                { 0x0318, 0x690318 },
+                { 0x031c, 0x69031c },
+                { 0x0320, 0x690320 },
+                { 0x0324, 0x690324 },
+                { 0x0328, 0x690328 },
+                { 0x032c, 0x69032c },
+                { 0x033c, 0x69033c },
+                { 0x0340, 0x690340 },
+                { 0x0344, 0x690344 },
+                { 0x0348, 0x690348 },
+                { 0x034c, 0x69034c },
+                { 0x0350, 0x690350 },
+                { 0x0354, 0x690354 },
+                { 0x0358, 0x690358 },
+                { 0x0364, 0x690364 },
+                { 0x0368, 0x690368 },
+                { 0x036c, 0x69036c },
+                { 0x0370, 0x690370 },
+                { 0x0374, 0x690374 },
+                { 0x0380, 0x690380 },
+                {}
+        }
+};
+
+static const struct nvkm_disp_chan_mthd
+gv100_disp_wndw_mthd = {
+        .name = "Window",
+        .addr = 0x001000,
+        .prev = 0x000800,
+        .data = {
+                { "Global", 1, &gv100_disp_wndw_mthd_base },
+                {}
+        }
+};
+
+static void
+gv100_disp_wndw_intr(struct nvkm_disp_chan *chan, bool en)
+{
+        struct nvkm_device *device = chan->disp->engine.subdev.device;
+        const u32 mask = 0x00000001 << chan->head;
+        const u32 data = en ? mask : 0;
+        nvkm_mask(device, 0x611da4, mask, data);
+}
+
+static const struct nvkm_disp_chan_func
+gv100_disp_wndw_func = {
+        .push = nv50_disp_dmac_push,
+        .init = gv100_disp_dmac_init,
+        .fini = gv100_disp_dmac_fini,
+        .intr = gv100_disp_wndw_intr,
+        .user = gv100_disp_chan_user,
+        .bind = gv100_disp_dmac_bind,
+};
+
+const struct nvkm_disp_chan_user
+gv100_disp_wndw = {
+        .func = &gv100_disp_wndw_func,
+        .ctrl = 1,
+        .user = 1,
+        .mthd = &gv100_disp_wndw_mthd,
+};
+
+int
+gv100_disp_wndw_cnt(struct nvkm_disp *disp, unsigned long *pmask)
+{
+        struct nvkm_device *device = disp->engine.subdev.device;
+
+        *pmask = nvkm_rd32(device, 0x610064);
+        return (nvkm_rd32(device, 0x610074) & 0x03f00000) >> 20;
+}
+
+static int
+gv100_disp_curs_idle(struct nvkm_disp_chan *chan)
+{
+        struct nvkm_device *device = chan->disp->engine.subdev.device;
+        const u32 soff = (chan->chid.ctrl - 1) * 0x04;
+        nvkm_msec(device, 2000,
+                u32 stat = nvkm_rd32(device, 0x610664 + soff);
+                if ((stat & 0x00070000) == 0x00040000)
+                        return 0;
+        );
+        return -EBUSY;
+}
+
+static void
+gv100_disp_curs_intr(struct nvkm_disp_chan *chan, bool en)
+{
+        struct nvkm_device *device = chan->disp->engine.subdev.device;
+        const u32 mask = 0x00010000 << chan->head;
+        const u32 data = en ? mask : 0;
+        nvkm_mask(device, 0x611dac, mask, data);
+}
+
+static void
+gv100_disp_curs_fini(struct nvkm_disp_chan *chan)
+{
+        struct nvkm_device *device = chan->disp->engine.subdev.device;
+        const u32 hoff = chan->chid.ctrl * 4;
+        nvkm_mask(device, 0x6104e0 + hoff, 0x00000010, 0x00000010);
+        gv100_disp_curs_idle(chan);
+        nvkm_mask(device, 0x6104e0 + hoff, 0x00000001, 0x00000000);
+}
+
+static int
+gv100_disp_curs_init(struct nvkm_disp_chan *chan)
+{
+        struct nvkm_subdev *subdev = &chan->disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        nvkm_wr32(device, 0x6104e0 + chan->chid.ctrl * 4, 0x00000001);
+        return gv100_disp_curs_idle(chan);
+}
+
+static const struct nvkm_disp_chan_func
+gv100_disp_curs_func = {
+        .init = gv100_disp_curs_init,
+        .fini = gv100_disp_curs_fini,
+        .intr = gv100_disp_curs_intr,
+        .user = gv100_disp_chan_user,
+};
+
+const struct nvkm_disp_chan_user
+gv100_disp_curs = {
+        .func = &gv100_disp_curs_func,
+        .ctrl = 73,
+        .user = 73,
+};
+
+static const struct nvkm_disp_mthd_list
+gv100_disp_core_mthd_base = {
+        .mthd = 0x0000,
+        .addr = 0x000000,
+        .data = {
+                { 0x0200, 0x680200 },
+                { 0x0208, 0x680208 },
+                { 0x020c, 0x68020c },
+                { 0x0210, 0x680210 },
+                { 0x0214, 0x680214 },
+                { 0x0218, 0x680218 },
+                { 0x021c, 0x68021c },
+                {}
+        }
+};
+
+static const struct nvkm_disp_mthd_list
+gv100_disp_core_mthd_sor = {
+        .mthd = 0x0020,
+        .addr = 0x000020,
+        .data = {
+                { 0x0300, 0x680300 },
+                { 0x0304, 0x680304 },
+                { 0x0308, 0x680308 },
+                { 0x030c, 0x68030c },
+                {}
+        }
+};
+
+static const struct nvkm_disp_mthd_list
+gv100_disp_core_mthd_wndw = {
+        .mthd = 0x0080,
+        .addr = 0x000080,
+        .data = {
+                { 0x1000, 0x681000 },
+                { 0x1004, 0x681004 },
+                { 0x1008, 0x681008 },
+                { 0x100c, 0x68100c },
+                { 0x1010, 0x681010 },
+                {}
+        }
+};
+
+static const struct nvkm_disp_mthd_list
+gv100_disp_core_mthd_head = {
+        .mthd = 0x0400,
+        .addr = 0x000400,
+        .data = {
+                { 0x2000, 0x682000 },
+                { 0x2004, 0x682004 },
+                { 0x2008, 0x682008 },
+                { 0x200c, 0x68200c },
+                { 0x2014, 0x682014 },
+                { 0x2018, 0x682018 },
+                { 0x201c, 0x68201c },
+                { 0x2020, 0x682020 },
+                { 0x2028, 0x682028 },
+                { 0x202c, 0x68202c },
+                { 0x2030, 0x682030 },
+                { 0x2038, 0x682038 },
+                { 0x203c, 0x68203c },
+                { 0x2048, 0x682048 },
+                { 0x204c, 0x68204c },
+                { 0x2050, 0x682050 },
+                { 0x2054, 0x682054 },
+                { 0x2058, 0x682058 },
+                { 0x205c, 0x68205c },
+                { 0x2060, 0x682060 },
+                { 0x2064, 0x682064 },
+                { 0x2068, 0x682068 },
+                { 0x206c, 0x68206c },
+                { 0x2070, 0x682070 },
+                { 0x2074, 0x682074 },
+                { 0x2078, 0x682078 },
+                { 0x207c, 0x68207c },
+                { 0x2080, 0x682080 },
+                { 0x2088, 0x682088 },
+                { 0x2090, 0x682090 },
+                { 0x209c, 0x68209c },
+                { 0x20a0, 0x6820a0 },
+                { 0x20a4, 0x6820a4 },
+                { 0x20a8, 0x6820a8 },
+                { 0x20ac, 0x6820ac },
+                { 0x2180, 0x682180 },
+                { 0x2184, 0x682184 },
+                { 0x218c, 0x68218c },
+                { 0x2194, 0x682194 },
+                { 0x2198, 0x682198 },
+                { 0x219c, 0x68219c },
+                { 0x21a0, 0x6821a0 },
+                { 0x21a4, 0x6821a4 },
+                { 0x2214, 0x682214 },
+                { 0x2218, 0x682218 },
+                {}
+        }
+};
+
+static const struct nvkm_disp_chan_mthd
+gv100_disp_core_mthd = {
+        .name = "Core",
+        .addr = 0x000000,
+        .prev = 0x008000,
+        .data = {
+                { "Global", 1, &gv100_disp_core_mthd_base },
+                {    "SOR", 4, &gv100_disp_core_mthd_sor  },
+                { "WINDOW", 8, &gv100_disp_core_mthd_wndw },
+                {   "HEAD", 4, &gv100_disp_core_mthd_head },
+                {}
+        }
+};
+
+static int
+gv100_disp_core_idle(struct nvkm_disp_chan *chan)
+{
+        struct nvkm_device *device = chan->disp->engine.subdev.device;
+        nvkm_msec(device, 2000,
+                u32 stat = nvkm_rd32(device, 0x610630);
+                if ((stat & 0x001f0000) == 0x000b0000)
+                        return 0;
+        );
+        return -EBUSY;
+}
+
+static u64
+gv100_disp_core_user(struct nvkm_disp_chan *chan, u64 *psize)
+{
+        *psize = 0x10000;
+        return 0x680000;
+}
+
+static void
+gv100_disp_core_intr(struct nvkm_disp_chan *chan, bool en)
+{
+        struct nvkm_device *device = chan->disp->engine.subdev.device;
+        const u32 mask = 0x00000001;
+        const u32 data = en ? mask : 0;
+        nvkm_mask(device, 0x611dac, mask, data);
+}
+
+static void
+gv100_disp_core_fini(struct nvkm_disp_chan *chan)
+{
+        struct nvkm_device *device = chan->disp->engine.subdev.device;
+        nvkm_mask(device, 0x6104e0, 0x00000010, 0x00000000);
+        gv100_disp_core_idle(chan);
+        nvkm_mask(device, 0x6104e0, 0x00000002, 0x00000000);
+        chan->suspend_put = nvkm_rd32(device, 0x680000);
+}
+
+static int
+gv100_disp_core_init(struct nvkm_disp_chan *chan)
+{
+        struct nvkm_subdev *subdev = &chan->disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+
+        nvkm_wr32(device, 0x610b24, lower_32_bits(chan->push));
+        nvkm_wr32(device, 0x610b20, upper_32_bits(chan->push));
+        nvkm_wr32(device, 0x610b28, 0x00000001);
+        nvkm_wr32(device, 0x610b2c, 0x00000040);
+
+        nvkm_mask(device, 0x6104e0, 0x00000010, 0x00000010);
+        nvkm_wr32(device, 0x680000, chan->suspend_put);
+        nvkm_wr32(device, 0x6104e0, 0x00000013);
+        return gv100_disp_core_idle(chan);
+}
+
+static const struct nvkm_disp_chan_func
+gv100_disp_core_func = {
+        .push = nv50_disp_dmac_push,
+        .init = gv100_disp_core_init,
+        .fini = gv100_disp_core_fini,
+        .intr = gv100_disp_core_intr,
+        .user = gv100_disp_core_user,
+        .bind = gv100_disp_dmac_bind,
+};
+
+const struct nvkm_disp_chan_user
+gv100_disp_core = {
+        .func = &gv100_disp_core_func,
+        .ctrl = 0,
+        .user = 0,
+        .mthd = &gv100_disp_core_mthd,
+};
+
+#define gv100_disp_caps(p) container_of((p), struct gv100_disp_caps, object)
+
+struct gv100_disp_caps {
+        struct nvkm_object object;
+        struct nvkm_disp *disp;
+};
+
+static int
+gv100_disp_caps_map(struct nvkm_object *object, void *argv, u32 argc,
+                    enum nvkm_object_map *type, u64 *addr, u64 *size)
+{
+        struct gv100_disp_caps *caps = gv100_disp_caps(object);
+        struct nvkm_device *device = caps->disp->engine.subdev.device;
+        *type = NVKM_OBJECT_MAP_IO;
+        *addr = 0x640000 + device->func->resource_addr(device, 0);
+        *size = 0x1000;
+        return 0;
+}
+
+static const struct nvkm_object_func
+gv100_disp_caps = {
+        .map = gv100_disp_caps_map,
+};
+
+int
+gv100_disp_caps_new(const struct nvkm_oclass *oclass, void *argv, u32 argc,
+                    struct nvkm_object **pobject)
+{
+        struct nvkm_disp *disp = nvkm_udisp(oclass->parent);
+        struct gv100_disp_caps *caps;
+
+        if (!(caps = kzalloc(sizeof(*caps), GFP_KERNEL)))
+                return -ENOMEM;
+        *pobject = &caps->object;
+
+        nvkm_object_ctor(&gv100_disp_caps, oclass, &caps->object);
+        caps->disp = disp;
+        return 0;
+}
+
+void
+gv100_disp_super(struct work_struct *work)
+{
+        struct nvkm_disp *disp = container_of(work, struct nvkm_disp, super.work);
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        struct nvkm_head *head;
+        u32 stat, mask[4];
+
+        mutex_lock(&disp->super.mutex);
+        stat = nvkm_rd32(device, 0x6107a8);
+
+        nvkm_debug(subdev, "supervisor %d: %08x\n", ffs(disp->super.pending), stat);
+        list_for_each_entry(head, &disp->heads, head) {
+                mask[head->id] = nvkm_rd32(device, 0x6107ac + (head->id * 4));
+                HEAD_DBG(head, "%08x", mask[head->id]);
+        }
+
+        if (disp->super.pending & 0x00000001) {
+                nv50_disp_chan_mthd(disp->chan[0], NV_DBG_DEBUG);
+                nv50_disp_super_1(disp);
+                list_for_each_entry(head, &disp->heads, head) {
+                        if (!(mask[head->id] & 0x00001000))
+                                continue;
+                        nv50_disp_super_1_0(disp, head);
+                }
+        } else
+        if (disp->super.pending & 0x00000002) {
+                list_for_each_entry(head, &disp->heads, head) {
+                        if (!(mask[head->id] & 0x00001000))
+                                continue;
+                        nv50_disp_super_2_0(disp, head);
+                }
+                list_for_each_entry(head, &disp->heads, head) {
+                        if (!(mask[head->id] & 0x00010000))
+                                continue;
+                        nv50_disp_super_2_1(disp, head);
+                }
+                list_for_each_entry(head, &disp->heads, head) {
+                        if (!(mask[head->id] & 0x00001000))
+                                continue;
+                        nv50_disp_super_2_2(disp, head);
+                }
+        } else
+        if (disp->super.pending & 0x00000004) {
+                list_for_each_entry(head, &disp->heads, head) {
+                        if (!(mask[head->id] & 0x00001000))
+                                continue;
+                        nv50_disp_super_3_0(disp, head);
+                }
+        }
+
+        list_for_each_entry(head, &disp->heads, head)
+                nvkm_wr32(device, 0x6107ac + (head->id * 4), 0x00000000);
+
+        nvkm_wr32(device, 0x6107a8, 0x80000000);
+        mutex_unlock(&disp->super.mutex);
+}
+
+static void
+gv100_disp_exception(struct nvkm_disp *disp, int chid)
+{
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        u32 stat = nvkm_rd32(device, 0x611020 + (chid * 12));
+        u32 type = (stat & 0x00007000) >> 12;
+        u32 mthd = (stat & 0x00000fff) << 2;
+        const struct nvkm_enum *reason =
+                nvkm_enum_find(nv50_disp_intr_error_type, type);
+
+        /*TODO: Suspect 33->41 are for WRBK channel exceptions, but we
+         *      don't support those currently.
+         *
+         *      CORE+WIN CHIDs map directly to the FE_EXCEPT() slots.
+         */
+        if (chid <= 32) {
+                u32 data = nvkm_rd32(device, 0x611024 + (chid * 12));
+                u32 code = nvkm_rd32(device, 0x611028 + (chid * 12));
+                nvkm_error(subdev, "chid %d stat %08x reason %d [%s] "
+                                   "mthd %04x data %08x code %08x\n",
+                           chid, stat, type, reason ? reason->name : "",
+                           mthd, data, code);
+        } else {
+                nvkm_error(subdev, "chid %d stat %08x reason %d [%s] "
+                                   "mthd %04x\n",
+                           chid, stat, type, reason ? reason->name : "", mthd);
+        }
+
+        if (chid < ARRAY_SIZE(disp->chan) && disp->chan[chid]) {
+                switch (mthd) {
+                case 0x0200:
+                        nv50_disp_chan_mthd(disp->chan[chid], NV_DBG_ERROR);
+                        break;
+                default:
+                        break;
+                }
+        }
+
+        nvkm_wr32(device, 0x611020 + (chid * 12), 0x90000000);
+}
+
+static void
+gv100_disp_intr_ctrl_disp(struct nvkm_disp *disp)
+{
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        u32 stat = nvkm_rd32(device, 0x611c30);
+
+        if (stat & 0x00000007) {
+                disp->super.pending = (stat & 0x00000007);
+                queue_work(disp->super.wq, &disp->super.work);
+                nvkm_wr32(device, 0x611860, disp->super.pending);
+                stat &= ~0x00000007;
+        }
+
+        /*TODO: I would guess this is VBIOS_RELEASE, however, NFI how to
+         *      ACK it, nor does RM appear to bother.
+         */
+        if (stat & 0x00000008)
+                stat &= ~0x00000008;
+
+        if (stat & 0x00000080) {
+                u32 error = nvkm_mask(device, 0x611848, 0x00000000, 0x00000000);
+                nvkm_warn(subdev, "error %08x\n", error);
+                stat &= ~0x00000080;
+        }
+
+        if (stat & 0x00000100) {
+                unsigned long wndws = nvkm_rd32(device, 0x611858);
+                unsigned long other = nvkm_rd32(device, 0x61185c);
+                int wndw;
+
+                nvkm_wr32(device, 0x611858, wndws);
+                nvkm_wr32(device, 0x61185c, other);
+
+                /* AWAKEN_OTHER_CORE. */
+                if (other & 0x00000001)
+                        nv50_disp_chan_uevent_send(disp, 0);
+
+                /* AWAKEN_WIN_CH(n). */
+                for_each_set_bit(wndw, &wndws, disp->wndw.nr) {
+                        nv50_disp_chan_uevent_send(disp, 1 + wndw);
+                }
+        }
+
+        if (stat)
+                nvkm_warn(subdev, "ctrl %08x\n", stat);
+}
+
+static void
+gv100_disp_intr_exc_other(struct nvkm_disp *disp)
+{
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        u32 stat = nvkm_rd32(device, 0x611854);
+        unsigned long mask;
+        int head;
+
+        if (stat & 0x00000001) {
+                nvkm_wr32(device, 0x611854, 0x00000001);
+                gv100_disp_exception(disp, 0);
+                stat &= ~0x00000001;
+        }
+
+        if ((mask = (stat & 0x00ff0000) >> 16)) {
+                for_each_set_bit(head, &mask, disp->wndw.nr) {
+                        nvkm_wr32(device, 0x611854, 0x00010000 << head);
+                        gv100_disp_exception(disp, 73 + head);
+                        stat &= ~(0x00010000 << head);
+                }
+        }
+
+        if (stat) {
+                nvkm_warn(subdev, "exception %08x\n", stat);
+                nvkm_wr32(device, 0x611854, stat);
+        }
+}
+
+static void
+gv100_disp_intr_exc_winim(struct nvkm_disp *disp)
+{
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        unsigned long stat = nvkm_rd32(device, 0x611850);
+        int wndw;
+
+        for_each_set_bit(wndw, &stat, disp->wndw.nr) {
+                nvkm_wr32(device, 0x611850, BIT(wndw));
+                gv100_disp_exception(disp, 33 + wndw);
+                stat &= ~BIT(wndw);
+        }
+
+        if (stat) {
+                nvkm_warn(subdev, "wimm %08x\n", (u32)stat);
+                nvkm_wr32(device, 0x611850, stat);
+        }
+}
+
+static void
+gv100_disp_intr_exc_win(struct nvkm_disp *disp)
+{
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        unsigned long stat = nvkm_rd32(device, 0x61184c);
+        int wndw;
+
+        for_each_set_bit(wndw, &stat, disp->wndw.nr) {
+                nvkm_wr32(device, 0x61184c, BIT(wndw));
+                gv100_disp_exception(disp, 1 + wndw);
+                stat &= ~BIT(wndw);
+        }
+
+        if (stat) {
+                nvkm_warn(subdev, "wndw %08x\n", (u32)stat);
+                nvkm_wr32(device, 0x61184c, stat);
+        }
+}
+
+static void
+gv100_disp_intr_head_timing(struct nvkm_disp *disp, int head)
+{
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        u32 stat = nvkm_rd32(device, 0x611800 + (head * 0x04));
+
+        /* LAST_DATA, LOADV. */
+        if (stat & 0x00000003) {
+                nvkm_wr32(device, 0x611800 + (head * 0x04), stat & 0x00000003);
+                stat &= ~0x00000003;
+        }
+
+        if (stat & 0x00000004) {
+                nvkm_disp_vblank(disp, head);
+                nvkm_wr32(device, 0x611800 + (head * 0x04), 0x00000004);
+                stat &= ~0x00000004;
+        }
+
+        if (stat) {
+                nvkm_warn(subdev, "head %08x\n", stat);
+                nvkm_wr32(device, 0x611800 + (head * 0x04), stat);
+        }
+}
+
+void
+gv100_disp_intr(struct nvkm_disp *disp)
+{
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        u32 stat = nvkm_rd32(device, 0x611ec0);
+        unsigned long mask;
+        int head;
+
+        if ((mask = (stat & 0x000000ff))) {
+                for_each_set_bit(head, &mask, 8) {
+                        gv100_disp_intr_head_timing(disp, head);
+                        stat &= ~BIT(head);
+                }
+        }
+
+        if (stat & 0x00000200) {
+                gv100_disp_intr_exc_win(disp);
+                stat &= ~0x00000200;
+        }
+
+        if (stat & 0x00000400) {
+                gv100_disp_intr_exc_winim(disp);
+                stat &= ~0x00000400;
+        }
+
+        if (stat & 0x00000800) {
+                gv100_disp_intr_exc_other(disp);
+                stat &= ~0x00000800;
+        }
+
+        if (stat & 0x00001000) {
+                gv100_disp_intr_ctrl_disp(disp);
+                stat &= ~0x00001000;
+        }
+
+        if (stat)
+                nvkm_warn(subdev, "intr %08x\n", stat);
+}
+
+void
+gv100_disp_fini(struct nvkm_disp *disp, bool suspend)
+{
+        struct nvkm_device *device = disp->engine.subdev.device;
+        nvkm_wr32(device, 0x611db0, 0x00000000);
+}
+
+static int
+gv100_disp_init(struct nvkm_disp *disp)
+{
+        struct nvkm_device *device = disp->engine.subdev.device;
+        struct nvkm_head *head;
+        int i, j;
+        u32 tmp;
+
+        /* Claim ownership of display. */
+        if (nvkm_rd32(device, 0x6254e8) & 0x00000002) {
+                nvkm_mask(device, 0x6254e8, 0x00000001, 0x00000000);
+                if (nvkm_msec(device, 2000,
+                        if (!(nvkm_rd32(device, 0x6254e8) & 0x00000002))
+                                break;
+                ) < 0)
+                        return -EBUSY;
+        }
+
+        /* Lock pin capabilities. */
+        tmp = nvkm_rd32(device, 0x610068);
+        nvkm_wr32(device, 0x640008, tmp);
+
+        /* SOR capabilities. */
+        for (i = 0; i < disp->sor.nr; i++) {
+                tmp = nvkm_rd32(device, 0x61c000 + (i * 0x800));
+                nvkm_mask(device, 0x640000, 0x00000100 << i, 0x00000100 << i);
+                nvkm_wr32(device, 0x640144 + (i * 0x08), tmp);
+        }
+
+        /* Head capabilities. */
+        list_for_each_entry(head, &disp->heads, head) {
+                const int id = head->id;
+
+                /* RG. */
+                tmp = nvkm_rd32(device, 0x616300 + (id * 0x800));
+                nvkm_wr32(device, 0x640048 + (id * 0x020), tmp);
+
+                /* POSTCOMP. */
+                for (j = 0; j < 6 * 4; j += 4) {
+                        tmp = nvkm_rd32(device, 0x616100 + (id * 0x800) + j);
+                        nvkm_wr32(device, 0x640030 + (id * 0x20) + j, tmp);
+                }
+        }
+
+        /* Window capabilities. */
+        for (i = 0; i < disp->wndw.nr; i++) {
+                nvkm_mask(device, 0x640004, 1 << i, 1 << i);
+                for (j = 0; j < 6 * 4; j += 4) {
+                        tmp = nvkm_rd32(device, 0x630050 + (i * 0x800) + j);
+                        nvkm_wr32(device, 0x6401e4 + (i * 0x20) + j, tmp);
+                }
+        }
+
+        /* IHUB capabilities. */
+        for (i = 0; i < 4; i++) {
+                tmp = nvkm_rd32(device, 0x62e000 + (i * 0x04));
+                nvkm_wr32(device, 0x640010 + (i * 0x04), tmp);
+        }
+
+        nvkm_mask(device, 0x610078, 0x00000001, 0x00000001);
+
+        /* Setup instance memory. */
+        switch (nvkm_memory_target(disp->inst->memory)) {
+        case NVKM_MEM_TARGET_VRAM: tmp = 0x00000001; break;
+        case NVKM_MEM_TARGET_NCOH: tmp = 0x00000002; break;
+        case NVKM_MEM_TARGET_HOST: tmp = 0x00000003; break;
+        default:
+                break;
+        }
+        nvkm_wr32(device, 0x610010, 0x00000008 | tmp);
+        nvkm_wr32(device, 0x610014, disp->inst->addr >> 16);
+
+        /* CTRL_DISP: AWAKEN, ERROR, SUPERVISOR[1-3]. */
+        nvkm_wr32(device, 0x611cf0, 0x00000187); /* MSK. */
+        nvkm_wr32(device, 0x611db0, 0x00000187); /* EN. */
+
+        /* EXC_OTHER: CURSn, CORE. */
+        nvkm_wr32(device, 0x611cec, disp->head.mask << 16 |
+                                    0x00000001); /* MSK. */
+        nvkm_wr32(device, 0x611dac, 0x00000000); /* EN. */
+
+        /* EXC_WINIM. */
+        nvkm_wr32(device, 0x611ce8, disp->wndw.mask); /* MSK. */
+        nvkm_wr32(device, 0x611da8, 0x00000000); /* EN. */
+
+        /* EXC_WIN. */
+        nvkm_wr32(device, 0x611ce4, disp->wndw.mask); /* MSK. */
+        nvkm_wr32(device, 0x611da4, 0x00000000); /* EN. */
+
+        /* HEAD_TIMING(n): VBLANK. */
+        list_for_each_entry(head, &disp->heads, head) {
+                const u32 hoff = head->id * 4;
+                nvkm_wr32(device, 0x611cc0 + hoff, 0x00000004); /* MSK. */
+                nvkm_wr32(device, 0x611d80 + hoff, 0x00000000); /* EN. */
+        }
+
+        /* OR. */
+        nvkm_wr32(device, 0x611cf4, 0x00000000); /* MSK. */
+        nvkm_wr32(device, 0x611db4, 0x00000000); /* EN. */
+        return 0;
+}
+
+static const struct nvkm_disp_func
+gv100_disp = {
+        .oneinit = nv50_disp_oneinit,
+        .init = gv100_disp_init,
+        .fini = gv100_disp_fini,
+        .intr = gv100_disp_intr,
+        .super = gv100_disp_super,
+        .uevent = &gv100_disp_chan_uevent,
+        .wndw = { .cnt = gv100_disp_wndw_cnt },
+        .head = { .cnt = gv100_head_cnt, .new = gv100_head_new },
+        .sor = { .cnt = gv100_sor_cnt, .new = gv100_sor_new },
+        .ramht_size = 0x2000,
+        .root = {  0, 0,GV100_DISP },
+        .user = {
+                {{-1,-1,GV100_DISP_CAPS                  }, gv100_disp_caps_new },
+                {{ 0, 0,GV100_DISP_CURSOR                },  nvkm_disp_chan_new, &gv100_disp_curs },
+                {{ 0, 0,GV100_DISP_WINDOW_IMM_CHANNEL_DMA},  nvkm_disp_wndw_new, &gv100_disp_wimm },
+                {{ 0, 0,GV100_DISP_CORE_CHANNEL_DMA      },  nvkm_disp_core_new, &gv100_disp_core },
+                {{ 0, 0,GV100_DISP_WINDOW_CHANNEL_DMA    },  nvkm_disp_wndw_new, &gv100_disp_wndw },
+                {}
+        },
+};
+
+int
+gv100_disp_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+               struct nvkm_disp **pdisp)
+{
+        return nvkm_disp_new_(&gv100_disp, device, type, inst, pdisp);
+}
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/hdmi.c000066400000000000000000000033721462023027500235160ustar00rootroot00000000000000// SPDX-License-Identif
+ier: MIT
+#include "hdmi.h"
+
+void pack_hdmi_infoframe(struct packed_hdmi_infoframe *packed_frame,
+                         u8 *raw_frame, ssize_t len)
+{
+        u32 header = 0;
+        u32 subpack0_low = 0;
+        u32 subpack0_high = 0;
+        u32 subpack1_low = 0;
+        u32 subpack1_high = 0;
+
+        switch (len) {
+                /*
+                 * "When in doubt, use brute force."
+                 *     -- Ken Thompson.
+                 */
+        default:
+                /*
+                 * We presume that no valid frame is longer than 17
+                 * octets, including header...  And truncate to that
+                 * if it's longer.
+                 */
+        case 17:
+                subpack1_high = (raw_frame[16] << 16);
+                fallthrough;
+        case 16:
+                subpack1_high |= (raw_frame[15] << 8);
+                fallthrough;
+        case 15:
+                subpack1_high |= raw_frame[14];
+                fallthrough;
+        case 14:
+                subpack1_low = (raw_frame[13] << 24);
+                fallthrough;
+        case 13:
+                subpack1_low |= (raw_frame[12] << 16);
+                fallthrough;
+        case 12:
+                subpack1_low |= (raw_frame[11] << 8);
+                fallthrough;
+        case 11:
+                subpack1_low |= raw_frame[10];
+                fallthrough;
+        case 10:
+                subpack0_high = (raw_frame[9] << 16);
+                fallthrough;
+        case 9:
+                subpack0_high |= (raw_frame[8] << 8);
+                fallthrough;
+        case 8:
+                subpack0_high |= raw_frame[7];
+                fallthrough;
+        case 7:
+                subpack0_low = (raw_frame[6] << 24);
+                fallthrough;
+        case 6:
+                subpack0_low |= (raw_frame[5] << 16);
+                fallthrough;
+        case 5:
+                subpack0_low |= (raw_frame[4] << 8);
+                fallthrough;
+        case 4:
+                subpack0_low |= raw_frame[3];
+                fallthrough;
+        case 3:
+                header = (raw_frame[2] << 16);
+                fallthrough;
+        case 2:
+                header |= (raw_frame[1] << 8);
+                fallthrough;
+        case 1:
+                header |= raw_frame[0];
+                fallthrough;
+        case 0:
+                break;
+        }
+
+        packed_frame->header = header;
+        packed_frame->subpack0_low = subpack0_low;
+        packed_frame->subpack0_high = subpack0_high;
+        packed_frame->subpack1_low = subpack1_low;
+        packed_frame->subpack1_high = subpack1_high;
+}
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/hdmi.h000066400000000000000000000005321462023027500235160ustar00rootroot00000000000000/* SPDX-License-Identif
+ier: MIT */
+#ifndef __NVKM_DISP_HDMI_H__
+#define __NVKM_DISP_HDMI_H__
+#include "ior.h"
+
+struct packed_hdmi_infoframe {
+        u32 header;
+        u32 subpack0_low;
+        u32 subpack0_high;
+        u32 subpack1_low;
+        u32 subpack1_high;
+};
+
+void pack_hdmi_infoframe(struct packed_hdmi_infoframe *packed_frame,
+                         u8 *raw_frame, ssize_t len);
+#endif
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.c000066400000000000000000000036651462023027500235030ustar00rootroot00000000000000/*
+ * Copyright 2017 Red Hat Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * Authors: Ben Skeggs <bskeggs@redhat.com>
+ */
+#include "head.h"
+
+#include <core/client.h>
+
+#include <nvif/cl0046.h>
+#include <nvif/unpack.h>
+
+struct nvkm_head *
+nvkm_head_find(struct nvkm_disp *disp, int id)
+{
+        struct nvkm_head *head;
+        list_for_each_entry(head, &disp->heads, head) {
+                if (head->id == id)
+                        return head;
+        }
+        return NULL;
+}
+
+void
+nvkm_head_del(struct nvkm_head **phead)
+{
+        struct nvkm_head *head = *phead;
+        if (head) {
+                HEAD_DBG(head, "dtor");
+                list_del(&head->head);
+                kfree(*phead);
+                *phead = NULL;
+        }
+}
+
+int
+nvkm_head_new_(const struct nvkm_head_func *func,
+               struct nvkm_disp *disp, int id)
+{
+        struct nvkm_head *head;
+        if (!(head = kzalloc(sizeof(*head), GFP_KERNEL)))
+                return -ENOMEM;
+        head->func = func;
+        head->disp = disp;
+        head->id = id;
+        list_add_tail(&head->head, &disp->heads);
+        HEAD_DBG(head, "ctor");
+        return 0;
+}
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/head.h000066400000000000000000000033531462023027500235020ustar00rootroot00000000000000/* SPDX-License-Identif
+ier: MIT */
+#ifndef __NVKM_DISP_HEAD_H__
+#define __NVKM_DISP_HEAD_H__
+#include <nvif/object.h>
+#include "priv.h"
+
+struct nvkm_head {
+        const struct nvkm_head_func *func;
+        struct nvkm_disp *disp;
+        int id;
+
+        struct list_head head;
+
+        struct nvkm_head_state {
+                u16 htotal;
+                u16 hsynce;
+                u16 hblanke;
+                u16 hblanks;
+                u16 vtotal;
+                u16 vsynce;
+                u16 vblanke;
+                u16 vblanks;
+                u32 hz;
+
+                /* Prior to GF119, these are set by the OR. */
+                struct {
+                        u8 depth;
+                } or;
+        } arm, asy;
+
+        struct nvkm_object object;
+};
+
+int nvkm_head_new_(const struct nvkm_head_func *, struct nvkm_disp *, int id);
+void nvkm_head_del(struct nvkm_head **);
+struct nvkm_head *nvkm_head_find(struct nvkm_disp *, int id);
+
+struct nvkm_head_func {
+        void (*state)(struct nvkm_head *, struct nvkm_head_state *);
+        void (*rgpos)(struct nvkm_head *, u16 *hline, u16 *vline);
+        void (*rgclk)(struct nvkm_head *, int div);
+        void (*vblank_get)(struct nvkm_head *);
+        void (*vblank_put)(struct nvkm_head *);
+};
+
+int nv50_head_cnt(struct nvkm_disp *, unsigned long *);
+int nv50_head_new(struct nvkm_disp *, int id);
+void nv50_head_rgpos(struct nvkm_head *, u16 *, u16 *);
+
+int gf119_head_cnt(struct nvkm_disp *, unsigned long *);
+int gf119_head_new(struct nvkm_disp *, int id);
+void gf119_head_rgclk(struct nvkm_head *, int);
+
+int gv100_head_cnt(struct nvkm_disp *, unsigned long *);
+int gv100_head_new(struct nvkm_disp *, int id);
+
+#define HEAD_MSG(h,l,f,a...) do {                                              \
+        struct nvkm_head *_h = (h);                                            \
+        nvkm_##l(&_h->disp->engine.subdev, "head-%d: "f"\n", _h->id, ##a);     \
+} while(0)
+#define HEAD_WARN(h,f,a...) HEAD_MSG((h), warn, f, ##a)
+#define HEAD_DBG(h,f,a...) HEAD_MSG((h), debug, f, ##a)
+#endif
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/ior.c000066400000000000000000000041711462023027500233640ustar00rootroot00000000000000/*
+ * Copyright 2017 Red Hat Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * Authors: Ben Skeggs <bskeggs@redhat.com>
+ */
+#include "ior.h"
+
+static const char *
+nvkm_ior_name[] = {
+        [DAC] = "DAC",
+        [SOR] = "SOR",
+        [PIOR] = "PIOR",
+};
+
+struct nvkm_ior *
+nvkm_ior_find(struct nvkm_disp *disp, enum nvkm_ior_type type, int id)
+{
+        struct nvkm_ior *ior;
+        list_for_each_entry(ior, &disp->iors, head) {
+                if (ior->type == type && (id < 0 || ior->id == id))
+                        return ior;
+        }
+        return NULL;
+}
+
+void
+nvkm_ior_del(struct nvkm_ior **pior)
+{
+        struct nvkm_ior *ior = *pior;
+        if (ior) {
+                IOR_DBG(ior, "dtor");
+                list_del(&ior->head);
+                kfree(*pior);
+                *pior = NULL;
+        }
+}
+
+int
+nvkm_ior_new_(const struct nvkm_ior_func *func, struct nvkm_disp *disp,
+              enum nvkm_ior_type type, int id, bool hda)
+{
+        struct nvkm_ior *ior;
+        if (!(ior = kzalloc(sizeof(*ior), GFP_KERNEL)))
+                return -ENOMEM;
+        ior->func = func;
+        ior->disp = disp;
+        ior->type = type;
+        ior->id = id;
+        ior->hda = hda;
+        snprintf(ior->name, sizeof(ior->name), "%s-%d", nvkm_ior_name[ior->type], ior->id);
+        list_add_tail(&ior->head, &disp->iors);
+        IOR_DBG(ior, "ctor");
+        return 0;
+}
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/ior.h000066400000000000000000000162551462023027500233770ustar00rootroot00000000000000/* SPDX-License-Identifi
+er: MIT */
+#ifndef __NVKM_DISP_IOR_H__
+#define __NVKM_DISP_IOR_H__
+#include "priv.h"
+struct nvkm_i2c_aux;
+
+struct nvkm_ior {
+        const struct nvkm_ior_func *func;
+        struct nvkm_disp *disp;
+        enum nvkm_ior_type {
+                DAC,
+                SOR,
+                PIOR,
+        } type;
+        int id;
+        bool hda;
+        char name[8];
+
+        struct list_head head;
+        bool identity;
+
+        struct nvkm_ior_state {
+                struct nvkm_outp *outp;
+                unsigned rgdiv;
+                unsigned proto_evo:4;
+                enum nvkm_ior_proto {
+                        CRT,
+                        TV,
+                        TMDS,
+                        LVDS,
+                        DP,
+                        UNKNOWN
+                } proto:3;
+                unsigned link:2;
+                unsigned head:8;
+        } arm, asy;
+
+        /* Armed DP state. */
+        struct {
+                bool mst;
+                bool ef;
+                u8 nr;
+                u8 bw;
+        } dp;
+
+        /* Armed TMDS state. */
+        struct {
+                bool high_speed;
+        } tmds;
+};
+
+struct nvkm_ior_func {
+        struct {
+                int (*get)(struct nvkm_outp *, int *link);
+                void (*set)(struct nvkm_outp *, struct nvkm_ior *);
+        } route;
+
+        void (*state)(struct nvkm_ior *, struct nvkm_ior_state *);
+        void (*power)(struct nvkm_ior *, bool normal, bool pu,
+                      bool data, bool vsync, bool hsync);
+        int (*sense)(struct nvkm_ior *, u32 loadval);
+        void (*clock)(struct nvkm_ior *);
+        void (*war_2)(struct nvkm_ior *);
+        void (*war_3)(struct nvkm_ior *);
+
+        const struct nvkm_ior_func_bl {
+                int (*get)(struct nvkm_ior *);
+                int (*set)(struct nvkm_ior *, int lvl);
+        } *bl;
+
+        const struct nvkm_ior_func_hdmi {
+                void (*ctrl)(struct nvkm_ior *, int head, bool enable, u8 max_ac_packet, u8 rekey);
+                void (*scdc)(struct nvkm_ior *, u32 khz, bool support, bool scrambling,
+                             bool scrambling_low_rates);
+                void (*infoframe_avi)(struct nvkm_ior *, int head, void *data, u32 size);
+                void (*infoframe_vsi)(struct nvkm_ior *, int head, void *data, u32 size);
+                void (*audio)(struct nvkm_ior *, int head, bool enable);
+        } *hdmi;
+
+        const struct nvkm_ior_func_dp {
+                u8 lanes[4];
+                int (*links)(struct nvkm_ior *, struct nvkm_i2c_aux *);
+                void (*power)(struct nvkm_ior *, int nr);
+                void (*pattern)(struct nvkm_ior *, int pattern);
+                void (*drive)(struct nvkm_ior *, int ln, int pc,
+                              int dc, int pe, int tx_pu);
+                int (*sst)(struct nvkm_ior *, int head, bool ef,
+                           u32 watermark, u32 hblanksym, u32 vblanksym);
+                void (*vcpi)(struct nvkm_ior *, int head, u8 slot,
+                             u8 slot_nr, u16 pbn, u16 aligned);
+                void (*audio)(struct nvkm_ior *, int head, bool enable);
+                void (*audio_sym)(struct nvkm_ior *, int head, u16 h, u32 v);
+                void (*activesym)(struct nvkm_ior *, int head,
+                                  u8 TU, u8 VTUa, u8 VTUf, u8 VTUi);
+                void (*watermark)(struct nvkm_ior *, int head, u8 watermark);
+        } *dp;
+
+        const struct nvkm_ior_func_hda {
+                void (*hpd)(struct nvkm_ior *, int head, bool present);
+                void (*eld)(struct nvkm_ior *, int head, u8 *data, u8 size);
+                void (*device_entry)(struct nvkm_ior *, int head);
+        } *hda;
+};
+
+int nvkm_ior_new_(const struct nvkm_ior_func *func, struct nvkm_disp *,
+                  enum nvkm_ior_type type, int id, bool hda);
+void nvkm_ior_del(struct nvkm_ior **);
+struct nvkm_ior *nvkm_ior_find(struct nvkm_disp *, enum nvkm_ior_type, int id);
+
+static inline u32
+nv50_ior_base(struct nvkm_ior *ior)
+{
+        return ior->id * 0x800;
+}
+
+int nv50_dac_cnt(struct nvkm_disp *, unsigned long *);
+int nv50_dac_new(struct nvkm_disp *, int);
+void nv50_dac_power(struct nvkm_ior *, bool, bool, bool, bool, bool);
+int nv50_dac_sense(struct nvkm_ior *, u32);
+
+int gf119_dac_cnt(struct nvkm_disp *, unsigned long *);
+int gf119_dac_new(struct nvkm_disp *, int);
+
+static inline u32
+nv50_sor_link(struct nvkm_ior *ior)
+{
+        return nv50_ior_base(ior) + ((ior->asy.link == 2) * 0x80);
+}
+
+int nv50_sor_cnt(struct nvkm_disp *, unsigned long *);
+void nv50_sor_state(struct nvkm_ior *, struct nvkm_ior_state *);
+void nv50_sor_power(struct nvkm_ior *, bool, bool, bool, bool, bool);
+void nv50_sor_clock(struct nvkm_ior *);
+extern const struct nvkm_ior_func_bl nv50_sor_bl;
+
+int g84_sor_new(struct nvkm_disp *, int);
+extern const struct nvkm_ior_func_hdmi g84_sor_hdmi;
+
+int g94_sor_cnt(struct nvkm_disp *, unsigned long *);
+
+void g94_sor_state(struct nvkm_ior *, struct nvkm_ior_state *);
+extern const struct nvkm_ior_func_dp g94_sor_dp;
+int g94_sor_dp_links(struct nvkm_ior *, struct nvkm_i2c_aux *);
+void g94_sor_dp_power(struct nvkm_ior *, int);
+void g94_sor_dp_pattern(struct nvkm_ior *, int);
+void g94_sor_dp_drive(struct nvkm_ior *, int, int, int, int, int);
+void g94_sor_dp_audio_sym(struct nvkm_ior *, int, u16, u32);
+void g94_sor_dp_activesym(struct nvkm_ior *, int, u8, u8, u8, u8);
+void g94_sor_dp_watermark(struct nvkm_ior *, int, u8);
+
+extern const struct nvkm_ior_func_bl gt215_sor_bl;
+extern const struct nvkm_ior_func_hdmi gt215_sor_hdmi;
+void gt215_sor_dp_audio(struct nvkm_ior *, int, bool);
+extern const struct nvkm_ior_func_hda gt215_sor_hda;
+
+int gf119_sor_cnt(struct nvkm_disp *, unsigned long *);
+void gf119_sor_state(struct nvkm_ior *, struct nvkm_ior_state *);
+void gf119_sor_clock(struct nvkm_ior *);
+extern const struct nvkm_ior_func_dp gf119_sor_dp;
+int gf119_sor_dp_links(struct nvkm_ior *, struct nvkm_i2c_aux *);
+void gf119_sor_dp_drive(struct nvkm_ior *, int, int, int, int, int);
+void gf119_sor_dp_vcpi(struct nvkm_ior *, int, u8, u8, u16, u16);
+void gf119_sor_dp_audio(struct nvkm_ior *, int, bool);
+void gf119_sor_dp_audio_sym(struct nvkm_ior *, int, u16, u32);
+void gf119_sor_dp_watermark(struct nvkm_ior *, int, u8);
+extern const struct nvkm_ior_func_hda gf119_sor_hda;
+void gf119_sor_hda_hpd(struct nvkm_ior *, int, bool);
+void gf119_sor_hda_eld(struct nvkm_ior *, int, u8 *, u8);
+
+int gk104_sor_new(struct nvkm_disp *, int);
+extern const struct nvkm_ior_func_hdmi gk104_sor_hdmi;
+void gk104_sor_hdmi_ctrl(struct nvkm_ior *, int, bool, u8, u8);
+void gk104_sor_hdmi_infoframe_avi(struct nvkm_ior *, int, void *, u32);
+void gk104_sor_hdmi_infoframe_vsi(struct nvkm_ior *, int, void *, u32);
+
+void gm107_sor_dp_pattern(struct nvkm_ior *, int);
+
+void gm200_sor_route_set(struct nvkm_outp *, struct nvkm_ior *);
+int gm200_sor_route_get(struct nvkm_outp *, int *);
+extern const struct nvkm_ior_func_hdmi gm200_sor_hdmi;
+void gm200_sor_hdmi_scdc(struct nvkm_ior *, u32, bool, bool, bool);
+extern const struct nvkm_ior_func_dp gm200_sor_dp;
+void gm200_sor_dp_drive(struct nvkm_ior *, int, int, int, int, int);
+
+int gp100_sor_new(struct nvkm_disp *, int);
+
+int gv100_sor_cnt(struct nvkm_disp *, unsigned long *);
+void gv100_sor_state(struct nvkm_ior *, struct nvkm_ior_state *);
+extern const struct nvkm_ior_func_hdmi gv100_sor_hdmi;
+void gv100_sor_hdmi_infoframe_avi(struct nvkm_ior *, int, void *, u32);
+void gv100_sor_hdmi_infoframe_vsi(struct nvkm_ior *, int, void *, u32);
+void gv100_sor_dp_audio(struct nvkm_ior *, int, bool);
+void gv100_sor_dp_audio_sym(struct nvkm_ior *, int, u16, u32);
+void gv100_sor_dp_watermark(struct nvkm_ior *, int, u8);
+extern const struct nvkm_ior_func_hda gv100_sor_hda;
+
+void tu102_sor_dp_vcpi(struct nvkm_ior *, int, u8, u8, u16, u16);
+
+int nv50_pior_cnt(struct nvkm_disp *, unsigned long *);
+int nv50_pior_new(struct nvkm_disp *, int);
+void nv50_pior_depth(struct nvkm_ior *, struct nvkm_ior_state *, u32 ctrl);
+
+#define IOR_MSG(i,l,f,a...) do {                                               \
+        struct nvkm_ior *_ior = (i);                                           \
+        nvkm_##l(&_ior->disp->engine.subdev, "%s: "f"\n", _ior->name, ##a);    \
+} while(0)
+#define IOR_WARN(i,f,a...) IOR_MSG((i), warn, f, ##a)
+#define IOR_DBG(i,f,a...) IOR_MSG((i), debug, f, ##a)
+#endif
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/mcp77.c000066400000000000000000000050401462023027500235240ustar00rootroot00000000000000/*
+ * Copyright 2017 Red Hat Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+#include "priv.h"
+#include "chan.h"
+#include "head.h"
+#include "ior.h"
+
+#include <nvif/class.h>
+
+static const struct nvkm_ior_func
+mcp77_sor = {
+        .state = g94_sor_state,
+        .power = nv50_sor_power,
+        .clock = nv50_sor_clock,
+        .hdmi = &g84_sor_hdmi,
+        .dp = &g94_sor_dp,
+};
+
+static int
+mcp77_sor_new(struct nvkm_disp *disp, int id)
+{
+        return nvkm_ior_new_(&mcp77_sor, disp, SOR, id, false);
+}
+
+static const struct nvkm_disp_func
+mcp77_disp = {
+        .oneinit = nv50_disp_oneinit,
+        .init = nv50_disp_init,
+        .fini = nv50_disp_fini,
+        .intr = nv50_disp_intr,
+        .super = nv50_disp_super,
+        .uevent = &nv50_disp_chan_uevent,
+        .head = { .cnt = nv50_head_cnt, .new = nv50_head_new },
+        .dac = { .cnt = nv50_dac_cnt, .new = nv50_dac_new },
+        .sor = { .cnt = g94_sor_cnt, .new = mcp77_sor_new },
+        .pior = { .cnt = nv50_pior_cnt, .new = nv50_pior_new },
+        .root = { 0,0,GT206_DISP },
+        .user = {
+                {{0,0,  G82_DISP_CURSOR             }, nvkm_disp_chan_new, & nv50_disp_curs },
+                {{0,0,  G82_DISP_OVERLAY            }, nvkm_disp_chan_new, & nv50_disp_oimm },
+                {{0,0,GT200_DISP_BASE_CHANNEL_DMA   }, nvkm_disp_chan_new, &  g84_disp_base },
+                {{0,0,GT206_DISP_CORE_CHANNEL_DMA   }, nvkm_disp_core_new, &  g94_disp_core },
+                {{0,0,GT200_DISP_OVERLAY_CHANNEL_DMA}, nvkm_disp_chan_new, &gt200_disp_ovly },
+                {}
+        },
+};
+
+int
+mcp77_disp_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+               struct nvkm_disp **pdisp)
+{
+        return nvkm_disp_new_(&mcp77_disp, device, type, inst, pdisp);
+}
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/mcp89.c000066400000000000000000000056361462023027500235420ustar00rootroot00000000000000/*
+ * Copyright 2017 Red Hat Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ */
+#include "priv.h"
+#include "chan.h"
+#include "head.h"
+#include "ior.h"
+
+#include <nvif/class.h>
+
+static const struct nvkm_ior_func_dp
+mcp89_sor_dp = {
+        .lanes = { 3, 2, 1, 0 },
+        .links = g94_sor_dp_links,
+        .power = g94_sor_dp_power,
+        .pattern = g94_sor_dp_pattern,
+        .drive = g94_sor_dp_drive,
+        .audio = gt215_sor_dp_audio,
+        .audio_sym = g94_sor_dp_audio_sym,
+        .activesym = g94_sor_dp_activesym,
+        .watermark = g94_sor_dp_watermark,
+};
+
+static const struct nvkm_ior_func
+mcp89_sor = {
+        .state = g94_sor_state,
+        .power = nv50_sor_power,
+        .clock = nv50_sor_clock,
+        .bl = &gt215_sor_bl,
+        .hdmi = &gt215_sor_hdmi,
+        .dp = &mcp89_sor_dp,
+        .hda = &gt215_sor_hda,
+};
+
+static int
+mcp89_sor_new(struct nvkm_disp *disp, int id)
+{
+        return nvkm_ior_new_(&mcp89_sor, disp, SOR, id, true);
+}
+
+static const struct nvkm_disp_func
+mcp89_disp = {
+        .oneinit = nv50_disp_oneinit,
+        .init = nv50_disp_init,
+        .fini = nv50_disp_fini,
+        .intr = nv50_disp_intr,
+        .super = nv50_disp_super,
+        .uevent = &nv50_disp_chan_uevent,
+        .head = { .cnt = nv50_head_cnt, .new = nv50_head_new },
+        .dac = { .cnt = nv50_dac_cnt, .new = nv50_dac_new },
+        .sor = { .cnt = g94_sor_cnt, .new = mcp89_sor_new },
+        .pior = { .cnt = nv50_pior_cnt, .new = nv50_pior_new },
+        .root = { 0,0,GT214_DISP },
+        .user = {
+                {{0,0,GT214_DISP_CURSOR             }, nvkm_disp_chan_new, &nv50_disp_curs },
+                {{0,0,GT214_DISP_OVERLAY            }, nvkm_disp_chan_new, &nv50_disp_oimm },
+                {{0,0,GT214_DISP_BASE_CHANNEL_DMA   }, nvkm_disp_chan_new, & g84_disp_base },
+                {{0,0,GT214_DISP_CORE_CHANNEL_DMA   }, nvkm_disp_core_new, & g94_disp_core },
+                {{0,0,GT214_DISP_OVERLAY_CHANNEL_DMA}, nvkm_disp_chan_new, & g84_disp_ovly },
+                {}
+        },
+};
+
+int
+mcp89_disp_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+               struct nvkm_disp **pdisp)
+{
+        return nvkm_disp_new_(&mcp89_disp, device, type, inst, pdisp);
+}
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv04.c000066400000000000000000000073331462023027500233650ustar00rootroot00000000000000/*
+ * Copyright 2012 Red Hat Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * Authors: Ben Skeggs
+ */
+#include "priv.h"
+#include "head.h"
+
+#include <nvif/class.h>
+
+static void
+nv04_head_vblank_put(struct nvkm_head *head)
+{
+        struct nvkm_device *device = head->disp->engine.subdev.device;
+        nvkm_wr32(device, 0x600140 + (head->id * 0x2000) , 0x00000000);
+}
+
+static void
+nv04_head_vblank_get(struct nvkm_head *head)
+{
+        struct nvkm_device *device = head->disp->engine.subdev.device;
+        nvkm_wr32(device, 0x600140 + (head->id * 0x2000) , 0x00000001);
+}
+
+static void
+nv04_head_rgpos(struct nvkm_head *head, u16 *hline, u16 *vline)
+{
+        struct nvkm_device *device = head->disp->engine.subdev.device;
+        u32 data = nvkm_rd32(device, 0x600868 + (head->id * 0x2000));
+        *hline = (data & 0xffff0000) >> 16;
+        *vline = (data & 0x0000ffff);
+}
+
+static void
+nv04_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+{
+        struct nvkm_device *device = head->disp->engine.subdev.device;
+        const u32 hoff = head->id * 0x0200;
+        state->vblanks = nvkm_rd32(device, 0x680800 + hoff) & 0x0000ffff;
+        state->vtotal  = nvkm_rd32(device, 0x680804 + hoff) & 0x0000ffff;
+        state->vblanke = state->vtotal - 1;
+        state->hblanks = nvkm_rd32(device, 0x680820 + hoff) & 0x0000ffff;
+        state->htotal  = nvkm_rd32(device, 0x680824 + hoff) & 0x0000ffff;
+        state->hblanke = state->htotal - 1;
+}
+
+static const struct nvkm_head_func
+nv04_head = {
+        .state = nv04_head_state,
+        .rgpos = nv04_head_rgpos,
+        .vblank_get = nv04_head_vblank_get,
+        .vblank_put = nv04_head_vblank_put,
+};
+
+static int
+nv04_head_new(struct nvkm_disp *disp, int id)
+{
+        return nvkm_head_new_(&nv04_head, disp, id);
+}
+
+static void
+nv04_disp_intr(struct nvkm_disp *disp)
+{
+        struct nvkm_subdev *subdev = &disp->engine.subdev;
+        struct nvkm_device *device = subdev->device;
+        u32 crtc0 = nvkm_rd32(device, 0x600100);
+        u32 crtc1 = nvkm_rd32(device, 0x602100);
+        u32 pvideo;
+
+        if (crtc0 & 0x00000001) {
+                nvkm_disp_vblank(disp, 0);
+                nvkm_wr32(device, 0x600100, 0x00000001);
+        }
+
+        if (crtc1 & 0x00000001) {
+                nvkm_disp_vblank(disp, 1);
+                nvkm_wr32(device, 0x602100, 0x00000001);
+        }
+
+        if (device->chipset >= 0x10 && device->chipset <= 0x40) {
+                pvideo = nvkm_rd32(device, 0x8100);
+                if (pvideo & ~0x11)
+                        nvkm_info(subdev, "PVIDEO intr: %08x\n", pvideo);
+                nvkm_wr32(device, 0x8100, pvideo);
+        }
+}
+
+static const struct nvkm_disp_func
+nv04_disp = {
+        .intr = nv04_disp_intr,
+        .root = { 0, 0, NV04_DISP },
+        .user = { {} },
+};
+
+int
+nv04_disp_new(struct nvkm_device *device, enum nvkm_subdev_type type, int inst,
+              struct nvkm_disp **pdisp)
+{
+        int ret, i;
+
+        ret = nvkm_disp_new_(&nv04_disp, device, type, inst, pdisp);
+        if (ret)
+                return ret;
+
+        for (i = 0; i < 2; i++) {
+                ret = nv04_head_new(*pdisp, i);
+                if (ret)
+                        return ret;
+        }
+
+        return 0;
+}
+linux-6.9/drivers/gpu/drm/nouveau/nvkm/engine/disp/nv50.c000066400000000000000000001322251462023027500233650ustar00rootroot00000000000000/*
+ * Copyright 2012 Red Hat Inc.
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a
+ * copy of this software and associated documentation files (the "Software"),
+ * to deal in the Software without restriction, including without limitation
+ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
+ * and/or sell copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+ * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+ * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
+ *
+ * Authors: Ben Skeggs
+ */
+#include "priv.h"
+#include "chan.h"
+#include "conn.h"
+#include "head.h"
+#include "dp.h"
+#include "ior.h"
+#include "outp.h"
+
+#include <core/client.h>
+#include <core/ramht.h>
+#include <subdev/bios.h>
+#include <subdev/bios/disp.h>
+#include <subdev/bios/init.h>
+#include <subdev/bios/pll.h>
+#include <subdev/devinit.h>
+#include <subdev/i2c.h>
+#include <subdev/mmu.h>
+#include <subdev/timer.h>
+
+#include <nvif/class.h>
+#include <nvif/unpack.h>
+
+static void
+nv50_pior_clock(struct nvkm_ior *pior)
+{
+        struct nvkm_device *device = pior->disp->engine.subdev.device;
+        const u32 poff = nv50_ior_base(pior);
+
+        nvkm_mask(device, 0x614380 + poff, 0x00000707, 0x00000001);
+}
+
+static int
+nv50_pior_dp_links(struct nvkm_ior *pior, struct nvkm_i2c_aux *aux)
+{
+        int ret = nvkm_i2c_aux_lnk_ctl(aux, pior->dp.nr, pior->dp.bw, pior->dp.ef);
+        if (ret)
+                return ret;
+
+        return 1;
+}
+
+static const struct nvkm_ior_func_dp
+nv50_pior_dp = {
+        .links = nv50_pior_dp_links,
+};
+
+static void
+nv50_pior_power_wait(struct nvkm_device *device, u32 poff)
+{
+        nvkm_msec(device, 2000,
+                if (!(nvkm_rd32(device, 0x61e004 + poff) & 0x80000000))
+                        break;
+        );
+}
+
+static void
+nv50_pior_power(struct nvkm_ior *pior, bool normal, bool pu, bool data, bool vsync, bool hsync)
+{
+        struct nvkm_device *device = pior->disp->engine.subdev.device;
+        const u32  poff = nv50_ior_base(pior);
+        const u32 shift = normal ? 0 : 16;
+        const u32 state = 0x80000000 | (0x00000001 * !!pu) << shift;
+        ^C
+root@c3185b73da61:/app#
+root@c3185b73da61:/app# pwd
+/app
+root@c3185b73da61:/app# ls -la
+total 140660
+drwxr-xr-x 1 root root        38 Jul 10 18:16 .
+drwxr-xr-x 1 root root       117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# unxz -d -c linux-6.9.tar.xz | tar -xzf -
+
+gzip: stdin: not in gzip format
+tar: Child died with signal 13
+tar: Error is not recoverable: exiting now
+root@c3185b73da61:/app# ls -la
+total 140660
+drwxr-xr-x 1 root root        38 Jul 10 18:16 .
+drwxr-xr-x 1 root root       117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# cd linux-6.9
+bash: cd: linux-6.9: No such file or directory
+root@c3185b73da61:/app# export CONFIG_X86_64=y
+root@c3185b73da61:/app# make prepare
+make: *** No rule to make target 'prepare'.  Stop.
+root@c3185b73da61:/app# make
+make: *** No targets specified and no makefile found.  Stop.
+root@c3185b73da61:/app# unxz -d -c linux-6.9.tar.xz > linux-6.9.tar
+tar -xzf linux-6.9.tar
+ls -la
+rm -f linux-6.9.tar
+cd linux-6.9
+export CONFIG_X86_64=y
+make prepare
+root@c3185b73da61:/app# tar -xzf linux-6.9.tar
+
+gzip: stdin: not in gzip format
+tar: Child returned status 1
+tar: Error is not recoverable: exiting now
+root@c3185b73da61:/app# ls -la
+total 1595012
+drwxr-xr-x 1 root root         63 Jul 10 18:24 .
+drwxr-xr-x 1 root root        117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 1489254400 Jul 10 18:24 linux-6.9.tar
+-rw-r--r-- 1 root root  144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# rm -f linux-6.9.tar
+root@c3185b73da61:/app# cd linux-6.9
+bash: cd: linux-6.9: No such file or directory
+root@c3185b73da61:/app# export CONFIG_X86_64=y
+root@c3185b73da61:/app# make prepare
+make: *** No rule to make target 'prepare'.  Stop.
+root@c3185b73da61:/app# make
+make: *** No targets specified and no makefile found.  Stop.
+root@c3185b73da61:/app# rm -f linux-6.9.tar.xz
+root@c3185b73da61:/app# wget https://www.kernel.org/pub/linux/kernel/v6.x/linux-6.9.tar.xz
+--2026-07-10 18:25:33--  https://www.kernel.org/pub/linux/kernel/v6.x/linux-6.9.tar.xz
+Resolving www.kernel.org (www.kernel.org)... 140.248.149.55, 2a04:4e42::311, 2a04:4e42:200::311, ...
+Connecting to www.kernel.org (www.kernel.org)|140.248.149.55|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 144034416 (137M) [application/x-xz]
+Saving to: ‘linux-6.9.tar.xz’
+
+linux-6.9.tar.xz                        100%[===============================================================================>] 137.36M   333MB/s    in 0.4s
+
+2026-07-10 18:25:33 (333 MB/s) - ‘linux-6.9.tar.xz’ saved [144034416/144034416]
+
+root@c3185b73da61:/app# unxz -d -k linux-6.9.tar.xz
+ls -la
+tar -xzf linux-6.9.tar
+ls -la
+rm -f linux-6.9.tar
+cd linux-6.9
+export CONFIG_X86_64=y
+make prepare
+root@c3185b73da61:/app# ls -la
+total 1595012
+drwxr-xr-x 1 root root         63 Jul 10 18:26 .
+drwxr-xr-x 1 root root        117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 1489254400 May 13  2024 linux-6.9.tar
+-rw-r--r-- 1 root root  144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# tar -xzf linux-6.9.tar
+
+gzip: stdin: not in gzip format
+tar: Child returned status 1
+tar: Error is not recoverable: exiting now
+root@c3185b73da61:/app# ls -la
+total 1595012
+drwxr-xr-x 1 root root         63 Jul 10 18:26 .
+drwxr-xr-x 1 root root        117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 1489254400 May 13  2024 linux-6.9.tar
+-rw-r--r-- 1 root root  144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# rm -f linux-6.9.tar
+root@c3185b73da61:/app# cd linux-6.9
+bash: cd: linux-6.9: No such file or directory
+root@c3185b73da61:/app# export CONFIG_X86_64=y
+root@c3185b73da61:/app# make prepare
+make: *** No rule to make target 'prepare'.  Stop.
+root@c3185b73da61:/app# make
+make: *** No targets specified and no makefile found.  Stop.
+root@c3185b73da61:/app# tar --help 2>&1 | grep -A 2 -B 2 'lzma'
+  -J, --xz                   filter the archive through xz
+      --lzip                 filter the archive through lzip
+      --lzma                 filter the archive through xz
+      --lzop                 filter the archive through lzop
+      --no-auto-compress     do not use archive suffix to determine the
+root@c3185b73da61:/app# tar --lzma --extract -d -k linux-6.9.tar.xz
+tar: You may not specify more than one '-Acdtrux', '--delete' or  '--test-label' option
+Try 'tar --help' or 'tar --usage' for more information.
+root@c3185b73da61:/app# ls -la
+total 140660
+drwxr-xr-x 1 root root        38 Jul 10 18:26 .
+drwxr-xr-x 1 root root       117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# tar --lzma --decompress -d -k linux-6.9.tar.xz
+tar: unrecognized option '--decompress'
+Try 'tar --help' or 'tar --usage' for more information.
+root@c3185b73da61:/app# ls -la
+total 140660
+drwxr-xr-x 1 root root        38 Jul 10 18:26 .
+drwxr-xr-x 1 root root       117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# unxz -d -c linux-6.9.tar.xz | tar -xzf -
+
+gzip: stdin: not in gzip format
+tar: Child died with signal 13
+tar: Error is not recoverable: exiting now
+root@c3185b73da61:/app# ls -la
+total 140660
+drwxr-xr-x 1 root root        38 Jul 10 18:26 .
+drwxr-xr-x 1 root root       117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# cd linux-6.9
+bash: cd: linux-6.9: No such file or directory
+root@c3185b73da61:/app# export CONFIG_X86_64=y
+root@c3185b73da61:/app# make prepare
+make: *** No rule to make target 'prepare'.  Stop.
+root@c3185b73da61:/app# make
+make: *** No targets specified and no makefile found.  Stop.
+root@c3185b73da61:/app# unxz -d -o linux-6.9.tar linux-6.9.tar.xz
+unxz: invalid option -- 'o'
+unxz: Try `unxz --help' for more information.
+root@c3185b73da61:/app# tar -xzf linux-6.9.tar
+tar (child): linux-6.9.tar: Cannot open: No such file or directory
+tar (child): Error is not recoverable: exiting now
+tar: Child returned status 2
+tar: Error is not recoverable: exiting now
+root@c3185b73da61:/app# ls -la
+total 140660
+drwxr-xr-x 1 root root        38 Jul 10 18:26 .
+drwxr-xr-x 1 root root       117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# rm -f linux-6.9.tar
+root@c3185b73da61:/app# cd linux-6.9
+bash: cd: linux-6.9: No such file or directory
+root@c3185b73da61:/app# export CONFIG_X86_64=y
+root@c3185b73da61:/app# make prepare
+make: *** No rule to make target 'prepare'.  Stop.
+root@c3185b73da61:/app# make
+make: *** No targets specified and no makefile found.  Stop.
+root@c3185b73da61:/app# tar --lzma --extract linux-6.9.tar.xz
+tar: Refusing to read archive contents from terminal (missing -f option?)
+tar: Error is not recoverable: exiting now
+root@c3185b73da61:/app# ls -la
+total 140660
+drwxr-xr-x 1 root root        38 Jul 10 18:26 .
+drwxr-xr-x 1 root root       117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 144034416 May 13  2024 linux-6.9.tar.xz
+root@c3185b73da61:/app# rm -f linux-6.9.tar
+root@c3185b73da61:/app# cd linux-6.9
+bash: cd: linux-6.9: No such file or directory
+root@c3185b73da61:/app# export CONFIG_X86_64=y
+root@c3185b73da61:/app# make prepare
+make: *** No rule to make target 'prepare'.  Stop.
+root@c3185b73da61:/app# make
+make: *** No targets specified and no makefile found.  Stop.
+root@c3185b73da61:/app# unxz -d /tmp/ linux-6.9.tar.xz
+unxz: /tmp/: Is a directory, skipping
+ls -la /tmp/
+find /tmp -name 'linux-6.9.tar' 2>/dev/null
+cp /tmp/linux-6.9.tar /app/
+tar -xzf /app/linux-6.9.tar
+ls -la
+rm -f /app/linux-6.9.tar
+cd /app/linux-6.9
+export CONFIG_X86_64=y
+make prepare
+root@c3185b73da61:/app# ls -la /tmp/
+total 4
+drwxrwxrwt 1 root root  66 Jul 10 18:03 .
+drwxr-xr-x 1 root root 117 Jul 10 18:03 ..
+-rwxrwxr-x 1 1001 1001 923 Jun 19 21:47 get-asciinema-timestamp.sh
+drwx------ 2 root root  29 Jul 10 18:03 tmux-0
+root@c3185b73da61:/app# find /tmp -name 'linux-6.9.tar' 2>/dev/null
+root@c3185b73da61:/app# cp /tmp/linux-6.9.tar /app/
+cp: cannot stat '/tmp/linux-6.9.tar': No such file or directory
+root@c3185b73da61:/app# tar -xzf /app/linux-6.9.tar
+
+gzip: stdin: not in gzip format
+tar: Child returned status 1
+tar: Error is not recoverable: exiting now
+root@c3185b73da61:/app# ls -la
+total 1454352
+drwxr-xr-x 1 root root         35 Jul 10 18:31 .
+drwxr-xr-x 1 root root        117 Jul 10 18:03 ..
+-rw-r--r-- 1 root root 1489254400 May 13  2024 linux-6.9.tar
+root@c3185b73da61:/app# rm -f /app/linux-6.9.tar
+root@c3185b73da61:/app# cd /app/linux-6.9
+bash: cd: /app/linux-6.9: No such file or directory
+root@c3185b73da61:/app# export CONFIG_X86_64=y
+root@c3185b73da61:/app# make prepare
+make: *** No rule to make target 'prepare'.  Stop.
+root@c3185b73da61:/app# make
+make: *** No targets specified and no makefile found.  Stop.
+root@c3185b73da61:/app# unxz -d linux-6.9.tar linux-6.9.tar.xz
+unxz: linux-6.9.tar: No such file or directory
+unxz: linux-6.9.tar.xz: No such file or directory
+root@c3185b73da61:/app# ls -la
+total 0
+drwxr-xr-x 1 root root   6 Jul 10 18:31 .
+drwxr-xr-x 1 root root 117 Jul 10 18:03 ..
+root@c3185b73da61:/app# tar -xzf linux-6.9.tar
+tar (child): linux-6.9.tar: Cannot open: No such file or directory
+tar (child): Error is not recoverable: exiting now
+tar: Child returned status 2
+tar: Error is not recoverable: exiting now
+root@c3185b73da61:/app# ls -la
+total 0
+drwxr-xr-x 1 root root   6 Jul 10 18:31 .
+drwxr-xr-x 1 root root 117 Jul 10 18:03 ..
+root@c3185b73da61:/app# rm -f linux-6.9.tar
+root@c3185b73da61:/app# cd linux-6.9
+bash: cd: linux-6.9: No such file or directory
+root@c3185b73da61:/app# export CONFIG_X86_64=y
+root@c3185b73da61:/app# make prepare
+make: *** No rule to make target 'prepare'.  Stop.
+root@c3185b73da61:/app# make
+make: *** No targets specified and no makefile found.  Stop.
+root@c3185b73da61:/app#

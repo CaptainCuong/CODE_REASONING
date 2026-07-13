@@ -1,0 +1,143 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@0bf0cf353b6a:/app# curl -s http://server:8000 | grep -A 30 'div class="book"' | head -40
+            <div class="book">
+                <div class="book-title">The Great Gatsby</div>
+                <div class="book-author">by F. Scott Fitzgerald</div>
+                <div class="book-details">
+                    <span class="book-year">Published: 1925</span>
+                    <span class="book-rating">Rating: 4.2/5</span>
+                    <span class="book-price">$12.99</span>
+                </div>
+            </div>
+
+            <div class="book">
+                <div class="book-title">To Kill a Mockingbird</div>
+                <div class="book-author">by Harper Lee</div>
+                <div class="book-details">
+                    <span class="book-year">Published: 1960</span>
+                    <span class="book-rating">Rating: 4.8/5</span>
+                    <span class="book-price">$14.99</span>
+                </div>
+            </div>
+
+            <div class="book">
+                <div class="book-title">1984</div>
+                <div class="book-author">by George Orwell</div>
+                <div class="book-details">
+                    <span class="book-year">Published: 1949</span>
+                    <span class="book-rating">Rating: 4.6/5</span>
+                    <span class="book-price">$11.99</span>
+                </div>
+            </div>
+
+            <div class="book">
+                <div class="book-title">Pride and Prejudice</div>
+                <div class="book-author">by Jane Austen</div>
+                <div class="book-details">
+                    <span class="book-year">Published: 1813</span>
+                    <span class="book-rating">Rating: 4.5/5</span>
+                    <span class="book-price">$9.99</span>
+                </div>
+            </div>
+
+root@0bf0cf353b6a:/app# cat > scrape_books.py << 'EOF'
+> import requests
+> import bs4
+> import pandas as pd
+>
+> url = 'http://server:8000'
+> response = requests.get(url)
+> html = response.text
+>
+> # Parse HTML
+> soup = bs4.BeautifulSoup(html, 'html.parser')
+>
+> books = []
+> for book_div in soup.find_all('div', class_='book'):
+>     # Extract title
+>     title_div = book_div.find('div', class_='book-title')
+>     title = title_div.get_text().strip()
+>
+>     # Extract author
+>     author_div = book_div.find('div', class_='book-author')
+>     # Remove 'by ' prefix
+>     author = author_div.get_text().strip()
+>     if author.startswith('by '):
+>         author = author[3:].strip()
+>
+>     # Extract year, rating, price
+>     details = book_div.find('div', class_='book-details')
+>     if details:
+>         # Year
+>         year_span = details.find('span', class_='book-year')
+>         year = year_span.get_text().strip()
+>         # Remove 'Published:'
+>         if year.startswith('Published:'):
+>             year = year[11:].strip()
+>         # Rating
+>         rating_span = details.find('span', class_='book-rating')
+>         rating_str = rating_span.get_text().strip()
+>         # Remove 'Rating: ' and split by '/'
+>         if rating_str.startswith('Rating:'):
+>             rating_str = rating_str[8:].strip()
+>         rating = float(rating_str.split('/')[0])
+>         # Price
+>         price_span = details.find('span', class_='book-price')
+>         price_str = price_span.get_text().strip()
+>         # Remove '$'
+>         if price_str.startswith('$'):
+>             price_str = price_str[1:].strip()
+>         price = float(price_str)
+>     else:
+>         # If no details, skip (should not happen)
+>         continue
+>
+>     books.append({
+>         'title': title,
+>         'author': author,
+>         'year': year,
+>         'rating': rating,
+>         'price': price
+>     })
+>
+> # Convert to DataFrame
+> df = pd.DataFrame(books, columns=['title', 'author', 'year', 'rating', 'price'])
+> # Save to CSV
+> df.to_csv('books.csv', index=False)
+>
+> # Generate report
+> total_books = len(df)
+> avg_price = df['price'].mean()
+> # Highest rated book
+> highest = df.loc[df['rating'].idxmax()]
+>
+> with open('report.txt', 'w') as f:
+>     f.write(f'Total books: {total_books}\n')
+>     f.write(f'Average book price: ${avg_price:.2f}\n')
+>     f.write(f'Highest rated book: {highest["title"]} by {highest["author"]} ({highest["rating"]}/5)\n')
+>
+> print('Scraping complete.')
+> EOF
+root@0bf0cf353b6a:/app# python3 scrape_books.py
+Scraping complete.
+root@0bf0cf353b6a:/app# ls -l books.csv report.txt
+-rw-r--r-- 1 root root 345 Jul 11 17:00 books.csv
+-rw-r--r-- 1 root root 106 Jul 11 17:00 report.txt
+root@0bf0cf353b6a:/app# head -20 books.csv
+title,author,year,rating,price
+The Great Gatsby,F. Scott Fitzgerald,1925,4.2,12.99
+To Kill a Mockingbird,Harper Lee,1960,4.8,14.99
+1984,George Orwell,1949,4.6,11.99
+Pride and Prejudice,Jane Austen,1813,4.5,9.99
+The Catcher in the Rye,J.D. Salinger,1951,4.1,13.99
+Moby Dick,Herman Melville,1851,4.0,15.99
+The Hobbit,J.R.R. Tolkien,1937,4.7,16.99
+root@0bf0cf353b6a:/app# cat report.txt
+Total books: 7
+Average book price: $13.85
+Highest rated book: To Kill a Mockingbird by Harper Lee (4.8/5)
+root@0bf0cf353b6a:/app#

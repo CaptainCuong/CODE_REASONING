@@ -1,0 +1,75 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la\n'
+'apt-get update && apt-get install -y build-essential\n'
+'mv lodepng.cpp lodepng.c\n'
+'cat model.py\n'
+'head -c 200 model.pth | xxd\n'
+'ls -la *.pth\n'
+'python3 -c "import torch; import sys; data = torch.load(\'model.pth\'); print(\'Keys:\', list(data.keys())); for k, v in data.items(): print(k, v.shape)"\n'
+'python3 -c "import torch; data = torch.load(\'model.pth\'); print(\'Number of parameters:\', sum(p.numel() for p in data.values()))"\n'
+'python3 -c "import pickle; data = pickle.load(open(\'model.pth\', \'rb\')); print(\'Keys:\', list(data.keys()))"\n'
+'python3 -c "import pickle; data = pickle.load(open(\'model.pth\', \'rb\')); print(\'Number of keys:\', len(data)); for k in data: print(k, data[k].shape)"\n'
+'apt-get install -y python3-torch\n'
+''
+''
+''
+''
+'ls -la weights.json\n'
+'head -c 500 weights.json\n'
+'python3 -c "import json; d=json.load(open(\'weights.json\')); print(\'Keys:\', d.keys()); print(\'input_weights shape:\', len(d[\'input_weights\']), len(d[\'input_weights\'][0]) if d[\'input_weights\'] else 0)"\n'
+"python3 << 'EOF'\nimport torch\nmodel = torch.load('model.pth')\nprint('Model keys:', list(model.keys()))\nfor key, val in model.items():\n    print(f'{key}: shape {val.shape} dtype {val.dtype}')\nEOF\n"
+"cat > convert.py << 'EOF'\nimport torch\nimport json\n\nmodel = torch.load('model.pth')\n# Assume keys are 'input_layer.weight', 'hidden_layer.weight', 'output_layer.weight',\n# 'input_layer.bias', 'hidden_layer.bias', 'output_layer.bias'\nweights_dict = {}\n# input layer\nweights_dict['input_weights'] = model['input_layer.weight'].tolist()\nweights_dict['input_bias'] = model['input_layer.bias'].tolist()\n# hidden layer\nweights_dict['hidden_weights'] = model['hidden_layer.weight'].tolist()\nweights_dict['hidden_bias'] = model['hidden_layer.bias'].tolist()\n# output layer\nweights_dict['output_weights'] = model['output_layer.weight'].tolist()\nweights_dict['output_bias'] = model['output_layer.bias'].tolist()\n\nwith open('weights.json', 'w') as f:\n    json.dump(weights_dict, f, indent=2)\n\nprint('Weights written to weights.json')\nEOF\n"
+'python3 convert.py\n'
+'cat weights.json\n'
+'pip3 install torch\n'
+''
+'python3 convert.py\n'
+'cat weights.json\n'
+'python3 -c "import json; d=json.load(open(\'weights.json\')); print(\'Keys:\', d.keys()); print(\'input_weights shape:\', len(d[\'input_weights\']), len(d[\'input_weights\'][0]) if d[\'input_weights\'] else 0); print(\'input_bias shape:\', len(d[\'input_bias\']))"\n'
+'cat weights.json\n'
+'python3 -c "import json; d=json.load(open(\'weights.json\')); print(\'Keys:\', d.keys()); print(\'input_weights shape:\', len(d[\'input_weights\']), len(d[\'input_weights\'][0]) if d[\'input_weights\'] else 0); print(\'input_bias shape:\', len(d[\'input_bias\']))"\n'
+'cp lodepng.c lodepng.c.bak\n'
+"sed -i '/int main(int argc, char const\\* argv\\*)/,/return 0/d' lodepng.c\n"
+'cat > cli_tool.c << \'EOF\'\n#include <stdio.h>\n#include <string.h>\n#include <stdlib.h>\n#include <ctype.h>\n#include <math.h>\n#include <cJSON.h>\n#include <lodepng.h>\n\n// Neural network dimensions\n#define INPUT_DIM 784\n#define HIDDEN_DIM 16\n#define OUTPUT_DIM 10\n\n// Helper function to read weights from JSON\ncJSON* load_weights(const char* filename) {\n    FILE* f = fopen(filename, "r");\n    if (!f) {\n        return NULL;\n    }\n    fseek(f, 0, SEEK_END);\n    long size = ftell(f);\n    fseek(f, 0, SEEK_SET);\n    char* buffer = malloc(size);\n    size_t read = fread(buffer, 1, size, f);\n    fclose(f);\n    if (read != size) {\n        free(buffer);\n        return NULL;\n    }\n    cJSON* root = cJSON_Parse(buffer);\n    free(buffer);\n    return root;\n}\n\n// Helper function to extract array from JSON\ndouble* get_array(cJSON* obj, const char* key) {\n    cJSON* arr = cJSON_GetObjectItemCaseSensitive(obj, key);\n    if (!arr || !cJSON_IsArray(arr)) {\n        return NULL;\n    }\n    size_t len = cJSON_ArrayLength(arr);\n    double* data = malloc(len * sizeof(double));\n    for (size_t i = 0; i < len; i++) {\n        cJSON* item = cJSON_ArrayGetItemCaseSensitive(arr, i);\n        if (cJSON_IsNumber(item)) {\n            data[i] = cJSON_GetNumberValue(item);\n        } else {\n            data[i] = 0.0;\n        }\n    }\n    return data;\n}\n\n// Read PNG image and return flattened array of doubles\ndouble* read_png(const char* filename, int* width, int* height) {\n    unsigned char* image = NULL;\n    unsigned int* png_header = NULL;\n    lodepng_load_file(&image, &png_header, filename);\n    if (!image) {\n        return NULL;\n    }\n    int row_bytes = (*width) * 1;\n    double* arr = malloc(row_bytes * (*height) * sizeof(double));\n    for (int y = 0; y < *height; y++) {\n        for (int x = 0; x < *width; x++) {\n            unsigned int pixel = image[y * row_bytes + x];\n            // Convert RGBA to grayscale\n            unsigned int r = pixel >> 16;\n            unsigned int g = pixel >> 8;\n            unsigned int b = pixel & 255;\n            double gray = (r + g + b) / 3.0;\n            arr[y * (*width) + x] = gray;\n        }\n    }\n    lodepng_free(image);\n    lodepng_free(png_header);\n    return arr;\n}\n\n// Matrix multiplication: row x col (row vector) * col vector -> scalar (dot product)\ndouble dot_product(const double* row, const double* col, int size) {\n    double result = 0.0;\n    for (int i = 0; i < size; i++) {\n        result += row[i] * col[i];\n    }\n    return result;\n}\n\n// Apply ReLU activation\ndouble relu(double x) {\n    return (x >= 0.0) ? x : 0.0;\n}\n\n// Compute hidden layer\ndouble* compute_hidden(const double* input, const double* input_weights, const double* input_bias, int input_size, int hidden_size) {\n    double* hidden = malloc(hidden_size * sizeof(double));\n    for (int j = 0; j < hidden_size; j++) {\n        double sum = input_bias[j];\n        for (int i = 0; i < input_size; i++) {\n            sum += input[i] * input_weights[j * input_size + i];\n        }\n        hidden[j] = relu(sum);\n    }\n    return hidden;\n}\n\n// Compute output layer\ndouble* compute_output(const double* hidden, const double* hidden_weights, const double* hidden_bias, const double* output_weights, const double* output_bias, int hidden_size, int output_size) {\n    double* output = malloc(output_size * sizeof(double));\n    for (int k = 0; k < output_size; k++) {\n        double sum = output_bias[k];\n        for (int j = 0; j < hidden_size; j++) {\n            sum += hidden[j] * hidden_weights[k * hidden_size + j];\n        }\n        output[k] = sum;\n    }\n    return output;\n}\n\n// Main function\nint main(int argc, char* argv[]) {\n    if (argc != 3) {\n        fprintf(stderr, "Usage: %s <weights.json> <image.png>\\n", argv[0]);\n        return 1;\n    }\n    const char* weights_file = argv[1];\n    const char* image_file = argv[2];\n\n    // Load weights\n    cJSON* root = load_weights(weights_file);\n    if (!root) {\n        fprintf(stderr, "Failed to load weights.json\\n");\n        return 1;\n    }\n\n    // Extract weights and biases\n    double* input_weights = get_array(root, "input_weights");\n    double* input_bias = get_array(root, "input_bias");\n    double* hidden_weights = get_array(root, "hidden_weights");\n    double* hidden_bias = get_array(root, "hidden_bias");\n    double* output_weights = get_array(root, "output_weights");\n    double* output_bias = get_array(root, "output_bias");\n\n    cJSON_Delete(root);\n    if (!input_weights || !input_bias || !hidden_weights || !hidden_bias || !output_weights || !output_bias) {\n        fprintf(stderr, "Missing weights or biases in JSON\\n");\n        return 1;\n    }\n\n    // Read image\n    int width, height;\n    double* input = read_png(image_file, &width, &height);\n    if (!input) {\n        fprintf(stderr, "Failed to read image.png\\n");\n        return 1;\n    }\n\n    // Ensure image is 28x28\n    if (width != 28 || height != 28) {\n        fprintf(stderr, "Image must be 28x28\\n");\n        return 1;\n    }\n\n    // Compute hidden layer\n    double* hidden = compute_hidden(input, input_weights, input_bias, INPUT_DIM, HIDDEN_DIM);\n\n    // Compute output layer\n    double* output = compute_output(hidden, hidden_weights, hidden_bias, output_weights, output_bias, HIDDEN_DIM, OUTPUT_DIM);\n\n    // Find predicted digit (index of max output)\n    int predicted = 0;\n    double max_val = output[0];\n    for (int i = 1; i < OUTPUT_DIM; i++) {\n        if (output[i] > max_val) {\n            max_val = output[i];\n            predicted = i;\n        }\n    }\n\n    // Write prediction to file\n    FILE* f = fopen("prediction.txt", "w");\n    if (!f) {\n        fprintf(stderr, "Failed to open prediction.txt for writing\\n");\n        return 1;\n    }\n    fprintf(f, "%d", predicted);\n    fclose(f);\n\n    // Cleanup\n    free(input);\n    free(hidden);\n    free(output);\n    free(input_weights);\n    free(input_bias);\n    free(hidden_weights);\n    free(hidden_bias);\n    free(output_weights);\n    free(output_bias);\n\n    printf("Prediction: %d\\n", predicted);\n    return 0;\n}\nEOF\n'
+'head -30 lodepng.c\n'
+'gcc -std=c99 -Wall -o cli_tool cli_tool.c lodepng.c cJSON.c -lm -lpng -ljpeg -lm -lm\n'
+'ls -l cli_tool\n'
+'./cli_tool weights.json image.png\n'
+'cat prediction.txt\n'
+'apt-get install -y libjson-c-dev libpng-dev libjpeg-dev\n'
+"grep -n 'int main' lodepng.c\n"
+"sed -i '/int main/d' lodepng.c\n"
+'gcc -std=c99 -Wall -o cli_tool cli_tool.c lodepng.c cJSON.c -lm -lpng -ljpeg -lm\n'
+'ls -l cli_tool\n'
+'./cli_tool weights.json image.png\n'
+'cat prediction.txt\n'
+'apt-get remove -y libjson-c-dev\n'
+"grep -n 'int main' lodepng.c\n"
+'gcc -std=c99 -Wall -I. -o cli_tool cli_tool.c lodepng.c cJSON.c -lm -lpng -ljpeg -lm\n'
+'ls -l cli_tool\n'
+'./cli_tool weights.json image.png\n'
+'cat prediction.txt\n'
+'ls -l *.h\n'
+'head -50 cJSON.h\n'
+"grep -n 'cJSON_ArrayLength' lodepng.h\n"
+"grep -n 'lodepng_free' lodepng.h\n"
+"grep -n 'cJSON_ArrayGetItemCaseSensitive' lodepng.h\n"
+"sed -n '80,90p' lodepng.h\n"
+"grep -A5 -B5 'cJSON_ArrayLength' cJSON.h\n"
+"grep -A5 -B5 'cJSON_ArrayGetItemCaseSensitive' cJSON.h\n"
+"grep -n 'cJSON_ArrayLength' cJSON.h\n"
+"grep -n 'cJSON_ArrayGetItemCaseSensitive' cJSON.h\n"
+"sed -n '80,120p' lodepng.h\n"
+"sed -n '120,160p' lodepng.h\n"
+"grep -A5 -B5 'cJSON_ArrayLength' cJSON.h\n"
+"grep -A5 -B5 'cJSON_ArrayGetItemCaseSensitive' cJSON.h\n"
+"grep -n 'cJSON_ArrayLength' cJSON.h\n"
+"grep -n 'cJSON_ArrayGetItemCaseSensitive' cJSON.h\n"
+'cat lodepng.h\n'
+'cat cJSON.h\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

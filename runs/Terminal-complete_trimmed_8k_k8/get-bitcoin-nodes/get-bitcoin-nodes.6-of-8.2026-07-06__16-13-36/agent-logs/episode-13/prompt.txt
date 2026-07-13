@@ -1,0 +1,221 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@e48f2d2464c6:/app# cat /usr/local/lib/python3.13/site-packages/bitcoinlib/services/baseclient.py | head -100
+# -*- coding: utf-8 -*-
+#
+#    BitcoinLib - Python Cryptocurrency Library
+#    Base Client
+#    © 2016 - 2024 May - 1200 Web Development <http://1200wd.com/>
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import requests
+import urllib3
+from urllib.parse import urlencode
+import json
+from bitcoinlib.main import *
+from bitcoinlib.networks import Network
+from bitcoinlib.keys import Address
+
+_logger = logging.getLogger(__name__)
+
+# Disable warnings about insecure requests, as we only connect to familiar sources and local nodes
+urllib3.disable_warnings()
+
+
+class ClientError(Exception):
+    def __init__(self, msg=''):
+        self.msg = msg
+        _logger.info(msg)
+
+    def __str__(self):
+        return self.msg
+
+
+class BaseClient(object):
+
+    def __init__(self, network, provider, base_url, denominator, api_key='', provider_coin_id='',
+                 network_overrides=None, timeout=TIMEOUT_REQUESTS, latest_block=None, strict=True, wallet_name=''):
+        try:
+            self.network = network
+            if not isinstance(network, Network):
+                self.network = Network(network)
+            self.provider = provider
+
+            self.base_url = base_url
+            self.resp = None
+            self.units = denominator
+            self.api_key = api_key
+            self.provider_coin_id = provider_coin_id
+            self.network_overrides = {}
+            self.timeout = timeout
+            self.latest_block = latest_block
+            if network_overrides is not None:
+                self.network_overrides = network_overrides
+            self.strict = strict
+            self.wallet_name = wallet_name
+        except Exception:
+            raise ClientError("This Network is not supported by %s Client" % provider)
+
+    def request(self, url_path, variables=None, method='get', secure=True, post_data='', header=None):
+        url_vars = ''
+        url = self.base_url + url_path
+        if not url or not self.base_url:
+            raise ClientError("No (complete) url provided: %s" % url)
+        headers = {
+            'User-Agent': 'BitcoinLib/%s' % BITCOINLIB_VERSION,
+            'Accept': 'application/json',
+            "Referrer": "https://www.github.com/1200wd/bitcoinlib",
+        }
+        if self.api_key:
+            headers["Api-Key"] = self.api_key
+        if header:
+            headers.update(header)
+        if method == 'get':
+            if variables is None:
+                variables = {}
+            if variables:
+                url_vars = '?' + urlencode(variables)
+            url += url_vars
+            log_url = url if '@' not in url else url.split('@')[1]
+            _logger.info("Url get request %s" % log_url)
+            self.resp = requests.get(url, timeout=self.timeout, verify=secure, headers=headers)
+        elif method == 'post':
+            log_url = url if '@' not in url else url.split('@')[1]
+            _logger.info("Url post request %s" % log_url)
+            self.resp = requests.post(url, json=dict(variables), data=post_data, timeout=self.timeout, verify=secure,
+                                      headers=headers)
+
+        resp_text = self.resp.text
+        if len(resp_text) > 1000:
+            resp_text = self.resp.text[:970] + '... truncated, length %d' % len(resp_text)
+root@e48f2d2464c6:/app# cat /usr/local/lib/python3.13/site-packages/bitcoinlib/services/authproxy.py | head -100
+"""
+  Copyright 2011 Jeff Garzik
+
+  AuthServiceProxy has the following improvements over python-jsonrpc's
+  ServiceProxy class:
+
+  - HTTP connections persist for the life of the AuthServiceProxy object
+    (if server supports HTTP/1.1)
+  - sends protocol 'version', per JSON-RPC 1.1
+  - sends proper, incrementing 'id'
+  - sends Basic HTTP authentication headers
+  - parses all JSON numbers that look like floats as Decimal
+  - uses standard Python json lib
+
+  Previous copyright, from python-jsonrpc/jsonrpc/proxy.py:
+
+  Copyright (c) 2007 Jan-Klaas Kollhof
+
+  This file is part of jsonrpc.
+
+  jsonrpc is free software; you can redistribute it and/or modify
+  it under the terms of the GNU Lesser General Public License as published by
+  the Free Software Foundation; either version 2.1 of the License, or
+  (at your option) any later version.
+
+  This software is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU Lesser General Public License for more details.
+
+  You should have received a copy of the GNU Lesser General Public License
+  along with this software; if not, write to the Free Software
+  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+"""
+
+try:
+    import http.client as httplib
+except ImportError:
+    import httplib
+import base64
+import decimal
+import json
+import logging
+import urllib.parse as urlparse
+
+USER_AGENT = "AuthServiceProxy/0.1"
+
+HTTP_TIMEOUT = 10
+
+log = logging.getLogger(__name__)
+
+
+class JSONRPCException(Exception):
+    def __init__(self, rpc_error):
+        parent_args = []
+        try:
+            parent_args.append(rpc_error['message'])
+        except Exception:
+            pass
+        Exception.__init__(self, *parent_args)
+        self.error = rpc_error
+        self.code = rpc_error['code'] if 'code' in rpc_error else None
+        self.message = rpc_error['message'] if 'message' in rpc_error else None
+
+    def __str__(self):
+        return '%d: %s' % (self.code, self.message)
+
+    def __repr__(self):
+        return '<%s \'%s\'>' % (self.__class__.__name__, self)
+
+
+def EncodeDecimal(o):
+    if isinstance(o, decimal.Decimal):
+        try:
+            return float(round(o, 8))
+        except decimal.DecimalException as e:
+            return float(o)
+    raise TypeError(repr(o) + " is not JSON serializable")
+
+
+class AuthServiceProxy(object):
+    __id_count = 0
+
+    def __init__(self, service_url, service_name=None, timeout=HTTP_TIMEOUT, connection=None):
+        self.__service_url = service_url
+        self.__service_name = service_name
+        self.__url = urlparse.urlparse(service_url)
+        if self.__url.port is None:
+            port = 443 if self.__url.scheme == 'https' else 80
+        else:
+            port = self.__url.port
+        (user, passwd) = (self.__url.username, self.__url.password)
+        try:
+            user = user.encode('utf8')
+        except AttributeError:
+            pass
+        try:
+            passwd = passwd.encode('utf8')
+        except AttributeError:
+            pass
+root@e48f2d2464c6:/app# grep -n '8333' /usr/local/lib/python3.13/site-packages/bitcoinlib/services/* 2>/dev/null
+root@e48f2d2464c6:/app# grep -n '8332' /usr/local/lib/python3.13/site-packages/bitcoinlib/services/* 2>/dev/null
+/usr/local/lib/python3.13/site-packages/bitcoinlib/services/bitcoind.py:109:            port = 18332
+/usr/local/lib/python3.13/site-packages/bitcoinlib/services/bitcoind.py:111:            port = 8332
+/usr/local/lib/python3.13/site-packages/bitcoinlib/services/bitcoind.py:348:    base_url = 'http://bitcoinrpc:passwd@host:8332'
+/usr/local/lib/python3.13/site-packages/bitcoinlib/services/dogecoind.py:243:    # base_url = 'http://dogecoinrpc:passwd@host:8332'
+root@e48f2d2464c6:/app# python3 -c "import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); from networks import Network; print('Network impo
+rted')" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); from networks import Network; print('Network imported')
+                                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'networks'
+root@e48f2d2464c6:/app#

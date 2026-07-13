@@ -1,0 +1,297 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@02dee560ef5d:/app/langcodes# cd langcodes
+root@02dee560ef5d:/app/langcodes/langcodes# ls -la
+total 236
+drwxr-xr-x 1 root root     69 Jul  8 14:23 .
+drwxr-xr-x 1 root root     92 Jul  8 14:23 ..
+-rw-r--r-- 1 root root  69504 Jul  8 14:23 __init__.py
+-rw-r--r-- 1 root root  10120 Jul  8 14:23 build_data.py
+drwxr-xr-x 2 root root     42 Jul  8 14:23 data
+-rw-r--r-- 1 root root 113788 Jul  8 14:23 data_dicts.py
+-rw-r--r-- 1 root root   5751 Jul  8 14:23 language_distance.py
+-rw-r--r-- 1 root root   8668 Jul  8 14:23 language_lists.py
+-rw-r--r-- 1 root root      0 Jul  8 14:23 py.typed
+-rw-r--r-- 1 root root   1785 Jul  8 14:23 registry_parser.py
+-rw-r--r-- 1 root root  14283 Jul  8 14:23 tag_parser.py
+drwxr-xr-x 1 root root     66 Jul  8 14:23 tests
+-rw-r--r-- 1 root root    182 Jul  8 14:23 util.py
+root@02dee560ef5d:/app/langcodes/langcodes# cat __init__.py
+"""
+langcodes knows what languages are. It knows the standardized codes that
+refer to them, such as `en` for English, `es` for Spanish and `hi` for Hindi.
+Often, it knows what these languages are called *in* a language, and that
+language doesn't have to be English.
+
+See README.md for the main documentation, or read it on GitHub at
+https://github.com/LuminosoInsight/langcodes/ . For more specific documentation
+on the functions in langcodes, scroll down and read the docstrings.
+
+Some of these functions, particularly those that work with the names of
+languages, require the `language_data` module to be installed.
+"""
+from operator import itemgetter
+from typing import Any, List, Tuple, Dict, Sequence, Iterable, Optional, Mapping, Union
+import warnings
+import sys
+
+from langcodes.tag_parser import LanguageTagError, parse_tag, normalize_characters
+from langcodes.language_distance import tuple_distance_cached
+from langcodes.data_dicts import (
+    ALL_SCRIPTS,
+    DEFAULT_SCRIPTS,
+    LANGUAGE_REPLACEMENTS,
+    LANGUAGE_ALPHA3,
+    LANGUAGE_ALPHA3_BIBLIOGRAPHIC,
+    TERRITORY_REPLACEMENTS,
+    NORMALIZED_MACROLANGUAGES,
+    LIKELY_SUBTAGS,
+    VALIDITY,
+)
+
+# When we're getting natural language information *about* languages, it's in
+# English if you don't specify the language.
+DEFAULT_LANGUAGE = 'en'
+
+
+LANGUAGE_NAME_IMPORT_MESSAGE = """
+Looking up language names now requires the `language_data` package.
+
+Install it with:
+    pip install language_data
+Or as an optional feature of langcodes:
+    pip install langcodes[data]
+"""
+
+
+class Language:
+    """
+    The Language class defines the results of parsing a language tag.
+    Language objects have the following attributes, any of which may be
+    unspecified (in which case their value is None):
+
+    - *language*: the code for the language itself.
+    - *script*: the 4-letter code for the writing system being used.
+    - *territory*: the 2-letter or 3-digit code for the country or similar territory
+      of the world whose usage of the language appears in this text.
+    - *extlangs*: a list of more specific language codes that follow the language
+      code. (This is allowed by the language code syntax, but deprecated.)
+    - *variants*: codes for specific variations of language usage that aren't
+      covered by the *script* or *territory* codes.
+    - *extensions*: information that's attached to the language code for use in
+      some specific system, such as Unicode collation orders.
+    - *private*: a code starting with `x-` that has no defined meaning.
+
+    The `Language.get` method converts a string to a Language instance.
+    It's also available at the top level of this module as the `get` function.
+    """
+
+    ATTRIBUTES = [
+        'language',
+        'extlangs',
+        'script',
+        'territory',
+        'variants',
+        'extensions',
+        'private',
+    ]
+
+    # When looking up "likely subtags" data, we try looking up the data for
+    # increasingly less specific versions of the language code.
+    BROADER_KEYSETS = [
+        {'language', 'script', 'territory'},
+        {'language', 'territory'},
+        {'language', 'script'},
+        {'language'},
+        {'script'},
+        {},
+    ]
+
+    MATCHABLE_KEYSETS = [
+        {'language', 'script', 'territory'},
+        {'language', 'script'},
+        {'language'},
+    ]
+
+    # Values cached at the class level
+    _INSTANCES: Dict[tuple, 'Language'] = {}
+    _PARSE_CACHE: Dict[Tuple[str, bool], 'Language'] = {}
+
+    def __init__(
+        self,
+        language: Optional[str] = None,
+        extlangs: Optional[Sequence[str]] = None,
+        script: Optional[str] = None,
+        territory: Optional[str] = None,
+        variants: Optional[Sequence[str]] = None,
+        extensions: Optional[Sequence[str]] = None,
+        private: Optional[str] = None,
+    ):
+        """
+        The constructor for Language objects.
+
+        It's inefficient to call this directly, because it can't return
+        an existing instance. Instead, call Language.make(), which
+        has the same signature.
+        """
+        self.language = language
+    
+[... output limited to 10000 bytes; 71 interior bytes omitted ...]
+hinese is usually
+    presumed to be Mandarin Chinese, but colloquial Cantonese can be written as
+    well. (Some things could not be written any other way, such as Cantonese
+    song lyrics.)
+
+    The difference between Cantonese and Mandarin also implies script and
+    territory differences by default, adding to the distance.
+
+    >>> tag_distance('yue', 'zh')
+    64
+
+    When the supported script is a different one than desired, this is usually
+    a major difference with score of 50 or more.
+
+    >>> tag_distance('ja', 'ja-Latn-US-hepburn')
+    54
+
+    >>> # You can read the Shavian script, right?
+    >>> tag_distance('en', 'en-Shaw')
+    54
+    """
+    desired_obj = Language.get(desired)
+    supported_obj = Language.get(supported)
+    return desired_obj.distance(supported_obj)
+
+
+def best_match(
+    desired_language: Union[str, Language],
+    supported_languages: Sequence[str],
+    min_score: int = 75,
+) -> Tuple[str, int]:
+    """
+    DEPRECATED: use .closest_match() instead. This function emulates the old
+    matching behavior by subtracting the language distance from 100.
+
+    You have software that supports any of the `supported_languages`. You want
+    to use `desired_language`. This function lets you choose the right language,
+    even if there isn't an exact match.
+
+    Returns:
+
+    - The best-matching language code, which will be one of the
+      `supported_languages` or 'und'
+    - The score of the match, from 0 to 100; higher is better.
+
+    `min_score` sets the minimum match score. If all languages match with a lower
+    score than that, the result will be 'und' with a score of 0.
+    """
+    max_distance = 100 - min_score
+    supported, distance = closest_match(
+        desired_language, supported_languages, max_distance
+    )
+    score = max(0, 100 - distance)
+    return supported, score
+
+
+def closest_match(
+    desired_language: Union[str, Language],
+    supported_languages: Sequence[str],
+    max_distance: int = 25,
+) -> Tuple[str, int]:
+    """
+    You have software that supports any of the `supported_languages`. You want
+    to use `desired_language`. This function lets you choose the right language,
+    even if there isn't an exact match.
+
+    Returns:
+
+    - The best-matching language code, which will be one of the
+      `supported_languages` or 'und' for no match
+    - The distance of the match, which is 0 for a perfect match and increases
+      from there (see `tag_distance`)
+
+    `max_distance` sets the maximum match distance. If all matches are farther
+    than that, the result will be 'und' with a distance of 1000. The default
+    value is 25, and raising it can cause data to be processed in significantly
+    the wrong language. The documentation for `tag_distance` describes the
+    distance values in more detail.
+
+    When there is a tie for the best matching language, the first one in the
+    tie will be used.
+
+    >>> closest_match('fr', ['de', 'en', 'fr'])
+    ('fr', 0)
+
+    >>> closest_match('pt', ['pt-BR', 'pt-PT'])
+    ('pt-BR', 0)
+
+    >>> closest_match('en-AU', ['en-GB', 'en-US'])
+    ('en-GB', 3)
+
+    >>> closest_match('af', ['en', 'nl', 'zu'])
+    ('nl', 24)
+
+    >>> closest_match('ja', ['ja-Latn-hepburn', 'en'])
+    ('und', 1000)
+    """
+    desired_language = str(desired_language)
+
+    # Quickly return if the desired language is directly supported
+    if desired_language in supported_languages:
+        return desired_language, 0
+
+    # Reduce the desired language to a standard form that could also match
+    desired_language = standardize_tag(desired_language)
+    if desired_language in supported_languages:
+        return desired_language, 0
+
+    match_distances = [
+        (supported, tag_distance(desired_language, supported))
+        for supported in supported_languages
+    ]
+    match_distances = [
+        (supported, distance)
+        for (supported, distance) in match_distances
+        if distance <= max_distance
+    ] + [('und', 1000)]
+
+    match_distances.sort(key=itemgetter(1))
+    return match_distances[0]
+
+
+def closest_supported_match(
+    desired_language: Union[str, Language],
+    supported_languages: Sequence[str],
+    max_distance: int = 25,
+) -> Optional[str]:
+    """
+    Wraps `closest_match` with a simpler return type. Returns the language
+    tag of the closest match if there is one, or None if there is not.
+
+    >>> closest_supported_match('fr', ['de', 'en', 'fr'])
+    'fr'
+
+    >>> closest_supported_match('pt', ['pt-BR', 'pt-PT'])
+    'pt-BR'
+
+    >>> closest_supported_match('en-AU', ['en-GB', 'en-US'])
+    'en-GB'
+
+    >>> closest_supported_match('und', ['en', 'und'])
+    'und'
+
+    >>> closest_supported_match('af', ['en', 'nl', 'zu'])
+    'nl'
+
+    >>> print(closest_supported_match('af', ['en', 'nl', 'zu'], max_distance=10))
+    None
+    """
+    code, distance = closest_match(desired_language, supported_languages, max_distance)
+    if distance == 1000:
+        return None
+    else:
+        return code
+root@02dee560ef5d:/app/langcodes/langcodes#

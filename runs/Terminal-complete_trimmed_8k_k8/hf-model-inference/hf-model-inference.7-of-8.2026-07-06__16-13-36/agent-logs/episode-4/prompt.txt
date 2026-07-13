@@ -1,0 +1,78 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@57bf9d8a0fc9:/app# ls -la /app/model_cache/
+total 0
+drwxr-xr-x 2 root root 10 Jul  7 16:19 .
+drwxr-xr-x 1 root root 33 Jul  7 16:19 ..
+root@57bf9d8a0fc9:/app# cd /app
+root@57bf9d8a0fc9:/app# cat > run_sentiment.py << 'EOF'
+> import sys
+> import os
+> import json
+> import requests
+> from flask import Flask, request, jsonify
+> from transformers import AutoModelForSequenceClassification, AutoTokenizer
+> from transformers.huggingface_hub import HuggingFaceHub
+>
+> # Model path
+> model_path = '/app/model_cache/sentiment_model'
+>
+> # Load model and tokenizer
+> if not os.path.exists(model_path):
+>     # Download model
+>     model = HuggingFaceHub.from_pretrained('distilbert-base-uncased-finetuned-sst-2-english')
+>     model.save_pretrained(model_path)
+>     tokenizer = model.tokenizer
+> else:
+>     model = AutoModelForSequenceClassification.from_pretrained(model_path)
+>     tokenizer = AutoTokenizer.from_pretrained(model_path)
+>
+> print('Model loaded successfully')
+>
+> # Create Flask app
+> app = Flask(__name__)
+>
+> @app.route('/sentiment', methods=['POST'])
+> def sentiment():
+>     try:
+>         data = request.get_json()
+>         if 'text' not in data:
+>             return {'error': 'Missing text field in request'}, 400
+>         text = data['text']
+>         # Tokenize
+>         inputs = tokenizer(text, return_tensors='pt')
+>         # Predict
+>         outputs = model(**inputs)
+>         # Get probabilities
+>         probabilities = outputs.logits
+>         # Assuming the model outputs two classes: positive and negative (order may vary)
+>         # We'll map to positive/negative based on the highest probability
+>         pos_prob = probabilities[0].item() if probabilities[0].item() > probabilities[1].item() else probabilities[1].item()
+>         neg_prob = probabilities[1].item() if probabilities[1].item() > probabilities[0].item() else probabilities[0].item()
+>         # Normalize to confidence scale 0-1
+>         total = pos_prob + neg_prob
+>         if total == 0:
+>             confidence = {'positive': 0.5, 'negative': 0.5}
+>         else:
+>             confidence = {'positive': pos_prob / total, 'negative': neg_prob / total}
+>         # Determine sentiment
+>         if pos_prob > neg_prob:
+>             sentiment = 'positive'
+>         else:
+>             sentiment = 'negative'
+>         # Return
+>         return {
+>             'sentiment': sentiment,
+>             'confidence': confidence
+>         }
+>     except Exception as e:
+>         return {'error': str(e)}, 500
+>
+> if __name__ == '__main__':
+>     # Run on port 5000, host 0.0.0.0
+>     app.run(host='0.0.0.0', port=5000, debug=False)
+> EOF
+root@57bf9d8a0fc9:/app#

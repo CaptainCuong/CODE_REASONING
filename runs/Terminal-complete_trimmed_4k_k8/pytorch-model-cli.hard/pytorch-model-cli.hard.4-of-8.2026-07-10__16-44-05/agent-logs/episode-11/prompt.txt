@@ -1,0 +1,99 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+cat /app/prediction.txt
+Traceback (most recent call last):
+  File "/app/infer.py", line 62, in <module>
+    main()
+    ~~~~^^
+  File "/app/infer.py", line 57, in main
+    pred = predict(image, weights)
+  File "/app/infer.py", line 43, in predict
+    img = Image.open(image_path).convert('L')
+          ~~~~~~~~~~^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/PIL/Image.py", line 3639, in open
+    fp = builtins.open(filename, "rb")
+FileNotFoundError: [Errno 2] No such file or directory: '/app/create_dummy_image.png'
+root@b1f0479acb66:/app# cat /app/prediction.txt
+cat: /app/prediction.txt: No such file or directory
+root@b1f0479acb66:/app#
+root@b1f0479acb66:/app# ls -la
+total 592
+drwxr-xr-x 1 root root    113 Jul 11 10:52 .
+drwxr-xr-x 1 root root     87 Jul 11 10:49 ..
+-rw-rw-r-- 1 root root  79506 Jun 24 11:01 cJSON.c
+-rw-rw-r-- 1 root root  16393 Jun 24 11:01 cJSON.h
+-rw-r--r-- 1 root root    518 Jul 11 10:51 create_weights.py
+-rw-r--r-- 1 root root    554 Jul 11 10:52 extract_weights.py
+-rwxr-xr-x 1 root root   2143 Jul 11 10:52 infer.py
+-rw-rw-r-- 1 root root 311873 Jun 24 11:01 lodepng.cpp
+-rw-rw-r-- 1 root root 107788 Jun 24 11:01 lodepng.h
+-rw-rw-r-- 1 root root  54714 Jun 24 11:01 model.pth
+-rw-rw-r-- 1 root root    681 Jun 24 11:01 model.py
+-rw-r--r-- 1 root root      2 Jul 11 10:52 weights.json
+root@b1f0479acb66:/app# cat /app/infer.py
+import sys
+import torch
+import numpy as np
+from PIL import Image, ImageDraw
+import json
+import os
+
+def load_model(weights_path):
+    # Load from weights.json if exists, else from model.pth
+    if os.path.exists(weights_path):
+        with open(weights_path, 'r') as f:
+            weights = json.load(f)
+        # Reconstruct the model from weights
+        model = torch.nn.Sequential()
+        input_layer = torch.nn.Linear(28 * 28, 64)
+        hidden_layer = torch.nn.Linear(64, 64)
+        output_layer = torch.nn.Linear(64, 10)
+        model.add_module('input_layer', input_layer)
+        model.add_module('hidden_layer', hidden_layer)
+        model.add_module('output_layer', output_layer)
+        # Load weights
+        for name, param in model.named_parameters():
+            if name in weights:
+                param.data = torch.tensor(weights[name])
+    else:
+        # Load from model.pth
+        model = torch.load('model.pth')
+    return model
+
+def create_dummy_image():
+    # Create a simple image with digit 3
+    img = Image.new('L', (28, 28), color='white')
+    draw = ImageDraw.Draw(img)
+    # Draw lines for digit 3
+    draw.line([(10,10), (15,20), (20,10), (25,20), (30,10), (35,20), (40,10)], fill='black', width=2)
+    draw.line([(10,20), (15,30), (20,20), (25,30), (30,20), (35,30), (40,20)], fill='black', width=2)
+    draw.line([(10,30), (15,40), (20,30), (25,40), (30,30), (35,40), (40,30)], fill='black', width=2)
+    return img
+
+def predict(image_path, weights_path):
+    model = load_model(weights_path)
+    # Convert image to tensor
+    img = Image.open(image_path).convert('L')
+    img_array = np.array(img).astype(float) / 255.0
+    img_tensor = torch.tensor(img_array, device='cpu').view(1, -1)
+    output = model(img_tensor)
+    pred = torch.argmax(output).item()
+    print(pred)
+    return pred
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python3 infer.py <image> <weights>")
+        sys.exit(1)
+    image = sys.argv[1]
+    weights = sys.argv[2]
+    pred = predict(image, weights)
+    with open('prediction.txt', 'w') as f:
+        f.write(str(pred))
+
+if __name__ == '__main__':
+    main()
+root@b1f0479acb66:/app#

@@ -1,0 +1,34 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la c4_sample/\n'
+'find c4_sample -type f | wc -l\n'
+'find c4_sample -type f -exec ls -lh {} + | head -20\n'
+'du -sh c4_sample/\n'
+'head -2 c4_sample/c4-mini-00000-of-10000.jsonl\n'
+'wc -l c4_sample/c4-mini-00000-of-10000.jsonl\n'
+'ls -la c4_sample/ | wc -l\n'
+'cd /app\n'
+"cat > reshape.py << 'EOF'\nimport os\nimport math\nimport shutil\n\nc4_sample = 'c4_sample'\nc4_reshard = 'c4_reshard'\nmax_files_per_folder = 30\nmax_filesize = 15 * 1024 * 1024  # 15 MB\n\n# Create c4_reshard directory\nos.makedirs(c4_reshard, exist_ok=True)\n\n# List all files in c4_sample\nfiles = []\nfor root, dirs, filenames in os.walk(c4_sample):\n    for f in filenames:\n        files.append(os.path.join(root, f))\n\nprint(f'Total files: {len(files)}')\n\n# Check if any file exceeds max_filesize\nfor f in files:\n    size = os.path.getsize(f)\n    if size > max_filesize:\n        print(f'Warning: {f} size {size} > 15MB')\n        # For simplicity, we assume we need to split the file.\n        # We'll implement splitting later.\n        # For now, we'll skip.\n\n# Determine number of subdirectories needed\nnum_files = len(files)\nnum_folders = math.ceil(num_files / max_files_per_folder)\nprint(f'Number of subdirectories needed: {num_folders}')\n\n# Create subdirectories\nfor i in range(num_folders):\n    sub = os.path.join(c4_reshard, f'folder{i}')\n    os.makedirs(sub, exist_ok=True)\n\n# Distribute files\nfor idx, f in enumerate(files):\n    folder_idx = (idx // max_files_per_folder) % num_folders\n    folder = os.path.join(c4_reshard, f'folder{folder_idx}')\n    # Copy file\n    shutil.copy2(f, os.path.join(folder, os.path.basename(f)))\n    print(f'Copied {f} to {folder}')\n\n# Verify distribution\nfor i in range(num_folders):\n    folder = os.path.join(c4_reshard, f'folder{i}')\n    count = len(os.listdir(folder))\n    print(f'folder{i}: {count} files')\n    if count > max_files_per_folder:\n        print('ERROR: folder exceeds max files')\n\nprint('Resharing complete.')\nEOF\n"
+'python3 reshape.py\n'
+'ls -la c4_reshard/\n'
+'find c4_reshard -type f | wc -l\n'
+"cat > /app/revert.py << 'EOF'\nimport os\nimport shutil\n\nc4_sample = 'c4_sample'\nc4_reshard = 'c4_reshard'\n\n# Ensure c4_reshard exists\nos.makedirs(c4_reshard, exist_ok=True)\n\n# Copy all files from c4_sample to c4_reshard\nfor root, dirs, filenames in os.walk(c4_sample):\n    for f in filenames:\n        src = os.path.join(root, f)\n        dst = os.path.join(c4_reshard, f)\n        shutil.copy2(src, dst)\n        print(f'Copied {src} -> {dst}')\n\nprint('Revert complete.')\nEOF\n"
+'ls -la /app/revert.py\n'
+'du -b c4_sample/*.jsonl | sort -nr | head -5\n'
+'rm -rf c4_reshard\n'
+"cat > reshape.py << 'EOF'\nimport os\nimport math\nimport shutil\nimport sys\n\nc4_sample = 'c4_sample'\nc4_reshard = 'c4_reshard'\nmax_files_per_folder = 30\nmax_filesize = 15 * 1024 * 1024  # 15 MB\n\n# Create c4_reshard directory\nos.makedirs(c4_reshard, exist_ok=True)\n\n# List all files in c4_sample\nfiles = []\nfor root, dirs, filenames in os.walk(c4_sample):\n    for f in filenames:\n        files.append(os.path.join(root, f))\n\nprint(f'Total files: {len(files)}')\n\n# Check if any file exceeds max_filesize\nfor f in files:\n    size = os.path.getsize(f)\n    if size > max_filesize:\n        print(f'Warning: {f} size {size} > 15MB, splitting into chunks')\n        # We'll split later\n\n# Determine number of subdirectories needed\nnum_files = len(files)\nnum_folders = math.ceil(num_files / max_files_per_folder)\nprint(f'Number of subdirectories needed: {num_folders}')\n\n# Create subdirectories\nfor i in range(num_folders):\n    sub = os.path.join(c4_reshard, f'folder{i}')\n    os.makedirs(sub, exist_ok=True)\n\n# Split large files and distribute\nfor idx, f in enumerate(files):\n    size = os.path.getsize(f)\n    if size > max_filesize:\n        # Split into chunks\n        num_chunks = math.ceil(size / max_filesize)\n        print(f'Splitting {f} into {num_chunks} chunks')\n        # Read file in binary\n        with open(f, 'rb') as src:\n            chunk = src.read(max_filesize)\n            chunk_num = 0\n            while chunk:\n                chunk_num += 1\n                folder_idx = (idx + chunk_num - 1) // max_files_per_folder % num_folders\n                folder = os.path.join(c4_reshard, f'folder{folder_idx}')\n                dst = os.path.join(folder, os.path.basename(f) + f'-{chunk_num:03d}')\n                with open(dst, 'wb') as dst_file:\n                    dst_file.write(chunk)\n                # Read next chunk\n                chunk = src.read(max_filesize)\n        print(f'Distributed {f} into {num_chunks} chunks')\n        # After splitting, we should not count the original file in the list for distribution\n        # But we already incremented idx? We'll break out of loop for this file\n        # We'll continue with the next file\n        continue\n    # Regular file\n    folder_idx = (idx // max_files_per_folder) % num_folders\n    folder = os.path.join(c4_reshard, f'folder{folder_idx}')\n    shutil.copy2(f, os.path.join(folder, os.path.basename(f)))\n    print(f'Copied {f} to {folder}')\n\n# Verify distribution\nfor i in range(num_folders):\n    folder = os.path.join(c4_reshard, f'folder{i}')\n    count = len(os.listdir(folder))\n    print(f'folder{i}: {count} files')\n    if count > max_files_per_folder:\n        print('ERROR: folder exceeds max files')\n\nprint('Resharing complete.')\nEOF\n"
+'python3 reshape.py\n'
+'find c4_reshard -type f | wc -l\n'
+'ls -la c4_reshard | head -5\n'
+'wc -l c4_reshard/folder0/*.jsonl 2>/dev/null | head -5\n'
+'cd /app\n'
+"cat > verify.py << 'EOF'\nimport os\nimport sys\n\nc4_reshard = 'c4_reshard'\nmax_files = 30\nmax_size = 15 * 1024 * 1024  # 15 MB\n\nerrors = []\n# Count files per folder\nfor root, dirs, files in os.walk(c4_reshard):\n    for f in files:\n        path = os.path.join(root, f)\n        size = os.path.getsize(path)\n        if size > max_size:\n            errors.append(f'File size exceeds 15MB: {path} ({size} bytes)')\n\n# Count files per folder\nfor root, dirs, files in os.walk(c4_reshard):\n    count = len(files)\n    if count > max_files:\n        errors.append(f'Folder contains more than 30 files: {root} ({count} files)')\n\nif errors:\n    print('Errors found:')\n    for e in errors:\n        print(e)\n    sys.exit(1)\nelse:\n    print('All constraints satisfied.')\n    # Also print summary\n    total_files = sum(len(files) for _, _, files in os.walk(c4_reshard))\n    print(f'Total files in c4_reshard: {total_files}')\nEOF\n"
+'python3 verify.py\n'
+'chmod +x /app/revert.py\n'
+'ls -l /app/revert.py\n'
+'head -20 /app/revert.py\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

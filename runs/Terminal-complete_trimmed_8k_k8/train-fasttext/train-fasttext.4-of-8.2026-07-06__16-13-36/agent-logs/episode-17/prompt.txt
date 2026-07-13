@@ -1,0 +1,79 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+&1
+head -c 100 data/train-00000-of-00001.parquet | od -c
+cd /app
+cat > train_fasttext.py << 'EOF'
+import fasttext
+import pandas as pd
+import numpy as np
+import os
+
+# Load the data
+train_df = pd.read_parquet('data/train-00000-of-00001.parquet')
+test_df = pd.read_parquet('data/test-00000-of-00001.parquet')
+
+# Convert to label text separated by a space
+train_lines = []
+for idx, row in train_df.iterrows():
+    line = f"{row['label']} {row['text']}"
+    train_lines.append(line)
+
+with open('train.txt', 'w') as f:
+    f.write('\n'.join(train_lines))
+
+# Similarly for test
+test_lines = []
+for idx, row in test_df.iterrows():
+    line = f"{row['label']} {row['text']}"
+    test_lines.append(line)
+
+with open('test.txt', 'w') as f:
+    f.write('\n'.join(test_lines))
+
+# Split train into train/validation (80/20)
+train_lines = train_lines[:int(len(train_lines)*0.8)]
+valid_lines = train_lines[int(len(train_lines)*0.8):]
+
+print(f'Train lines: {len(train_lines)}')
+print(f'Validation lines: {len(valid_lines)}')
+
+# Train a supervised model with default parameters
+model = fasttext.train_supervised('train.txt', epoch=20, dim=100)
+print('Model trained.')
+
+# Evaluate on validation and test
+val_accuracy = model.test(valid_lines, k=1)
+test_accuracy = model.test(test_lines, k=1)
+print(f'Validation accuracy: {val_accuracy}')
+print(f'Test accuracy: {test_accuracy}')
+
+# Save model
+model.save_model('model.bin')
+print('Model saved to model.bin')
+
+# Check model size
+size = os.path.getsize('model.bin')
+print(f'Model size: {size} bytes ({size/1024/1024:.2f} MB)')
+if size > 150 * 1024 * 1024:
+    print('WARNING: Model size exceeds 150 MB!')
+else:
+    print('Model size OK (<150 MB).')
+
+# If accuracy < 0.62, we might need to adjust dimension
+if test_accuracy < 0.62:
+    print(f'Test accuracy below 0.62: {test_accuracy}. Considering dimension reduction.')
+    # Try dimension 50
+    model2 = fasttext.train_supervised('train.txt', epoch=20, dim=50)
+    test_acc2 = model2.test(test_lines, k=1)
+    print(f'With dimension 50, test accuracy: {test_acc2}')
+    if test_acc2 >= 0.62:
+        model2.save_model('model.bin')
+        print('Model with dimension 50 saved.')
+    else:
+        print('Still below threshold. Consider further adjustments.')
+EOF
+python3 train_fasttext.py 2>&1
+

@@ -1,0 +1,79 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+EOF
+python3 test_read.py
+python3 -c "import numpy; print('numpy available')" 2>&1
+cat > test_read.py << 'EOF'
+import struct
+import sys
+
+def read_ppm_p3(filename):
+    with open(filename, 'r') as f:
+        lines = f.readlines()
+    header = lines[0].strip()
+    if header != 'P3':
+        raise ValueError('Not P3 format')
+    width_height = lines[1].strip()
+    width, height = map(int, width_height.split())
+    max_val = int(lines[2].strip())
+    if max_val != 255:
+        raise ValueError('Max value not 255')
+    data = b''.join(struct.pack('<BBB', r, g, b) for line in lines[3:] for r,g,b in [map(int, line.strip().split())])
+    return width, height, data
+
+def read_ppm_p6(filename):
+    with open(filename, 'rb') as f:
+        header = f.read(3)
+        if header != b'P6':
+            raise ValueError('Not P6 format')
+        width_height = f.read(6)
+        width, height = struct.unpack('<ii', width_height)
+        max_val = struct.unpack('<i', f.read(4))[0]
+        if max_val != 255:
+            raise ValueError('Max value not 255')
+        size = width * height * 3
+        data = f.read(size)
+    return width, height, data
+
+def scale_down(data, width, height, new_width, new_height):
+    # simple box averaging
+    old_rows = data
+    new_rows = []
+    for i in range(new_height):
+        row = []
+        for j in range(new_width):
+            x0 = j * width / new_width
+            x1 = (j+1) * width / new_width
+            y0 = i * height / new_height
+            y1 = (i+1) * height / new_height
+            red_sum = 0
+            green_sum = 0
+            blue_sum = 0
+            count = 0
+            for y in range(y0, y1):
+                for x in range(x0, x1):
+                    idx = (y * width + x) * 3
+                    r, g, b = old_rows[idx], old_rows[idx+1], old_rows[idx+2]
+                    red_sum += r
+                    green_sum += g
+                    blue_sum += b
+                    count += 1
+            row.append((red_sum // count, green_sum // count, blue_sum // count))
+        new_rows.append(row)
+    new_data = b''
+    for row in new_rows:
+        for r, g, b in row:
+            new_data += struct.pack('<BBB', r, g, b)
+    return new_width, new_height, new_data
+
+def l2_similarity(data1, data2, width1, height1, width2, height2):
+    # assume same dimensions
+    total = 0
+    for i in range(height1):
+        for j in range(width1):
+            idx1 = (i * width1 + j) * 3
+            idx2 = (i * width2 + j) * 3
+

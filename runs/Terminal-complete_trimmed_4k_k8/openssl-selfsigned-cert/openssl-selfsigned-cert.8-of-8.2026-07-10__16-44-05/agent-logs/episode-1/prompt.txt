@@ -1,0 +1,71 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+root@f7f90cc28f7c:/app# mkdir -p /app/ssl
+root@f7f90cc28f7c:/app# cd /app/ssl
+root@f7f90cc28f7c:/app/ssl# openssl genrsa -out server.key 2048
+root@f7f90cc28f7c:/app/ssl# chmod 600 server.key
+root@f7f90cc28f7c:/app/ssl# openssl req -new -key server.key -out server.csr -subj "/O=DevOps Team/CN=dev-internal.company.local"
+root@f7f90cc28f7c:/app/ssl# openssl x509 -req -in server.csr -out server.crt -days 365
+Certificate request self-signature ok
+subject=O = DevOps Team, CN = dev-internal.company.local
+We need a private key to sign with, use -key or -CAkey or -CA with private key
+root@f7f90cc28f7c:/app/ssl# cat server.key server.crt > server.pem
+cat: server.crt: No such file or directory
+root@f7f90cc28f7c:/app/ssl# chmod 600 server.pem
+root@f7f90cc28f7c:/app/ssl# cat > /app/ssl/verification.txt << 'EOF'
+> Subject: $(openssl x509 -subject server.crt)
+> Validity: $(openssl x509 -validity server.crt)
+> Fingerprint: $(openssl x509 -fingerprint sha256 server.crt)
+> EOF
+root@f7f90cc28f7c:/app/ssl# chmod 600 /app/ssl/verification.txt
+root@f7f90cc28f7c:/app/ssl# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> import os
+>
+> def main():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>     if not os.path.exists(cert_path):
+>         print('ERROR: Certificate file not found')
+>         sys.exit(1)
+>     # Load certificate
+>     with open(cert_path, 'rb') as f:
+>         cert_data = f.read()
+>     try:
+>         cert = ssl.Certificate(cert_data)
+>     except Exception as e:
+>         print(f'ERROR: Failed to load certificate: {e}')
+>         sys.exit(1)
+>     # Subject
+>     subj = cert.subject
+>     print(f'Subject: {subj}')
+>     # Common Name
+>     # Subject is a dict with key 'commonName' (or 'CN')
+>     common_name = subj.get('commonName') or subj.get('CN')
+>     print(f'Common Name: {common_name}')
+>     # Validity dates
+>     validity = cert.not_valid_before.strftime('%Y-%m-%d') + ' to ' + cert.not_valid_after.strftime('%Y-%m-%d')
+>     print(f'Validity: {validity}')
+>     # SHA-256 fingerprint
+>     try:
+>         with open(cert_path, 'rb') as f:
+>             cert_data = f.read()
+>         subprocess.check_output(['openssl', 'x509', '-fingerprint', 'sha256', '-out', '/tmp/fingerprint.txt'], stdin=subprocess.PIPE, input=cert_data)
+>         with open('/tmp/fingerprint.txt', 'r') as f:
+>             fp = f.read().strip().split(':')[1].strip()
+>         print(f'SHA-256 Fingerprint: {fp}')
+>     except Exception as e:
+>         print(f'WARNING: Could not compute SHA-256 fingerprint: {e}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f7f90cc28f7c:/app/ssl# chmod 755 /app/check_cert.py
+root@f7f90cc28f7c:/app/ssl# python3 /app/check_cert.py
+ERROR: Certificate file not found
+root@f7f90cc28f7c:/app/ssl#

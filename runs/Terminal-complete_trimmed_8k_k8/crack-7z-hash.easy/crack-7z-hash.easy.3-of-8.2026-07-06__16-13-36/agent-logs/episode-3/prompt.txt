@@ -1,0 +1,145 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+le_stat[7];
+  }
+
+  return %files_with_sizes;
+}
+
+sub splitted_seven_zip_open
+{
+  my @files = @_;
+
+  my @sorted_file_list = get_ordered_splitted_file_list (@files);
+
+  return 0 if (scalar (@sorted_file_list) < 1);
+
+  my %file_list_with_sizes = get_file_sizes_list (@sorted_file_list);
+
+  # start to parse the file list
+
+  $memory_buffer_read_offset = 0; # just to be safe
+
+  my $first_splitted_file = $file_list_with_sizes{1}{'name'};
+
+  my $hash_buf = "";
+
+  # open file for reading
+
+  my $seven_zip_file;
+
+  if (! open ($seven_zip_file, "<$first_splitted_file"))
+  {
+    print STDERR "ERROR: could not open the the splitted archive file '$first_splitted_file' for reading\n";
+
+    exit (1);
+  }
+
+  binmode ($seven_zip_file);
+
+  $file_list_with_sizes{0}{'fh'}  = $seven_zip_file;
+  $file_list_with_sizes{0}{'num'} = 1; # meaning is: "first file"
+
+  # check if valid and supported 7z file
+
+  if (! is_supported_seven_zip_file (\%file_list_with_sizes))
+  {
+    print STDERR "ERROR: the splitted archive file '$first_splitted_file' is not a valid 7z file\n";
+
+    exit (1);
+  }
+
+  my $archive = read_seven_zip_archive (\%file_list_with_sizes);
+
+  $hash_buf = extract_hash_from_archive (\%file_list_with_sizes, $archive, $first_splitted_file);
+
+  # cleanup
+
+  close ($seven_zip_file);
+
+  if (defined ($hash_buf))
+  {
+    if (length ($hash_buf) > 0)
+    {
+      print $hash_buf . "\n";
+    }
+  }
+
+  return 1;
+}
+
+#
+# Start
+#
+
+my $display_sensitive_warning = $DISPLAY_SENSITIVE_DATA_WARNING;
+
+my @file_parameters = ();
+
+for (my $i = 0; $i < scalar (@ARGV); $i++)
+{
+  if ($ARGV[$i] eq "--skip-sensitive-data-warning")
+  {
+    $display_sensitive_warning = 0;
+  }
+  else
+  {
+    push (@file_parameters, $ARGV[$i]);
+  }
+}
+
+if (scalar (@file_parameters) lt 1)
+{
+  usage ($0);
+
+  exit (1);
+}
+
+my $first_file = 1;
+
+my @file_list = globbing_on_windows (@file_parameters);
+
+# try to handle this special case: splitted .7z files (.7z.001, .7z.002, .7z.003, ...)
+# ATTENTION: there is one restriction here: splitted archives shouldn't be combined with other
+# splitted or non-splitted archives
+
+my $was_splitted = splitted_seven_zip_open (@file_list);
+
+if ($was_splitted == 1)
+{
+  exit (0);
+}
+
+# "non-splitted" file list:
+
+foreach my $file_name (@file_list)
+{
+  if (! -e $file_name)
+  {
+    print STDERR "WARNING: could not open file '$file_name'\n";
+
+    next;
+  }
+
+  my $hash_buf = seven_zip_get_hash ($file_name);
+
+  next unless (defined ($hash_buf));
+  next unless (length ($hash_buf) > 0);
+
+  if ($display_sensitive_warning == 1)
+  {
+    if ($first_file == 1)
+    {
+      print STDERR "ATTENTION: the hashes might contain sensitive encrypted data. Be careful when sharing or posting these hashes\n";
+
+      $first_file = 0;
+    }
+  }
+
+  print $hash_buf . "\n";
+}
+
+exit (0);
+root@8493ffcc40bf:/app#

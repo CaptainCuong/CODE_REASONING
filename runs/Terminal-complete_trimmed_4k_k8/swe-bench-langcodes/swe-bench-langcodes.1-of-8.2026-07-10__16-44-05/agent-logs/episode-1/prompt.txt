@@ -1,0 +1,214 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+root@a7b34d504547:/app/langcodes# cat langcodes/__init__.py | head -200
+"""
+langcodes knows what languages are. It knows the standardized codes that
+refer to them, such as `en` for English, `es` for Spanish and `hi` for Hindi.
+Often, it knows what these languages are called *in* a language, and that
+language doesn't have to be English.
+
+See README.md for the main documentation, or read it on GitHub at
+https://github.com/LuminosoInsight/langcodes/ . For more specific documentation
+on the functions in langcodes, scroll down and read the docstrings.
+
+Some of these functions, particularly those that work with the names of
+languages, require the `language_data` module to be installed.
+"""
+from operator import itemgetter
+from typing import Any, List, Tuple, Dict, Sequence, Iterable, Optional, Mapping, Union
+import warnings
+import sys
+
+from langcodes.tag_parser import LanguageTagError, parse_tag, normalize_characters
+from langcodes.language_distance import tuple_distance_cached
+from langcodes.data_dicts import (
+    ALL_SCRIPTS,
+    DEFAULT_SCRIPTS,
+    LANGUAGE_REPLACEMENTS,
+    LANGUAGE_ALPHA3,
+    LANGUAGE_ALPHA3_BIBLIOGRAPHIC,
+    TERRITORY_REPLACEMENTS,
+    NORMALIZED_MACROLANGUAGES,
+    LIKELY_SUBTAGS,
+    VALIDITY,
+)
+
+# When we're getting natural language information *about* languages, it's in
+# English if you don't specify the language.
+DEFAULT_LANGUAGE = 'en'
+
+
+LANGUAGE_NAME_IMPORT_MESSAGE = """
+Looking up language names now requires the `language_data` package.
+
+Install it with:
+    pip install language_data
+Or as an optional feature of langcodes:
+    pip install langcodes[data]
+"""
+
+
+class Language:
+    """
+    The Language class defines the results of parsing a language tag.
+    Language objects have the following attributes, any of which may be
+    unspecified (in which case their value is None):
+
+    - *language*: the code for the language itself.
+    - *script*: the 4-letter code for the writing system being used.
+    - *territory*: the 2-letter or 3-digit code for the country or similar territory
+      of the world whose usage of the language appears in this text.
+    - *extlangs*: a list of more specific language codes that follow the language
+      code. (This is allowed by the language code syntax, but deprecated.)
+    - *variants*: codes for specific variations of language usage that aren't
+      covered by the *script* or *territory* codes.
+    - *extensions*: information that's attached to the language code for use in
+      some specific system, such as Unicode collation orders.
+    - *private*: a code starting with `x-` that has no defined meaning.
+
+    The `Language.get` method converts a string to a Language instance.
+    It's also available at the top level of this module as the `get` function.
+    """
+
+    ATTRIBUTES = [
+        'language',
+        'extlangs',
+        'script',
+        'territory',
+        'variants',
+        'extensions',
+        'private',
+    ]
+
+    # When looking up "likely subtags" data, we try looking up the data for
+    # increasingly less specific versions of the language code.
+    BROADER_KEYSETS = [
+        {'language', 'script', 'territory'},
+        {'language', 'territory'},
+        {'language', 'script'},
+        {'language'},
+        {'script'},
+        {},
+    ]
+
+    MATCHABLE_KEYSETS = [
+        {'language', 'script', 'territory'},
+        {'language', 'script'},
+        {'language'},
+    ]
+
+    # Values cached at the class level
+    _INSTANCES: Dict[tuple, 'Language'] = {}
+    _PARSE_CACHE: Dict[Tuple[str, bool], 'Language'] = {}
+
+    def __init__(
+        self,
+        language: Optional[str] = None,
+        extlangs: Optional[Sequence[str]] = None,
+        script: Optional[str] = None,
+        territory: Optional[str] = None,
+        variants: Optional[Sequence[str]] = None,
+        extensions: Optional[Sequence[str]] = None,
+        private: Optional[str] = None,
+    ):
+        """
+        The constructor for Language objects.
+
+        It's inefficient to call this directly, because it can't return
+        an existing instance. Instead, call Language.make(), which
+        has the same signature.
+        """
+        self.language = language
+        self.extlangs = extlangs
+        self.script = script
+        self.territory = territory
+        self.variants = variants
+        self.extensions = extensions
+        self.private = private
+
+        # Cached values
+        self._simplified: 'Language' = None
+        self._searchable: 'Language' = None
+        self._broader: List[str] = None
+        self._assumed: 'Language' = None
+        self._filled: 'Language' = None
+        self._macrolanguage: Optional['Language'] = None
+        self._str_tag: str = None
+        self._dict: dict = None
+        self._disp_separator: str = None
+        self._disp_pattern: str = None
+
+        # Make sure the str_tag value is cached
+        self.to_tag()
+
+    @classmethod
+    def make(
+        cls,
+        language: Optional[str] = None,
+        extlangs: Optional[Sequence[str]] = None,
+        script: Optional[str] = None,
+        territory: Optional[str] = None,
+        variants: Optional[Sequence[str]] = None,
+        extensions: Optional[Sequence[str]] = None,
+        private: Optional[str] = None,
+    ) -> 'Language':
+        """
+        Create a Language object by giving any subset of its attributes.
+
+        If this value has been created before, return the existing value.
+        """
+        values = (
+            language,
+            tuple(extlangs or ()),
+            script,
+            territory,
+            tuple(variants or ()),
+            tuple(extensions or ()),
+            private,
+        )
+        if values in cls._INSTANCES:
+            return cls._INSTANCES[values]
+
+        instance = cls(
+            language=language,
+            extlangs=extlangs,
+            script=script,
+            territory=territory,
+            variants=variants,
+            extensions=extensions,
+            private=private,
+        )
+        cls._INSTANCES[values] = instance
+        return instance
+
+    @staticmethod
+    def get(tag: Union[str, 'Language'], normalize=True) -> 'Language':
+        """
+        Create a Language object from a language tag string.
+
+        If normalize=True, non-standard or overlong tags will be replaced as
+        they're interpreted. This is recommended.
+
+        Here are several examples of language codes, which are also test cases.
+        Most language codes are straightforward, but these examples will get
+        pretty obscure toward the end.
+
+        >>> Language.get('en-US')
+        Language.make(language='en', territory='US')
+
+        >>> Language.get('zh-Hant')
+        Language.make(language='zh', script='Hant')
+
+        >>> Language.get('und')
+        Language.make()
+root@a7b34d504547:/app/langcodes# grep -n 'def __hash__' langcodes/__init__.py
+1503:    def __hash__(self) -> int:
+root@a7b34d504547:/app/langcodes# grep -A 2 -B 2 'def __hash__' langcodes/__init__.py
+        return self._str_tag == other._str_tag
+
+    def __hash__(self) -> int:
+        return hash(id(self))
+
+root@a7b34d504547:/app/langcodes#

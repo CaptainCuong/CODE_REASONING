@@ -1,0 +1,1880 @@
+            self.assertEqual(len(labels), 0)
+        for labels in all_labels2:
+            self.assertEqual(len(labels), 0)
+
+    def gen_test_supervised_util_test(self, kwargs):
+        def check(data):
+            third = int(len(data) / 3)
+            train_data = data[:2 * third]
+            valid_data = data[third:]
+            with tempfile.NamedTemporaryFile(
+                delete=False
+            ) as tmpf, tempfile.NamedTemporaryFile(delete=False) as tmpf2:
+                for line in train_data:
+                    tmpf.write(
+                        ("__label__" + line.strip() + "\n").encode("UTF-8")
+                    )
+                tmpf.flush()
+                for line in valid_data:
+                    tmpf2.write(
+                        ("__label__" + line.strip() + "\n").encode("UTF-8")
+                    )
+                tmpf2.flush()
+                model = train_supervised(input=tmpf.name, **kwargs)
+                true_labels = []
+                all_words = []
+                with open(tmpf2.name, 'r') as fid:
+                    for line in fid:
+                        if sys.version_info < (3, 0):
+                            line = line.decode("UTF-8")
+                        if len(line.strip()) == 0:
+                            continue
+                        words, labels = model.get_line(line.strip())
+                        if len(labels) == 0:
+                            continue
+                        all_words.append(" ".join(words))
+                        true_labels += [labels]
+                predictions, _ = model.predict(all_words)
+                p, r = util.test(predictions, true_labels)
+                N = len(predictions)
+                Nt, pt, rt = model.test(tmpf2.name)
+                self.assertEqual(N, Nt)
+                self.assertEqual(p, pt)
+                self.assertEqual(r, rt)
+
+        # Need at least one word to have a label and a word to prevent error
+        check(get_random_data(100, min_words_line=2))
+
+    def gen_test_supervised_predict(self, kwargs):
+        # Confirm number of labels, confirm labels for easy dataset
+        # Confirm 1 label and 0 label dataset
+
+        f = build_supervised_model(get_random_data(100), kwargs)
+        words = get_random_words(100)
+        for k in [1, 2, 5]:
+            for w in words:
+                labels, probs = f.predict(w, k)
+            data = get_random_data(100)
+            for line in data:
+                labels, probs = f.predict(line, k)
+
+    def gen_test_supervised_multiline_predict(self, kwargs):
+        # Confirm number of labels, confirm labels for easy dataset
+        # Confirm 1 label and 0 label dataset
+
+        def check_predict(f):
+            for k in [1, 2, 5]:
+                words = get_random_words(10)
+                agg_labels = []
+                agg_probs = []
+                for w in words:
+                    labels, probs = f.predict(w, k)
+                    agg_labels += [labels]
+                    agg_probs += [probs]
+                all_labels1, all_probs1 = f.predict(words, k)
+                data = get_random_data(10)
+                for line in data:
+                    labels, probs = f.predict(line, k)
+                    agg_labels += [labels]
+                    agg_probs += [probs]
+                all_labels2, all_probs2 = f.predict(data, k)
+                all_labels = list(all_labels1) + list(all_labels2)
+                all_probs = list(all_probs1) + list(all_probs2)
+                for label1, label2 in zip(all_labels, agg_labels):
+                    self.assertEqual(list(label1), list(label2))
+                for prob1, prob2 in zip(all_probs, agg_probs):
+                    self.assertEqual(list(prob1), list(prob2))
+
+        check_predict(build_supervised_model(get_random_data(100), kwargs))
+        check_predict(
+            build_supervised_model(
+                get_random_data(100, min_words_line=1), kwargs
+            )
+        )
+
+    def gen_test_vocab(self, kwargs):
+        # Confirm empty dataset, confirm all label dataset
+
+        data = get_random_data(100)
+        words_python = {}
+        for line in data:
+            line_words = line.split()
+            for w in line_words:
+                if w not in words_python:
+                    words_python[w] = 0
+                words_python[w] += 1
+        f = build_unsupervised_model(data, kwargs)
+        words, freqs = f.get_words(include_freq=True)
+        foundEOS = False
+        for word, freq in zip(words, freqs):
+            if word == fasttext.EOS:
+                foundEOS = True
+            else:
+                self.assertEqual(words_python[word], freq)
+        # EOS is special to fasttext, but still part of the vocab
+        self.assertEqual(len(words_python), len(words) - 1)
+        self.assertTrue(foundEOS)
+
+        # Should cause "Empty vocabulary" error.
+        data = get_random_data(0)
+        gotError = False
+        try:
+            build_unsupervised_model(data, kwargs)
+        except ValueError:
+            gotError = True
+        self.assertTrue(gotError)
+
+    def gen_test_subwords(self, kwargs):
+        # Define expected behavior
+        f = build_unsupervised_model(get_random_data(100), kwargs)
+        words, _ = f.get_words(include_freq=True)
+        words += get_random_words(10, 1, 10)
+        for w in words:
+            f.get_subwords(w)
+
+    def gen_test_tokenize(self, kwargs):
+        self.assertEqual(["asdf", "asdb"], fasttext.tokenize("asdf asdb"))
+        self.assertEqual(["asdf"], fasttext.tokenize("asdf"))
+        self.assertEqual([fasttext.EOS], fasttext.tokenize("\n"))
+        self.assertEqual(["asdf", fasttext.EOS], fasttext.tokenize("asdf\n"))
+        self.assertEqual([], fasttext.tokenize(""))
+        self.assertEqual([], fasttext.tokenize(" "))
+        # An empty string is not a token (it's just whitespace)
+        # So the minimum length must be 1
+        words = get_random_words(100, 1, 20)
+        self.assertEqual(words, fasttext.tokenize(" ".join(words)))
+
+    def gen_test_unsupervised_dimension(self, kwargs):
+        if "dim" in kwargs:
+            f = build_unsupervised_model(get_random_data(100), kwargs)
+            self.assertEqual(f.get_dimension(), kwargs["dim"])
+
+    def gen_test_supervised_dimension(self, kwargs):
+        if "dim" in kwargs:
+            f = build_supervised_model(get_random_data(100), kwargs)
+            self.assertEqual(f.get_dimension(), kwargs["dim"])
+
+    def gen_test_subword_vector(self, kwargs):
+        f = build_unsupervised_model(get_random_data(100), kwargs)
+        words, _ = f.get_words(include_freq=True)
+        words += get_random_words(100, 1, 20)
+        input_matrix = f.get_input_matrix()
+        for word in words:
+            # Universal API to get word vector
+            vec1 = f.get_word_vector(word)
+
+            # Build word vector from subwords
+            subwords, subinds = f.get_subwords(word)
+            subvectors = list(map(lambda x: f.get_input_vector(x), subinds))
+            if len(subvectors) == 0:
+                vec2 = np.zeros((f.get_dimension(), ))
+            else:
+                subvectors = np.vstack(subvectors)
+                vec2 = np.sum((subvectors / len(subwords)), 0)
+
+            # Build word vector from subinds
+            if len(subinds) == 0:
+                vec3 = np.zeros((f.get_dimension(), ))
+            else:
+                vec3 = np.sum(input_matrix[subinds] / len(subinds), 0)
+
+            # Build word vectors from word and subword ids
+            wid = f.get_word_id(word)
+            if wid >= 0:
+                swids = list(map(lambda x: f.get_subword_id(x), subwords[1:]))
+                swids.append(wid)
+            else:
+                swids = list(map(lambda x: f.get_subword_id(x), subwords))
+            if len(swids) == 0:
+                vec4 = np.zeros((f.get_dimension(), ))
+            else:
+                swids = np.array(swids)
+                vec4 = np.sum(input_matrix[swids] / len(swids), 0)
+
+            self.assertTrue(np.isclose(vec1, vec2, atol=1e-5, rtol=0).all())
+            self.assertTrue(np.isclose(vec2, vec3, atol=1e-5, rtol=0).all())
+            self.assertTrue(np.isclose(vec3, vec4, atol=1e-5, rtol=0).all())
+            self.assertTrue(np.isclose(vec4, vec1, atol=1e-5, rtol=0).all())
+
+    def gen_test_unsupervised_get_words(self, kwargs):
+        # Check more corner cases of 0 vocab, empty file etc.
+        f = build_unsupervised_model(get_random_data(100), kwargs)
+        words1, freq1 = f.get_words(include_freq=True)
+        words2 = f.get_words(include_freq=False)
+        self.assertEqual(len(words1), len(words2))
+        self.assertEqual(len(words1), len(freq1))
+
+    def gen_test_supervised_get_words(self, kwargs):
+        f = build_supervised_model(get_random_data(100), kwargs)
+        words1, freq1 = f.get_words(include_freq=True)
+        words2 = f.get_words(include_freq=False)
+        self.assertEqual(len(words1), len(words2))
+        self.assertEqual(len(words1), len(freq1))
+
+    def gen_test_unsupervised_get_labels(self, kwargs):
+        f = build_unsupervised_model(get_random_data(100), kwargs)
+        labels1, freq1 = f.get_labels(include_freq=True)
+        labels2 = f.get_labels(include_freq=False)
+        words2 = f.get_words(include_freq=False)
+        self.assertEqual(len(labels1), len(labels2))
+        self.assertEqual(len(labels1), len(freq1))
+        self.assertEqual(len(labels1), len(words2))
+        for w1, w2 in zip(labels2, words2):
+            self.assertEqual(w1, w2)
+
+    def gen_test_supervised_get_labels(self, kwargs):
+        f = build_supervised_model(get_random_data(100), kwargs)
+        labels1, freq1 = f.get_labels(include_freq=True)
+        labels2 = f.get_labels(include_freq=False)
+        self.assertEqual(len(labels1), len(labels2))
+        self.assertEqual(len(labels1), len(freq1))
+
+    def gen_test_unsupervised_exercise_is_quant(self, kwargs):
+        f = build_unsupervised_model(get_random_data(100), kwargs)
+        gotError = False
+        try:
+            f.quantize()
+        except ValueError:
+            gotError = True
+        self.assertTrue(gotError)
+
+    def gen_test_supervised_exercise_is_quant(self, kwargs):
+        f = build_supervised_model(
+            get_random_data(1000, max_vocab_size=1000), kwargs
+        )
+        self.assertTrue(not f.is_quantized())
+        f.quantize()
+        self.assertTrue(f.is_quantized())
+
+    def gen_test_newline_predict_sentence(self, kwargs):
+        f = build_supervised_model(get_random_data(100), kwargs)
+        sentence = " ".join(get_random_words(20))
+        f.predict(sentence, k=5)
+        sentence += "\n"
+        gotError = False
+        try:
+            f.predict(sentence, k=5)
+        except ValueError:
+            gotError = True
+        self.assertTrue(gotError)
+
+        f = build_supervised_model(get_random_data(100), kwargs)
+        sentence = " ".join(get_random_words(20))
+        f.get_sentence_vector(sentence)
+        sentence += "\n"
+        gotError = False
+        try:
+            f.get_sentence_vector(sentence)
+        except ValueError:
+            gotError = True
+        self.assertTrue(gotError)
+
+
+# Generate a supervised test case
+# The returned function will be set as an attribute to a test class
+def gen_sup_test(configuration, data_dir):
+    def sup_test(self):
+        def get_path_size(path):
+            path_size = subprocess.check_output(["stat", "-c", "%s",
+                                                 path]).decode('utf-8')
+            path_size = int(path_size)
+            return path_size
+
+        def check(model, model_filename, test, lessthan, msg_prefix=""):
+            N_local_out, p1_local_out, r1_local_out = model.test(test["data"])
+            self.assertEqual(
+                N_local_out, test["n"], msg_prefix + "N: Want: " +
+                str(test["n"]) + " Is: " + str(N_local_out)
+            )
+            self.assertTrue(
+                p1_local_out >= test["p1"], msg_prefix + "p1: Want: " +
+                str(test["p1"]) + " Is: " + str(p1_local_out)
+            )
+            self.assertTrue(
+                r1_local_out >= test["r1"], msg_prefix + "r1: Want: " +
+                str(test["r1"]) + " Is: " + str(r1_local_out)
+            )
+            path_size = get_path_size(model_filename)
+            size_msg = str(test["size"]) + " Is: " + str(path_size)
+            if lessthan:
+                self.assertTrue(
+                    path_size <= test["size"],
+                    msg_prefix + "Size: Want at most: " + size_msg
+                )
+            else:
+                self.assertTrue(
+                    path_size == test["size"],
+                    msg_prefix + "Size: Want: " + size_msg
+                )
+
+        configuration["args"]["input"] = os.path.join(
+            data_dir, configuration["args"]["input"]
+        )
+        configuration["quant_args"]["input"] = configuration["args"]["input"]
+        configuration["test"]["data"] = os.path.join(
+            data_dir, configuration["test"]["data"]
+        )
+        configuration["quant_test"]["data"] = configuration["test"]["data"]
+        output = os.path.join(tempfile.mkdtemp(), configuration["dataset"])
+        print()
+        model = train_supervised(**configuration["args"])
+        model.save_model(output + ".bin")
+        check(
+            model,
+            output + ".bin",
+            configuration["test"],
+            False,
+            msg_prefix="Supervised: "
+        )
+        print()
+        model.quantize(**configuration["quant_args"])
+        model.save_model(output + ".ftz")
+        check(
+            model,
+            output + ".ftz",
+            configuration["quant_test"],
+            True,
+            msg_prefix="Quantized: "
+        )
+
+    return sup_test
+
+
+def gen_unit_tests(verbose=0):
+    gen_funcs = [
+        func for func in dir(TestFastTextUnitPy)
+        if callable(getattr(TestFastTextUnitPy, func))
+        if func.startswith("gen_test_")
+    ]
+    general_settings = [
+        {
+            "minn": 2,
+            "maxn": 4,
+        }, {
+            "minn": 0,
+            "maxn": 0,
+            "bucket": 0
+        }, {
+            "dim": 1
+        }, {
+            "dim": 5
+        }
+    ]
+    supervised_settings = [
+        {
+            "minn": 2,
+            "maxn": 4,
+        }, {
+            "minn": 0,
+            "maxn": 0,
+            "bucket": 0
+        }, {
+            "dim": 1
+        }, {
+            "dim": 5
+        }, {
+            "dim": 5,
+            "loss": "hs"
+        }
+    ]
+    unsupervised_settings = [
+        {
+            "minn": 2,
+            "maxn": 4,
+        }, {
+            "minn": 0,
+            "maxn": 0,
+            "bucket": 0
+        }, {
+            "dim": 1
+        }, {
+            "dim": 5,
+            "model": "cbow"
+        }, {
+            "dim": 5,
+            "model": "skipgram"
+        }
+    ]
+    for gen_func in gen_funcs:
+
+        def build_test(test_name, kwargs=None):
+            if kwargs is None:
+                kwargs = {}
+            kwargs["verbose"] = verbose
+
+            def test(self):
+                return getattr(TestFastTextUnitPy,
+                               "gen_" + test_name)(self, copy.deepcopy(kwargs))
+
+            return test
+
+        test_name = gen_func[4:]
+        if "_unsupervised_" in test_name:
+            for i, setting in enumerate(unsupervised_settings):
+                setattr(
+                    TestFastTextUnitPy, test_name + "_" + str(i),
+                    build_test(test_name, setting)
+                )
+        elif "_supervised_" in test_name:
+            for i, setting in enumerate(supervised_settings):
+                setattr(
+                    TestFastTextUnitPy, test_name + "_" + str(i),
+                    build_test(test_name, setting)
+                )
+        else:
+            for i, setting in enumerate(general_settings):
+                setattr(
+                    TestFastTextUnitPy, test_name + "_" + str(i),
+                    build_test(test_name, setting)
+                )
+
+    return TestFastTextUnitPy
+
+
+def gen_tests(data_dir, verbose=1):
+    class TestFastTextPy(unittest.TestCase):
+        pass
+
+    i = 0
+    for configuration in get_supervised_models(verbose=verbose):
+        setattr(
+            TestFastTextPy,
+            "test_sup_" + str(i) + "_" + configuration["dataset"],
+            gen_sup_test(configuration, data_dir)
+        )
+        i += 1
+    return TestFastTextPy
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# cat tests/test_configurations.py
+# Copyright (c) 2017-present, Facebook, Inc.
+# All rights reserved.
+#
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
+
+import multiprocessing
+
+# This script represents a collection of integration tests
+# Each integration test comes with a full set of parameters,
+# a dataset, and expected metrics.
+# These configurations can be used by various fastText APIs
+# to confirm some level of correctness.
+
+
+def max_thread():
+    return multiprocessing.cpu_count() - 1
+
+
+def check_supervised_configuration(configuration, verbose=1):
+    configuration["args"]["verbose"] = verbose
+    configuration["quant_args"]["verbose"] = verbose
+    return configuration
+
+
+def check_supervised_configurations(configurations, verbose=1):
+    for i in range(len(configurations)):
+        configurations[i] = check_supervised_configuration(
+            configurations[i], verbose=verbose
+        )
+    return configurations
+
+
+def flickr_job(thread=None):
+    if thread is None:
+        thread = max_thread()
+    config = {}
+    config["dataset"] = "YFCC100M"
+    config["args"] = {
+        "dim": 256,
+        "wordNgrams": 2,
+        "minCount": 10,
+        "bucket": 10000000,
+        "epoch": 20,
+        "loss": "hs",
+        "minCountLabel": 100,
+        "thread": thread
+    }
+    config["args"]["input"] = "YFCC100M/train"
+    config["quant_args"] = {
+        "dsub": 2,
+        "lr": 0.1,
+        "epoch": 5,
+        "cutoff": 100000,
+        "qnorm": True,
+        "retrain": True,
+        "qout": True
+    }
+    config["quant_args"]["input"] = config["args"]["input"]
+    config["test"] = {
+        "n": 647224,
+        "p1": 0.470,
+        "r1": 0.071,
+        "size": 12060039727,
+        "data": "YFCC100M/test",
+    }
+    # One quant example (to illustrate slack): 0.344, 0.0528, 64506972
+    config["quant_test"] = {
+        "n": 647224,
+        "p1": 0.300,
+        "r1": 0.0450,
+        "size": 70000000,
+        "data": "YFCC100M/test",
+    }
+    return config
+
+
+def langid_job1(thread=None):
+    if thread is None:
+        thread = max_thread()
+    config = {}
+    config["dataset"] = "langid"
+    config["args"] = {"dim": 16, "minn": 2, "maxn": 4, "thread": thread}
+    config["args"]["input"] = "langid.train"
+    config["quant_args"] = {"qnorm": True, "cutoff": 50000, "retrain": True}
+    config["quant_args"]["input"] = config["args"]["input"]
+    config["test"] = {
+        "n": 10000,
+        "p1": 0.985,
+        "r1": 0.985,
+        "size": 368132610,
+        "data": "langid.valid",
+    }
+    # One quant example (to illustrate slack): 0.984 0.984 932793
+    config["quant_test"] = {
+        "p1": 0.97,
+        "r1": 0.97,
+        "size": 1000000,
+    }
+    config["quant_test"]["n"] = config["test"]["n"]
+    config["quant_test"]["data"] = config["test"]["data"]
+    return config
+
+
+def langid_job2(thread=None):
+    if thread is None:
+        thread = max_thread()
+    config = langid_job1(thread).copy()
+    config["args"]["loss"] = "hs"
+    return config
+
+
+def cooking_job1(thread=None):
+    if thread is None:
+        thread = max_thread()
+    config = {}
+    config["dataset"] = "cooking"
+    config["args"] = {
+        "epoch": 25,
+        "lr": 1.0,
+        "wordNgrams": 2,
+        "minCount": 1,
+        "thread": thread,
+    }
+    config["args"]["input"] = "cooking.train"
+    config["quant_args"] = {"qnorm": True, "cutoff": 50000, "retrain": True}
+    config["quant_args"]["input"] = config["args"]["input"]
+    config["test"] = {
+        "n": 3000,
+        "p1": 0.59,
+        "r1": 0.25,
+        "size": 804047585,
+        "data": "cooking.valid",
+    }
+    # One quant example (to illustrate slack): 0.602 0.26 3439172
+    config["quant_test"] = {
+        "p1": 0.55,
+        "r1": 0.20,
+        "size": 4000000,
+    }
+    config["quant_test"]["n"] = config["test"]["n"]
+    config["quant_test"]["data"] = config["test"]["data"]
+    return config
+
+
+def cooking_job2(thread=None):
+    if thread is None:
+        thread = max_thread()
+    config = cooking_job1(thread).copy()
+    config["args"]["loss"] = "hs"
+    return config
+
+
+# Supervised models
+# See https://fasttext.cc/docs/en/supervised-models.html
+def get_supervised_models(thread=None, verbose=1):
+    if thread is None:
+        thread = max_thread()
+    sup_job_dataset = [
+        "ag_news", "sogou_news", "dbpedia", "yelp_review_polarity",
+        "yelp_review_full", "yahoo_answers", "amazon_review_full",
+        "amazon_review_polarity"
+    ]
+
+    sup_params = {
+        "dim": 10,
+        "wordNgrams": 2,
+        "minCount": 1,
+        "bucket": 10000000,
+        "epoch": 5,
+        "thread": thread,
+        "verbose": 1,
+    }
+    quant_params = {
+        "retrain": True,
+        "cutoff": 100000,
+        "qnorm": True,
+        "verbose": 1,
+    }
+    sup_job_lr = [0.25, 0.5, 0.5, 0.1, 0.1, 0.1, 0.05, 0.05]
+
+    sup_job_n = [7600, 60000, 70000, 38000, 50000, 60000, 650000, 400000]
+
+    sup_job_p1 = [0.915, 0.968, 0.983, 0.956, 0.638, 0.723, 0.600, 0.940]
+    sup_job_r1 = [0.915, 0.968, 0.983, 0.956, 0.638, 0.723, 0.600, 0.940]
+    sup_job_size = [
+        405607193, 421445471, 447481878, 427867393, 431292576, 517549567,
+        483742593, 493604598
+    ]
+
+    sup_job_quant_p1 = [0.918, 0.965, 0.983, 0.950, 0.625, 0.707, 0.58, 0.920]
+    sup_job_quant_r1 = [0.918, 0.965, 0.983, 0.950, 0.625, 0.707, 0.58, 0.920]
+    sup_job_quant_size = [
+        1600000, 1500000, 1700000, 1600000, 1600000, 1700000, 1600000, 1600000
+    ]
+
+    configurations = []
+    for i in range(len(sup_job_dataset)):
+        configuration = {}
+        configuration["dataset"] = sup_job_dataset[i]
+        args = sup_params.copy()
+        quant_args = quant_params.copy()
+        args["lr"] = sup_job_lr[i]
+        args["input"] = sup_job_dataset[i] + ".train"
+        quant_args["lr"] = sup_job_lr[i]
+        quant_args["input"] = sup_job_dataset[i] + ".train"
+        configuration["args"] = args
+        configuration["quant_args"] = quant_args
+        test = {
+            "n": sup_job_n[i],
+            "p1": sup_job_p1[i],
+            "r1": sup_job_r1[i],
+            "size": sup_job_size[i],
+            "data": sup_job_dataset[i] + ".test",
+        }
+        quant_test = {
+            "n": sup_job_n[i],
+            "p1": sup_job_quant_p1[i],
+            "r1": sup_job_quant_r1[i],
+            "size": sup_job_quant_size[i],
+            "data": sup_job_dataset[i] + ".test",
+        }
+        configuration["test"] = test
+        configuration["quant_test"] = quant_test
+        configurations.append(configuration)
+    configurations.append(flickr_job())
+    configurations.append(langid_job1())
+    configurations.append(langid_job2())
+    configurations.append(cooking_job1())
+    configurations.append(cooking_job2())
+    configurations = check_supervised_configurations(
+        configurations, verbose=verbose
+    )
+    return configurations
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# cd /usr/local/lib/python3.13/site-packages/fasttext
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# python3 tests/test_script.py 2>&1 | head -30
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# find /usr/local -name 'fasttext' -type f 2>/dev/null | grep -v pybind
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# which fasttext
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# cd /usr/local/lib/python3.13/site-packages/fasttext
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# python3 tests/test_script.py 2>&1 | tee /tmp/test_output.txt
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# cat /tmp/test_output.txt
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# find /usr/local -name 'fasttext' -type f 2>/dev/null
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# which fasttext
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# cd /usr/local/lib/python3.13/site-packages/fasttext
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# python3 -c "import fasttext_pybind; print(hasattr(fasttext_pybind, 'FastText'))"
+False
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# python3 -c "import fasttext_pybind; print(dir(fasttext_pybind))" | grep -i fasttext
+['DenseMatrix', 'Meter', 'Vector', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__spec__', 'args', 'cbow', 'f1score', 'f1scoreLabel', 'fastt
+ext', 'hs', 'loss_name', 'metric_name', 'model_name', 'ns', 'ova', 'precisionAtRecall', 'precisionAtRecallLabel', 'recallAtPrecision', 'recallAtPrecisionLabel',
+ 'skipgram', 'softmax', 'supervised', 'train']
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# nm /usr/local/lib/python3.13/site-packages/fasttext_pybind.cpython-313-x86_64-linux-gnu.so |
+ grep -i fasttext
+00000000000acc68 d DW.ref._ZTIN8fasttext11DenseMatrix19EncounteredNaNErrorE
+00000000000acc70 d DW.ref._ZTIN8fasttext8Autotune12TimeoutErrorE
+00000000000acc78 d DW.ref._ZTIN8fasttext8FastText10AbortErrorE
+0000000000017bf0 T PyInit_fasttext_pybind
+000000000000e9f9 t PyInit_fasttext_pybind.cold
+00000000000153b0 t _GLOBAL__sub_I_fasttext.cc
+0000000000015190 t _GLOBAL__sub_I_fasttext_pybind.cc
+0000000000017540 t _Z11getLineTextRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKc
+000000000000e8a6 t _Z11getLineTextRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKc.cold
+00000000000acca0 b _ZGVZ22PyInit_fasttext_pybindE13mod_def_slots
+0000000000023750 t _ZL29pybind11_exec_fasttext_pybindP7_object
+00000000000111d6 t _ZL29pybind11_exec_fasttext_pybindP7_object.cold
+0000000000021040 t _ZL29pybind11_init_fasttext_pybindRN8pybind117module_E
+0000000000010982 t _ZL29pybind11_init_fasttext_pybindRN8pybind117module_E.cold
+000000000006e2c0 t _ZN8fasttext10Dictionary10initNgramsEv
+0000000000012778 t _ZN8fasttext10Dictionary10initNgramsEv.cold
+000000000006e5b0 t _ZN8fasttext10Dictionary12readFromFileERSi
+00000000000127d8 t _ZN8fasttext10Dictionary12readFromFileERSi.cold
+000000000006d900 t _ZN8fasttext10Dictionary16initTableDiscardEv
+00000000000acf20 b _ZN8fasttext10Dictionary3BOWB5cxx11E
+00000000000acf40 b _ZN8fasttext10Dictionary3EOSB5cxx11E
+00000000000acf00 b _ZN8fasttext10Dictionary3EOWB5cxx11E
+000000000006cc20 t _ZN8fasttext10Dictionary3addERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+00000000000126d6 t _ZN8fasttext10Dictionary3addERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+000000000006e590 t _ZN8fasttext10Dictionary4initEv
+000000000006fc30 t _ZN8fasttext10Dictionary4loadERSi
+000000000001296e t _ZN8fasttext10Dictionary4loadERSi.cold
+00000000000704a0 t _ZN8fasttext10Dictionary5pruneERSt6vectorIiSaIiEE
+0000000000012aa8 t _ZN8fasttext10Dictionary5pruneERSt6vectorIiSaIiEE.cold
+000000000006d1c0 t _ZN8fasttext10Dictionary9thresholdEll
+0000000000012726 t _ZN8fasttext10Dictionary9thresholdEll.cold
+000000000006cb10 t _ZN8fasttext10DictionaryC1ESt10shared_ptrINS_4ArgsEE
+00000000000703b0 t _ZN8fasttext10DictionaryC1ESt10shared_ptrINS_4ArgsEERSi
+000000000006cb10 t _ZN8fasttext10DictionaryC2ESt10shared_ptrINS_4ArgsEE
+00000000000126c0 t _ZN8fasttext10DictionaryC2ESt10shared_ptrINS_4ArgsEE.cold
+00000000000703b0 t _ZN8fasttext10DictionaryC2ESt10shared_ptrINS_4ArgsEERSi
+00000000000129ae t _ZN8fasttext10DictionaryC2ESt10shared_ptrINS_4ArgsEERSi.cold
+00000000000675a0 t _ZN8fasttext11DenseMatrix11multiplyRowERKNS_6VectorEll
+0000000000067390 t _ZN8fasttext11DenseMatrix13uniformThreadEfii
+0000000000066b10 t _ZN8fasttext11DenseMatrix14addVectorToRowERKNS_6VectorElf
+0000000000067fc0 t _ZN8fasttext11DenseMatrix19EncounteredNaNErrorD0Ev
+0000000000067fb0 t _ZN8fasttext11DenseMatrix19EncounteredNaNErrorD1Ev
+0000000000067fb0 t _ZN8fasttext11DenseMatrix19EncounteredNaNErrorD2Ev
+0000000000066fd0 t _ZN8fasttext11DenseMatrix4loadERSi
+0000000000012344 t _ZN8fasttext11DenseMatrix4loadERSi.cold
+0000000000067360 t _ZN8fasttext11DenseMatrix4zeroEv
+0000000000067c20 t _ZN8fasttext11DenseMatrix7uniformEfji
+000000000001249c t _ZN8fasttext11DenseMatrix7uniformEfji.cold
+0000000000067630 t _ZN8fasttext11DenseMatrix9divideRowERKNS_6VectorEll
+0000000000067290 t _ZN8fasttext11DenseMatrixC1EOS0_
+0000000000067240 t _ZN8fasttext11DenseMatrixC1Ell
+00000000000672e0 t _ZN8fasttext11DenseMatrixC1EllPf
+0000000000067200 t _ZN8fasttext11DenseMatrixC1Ev
+0000000000067290 t _ZN8fasttext11DenseMatrixC2EOS0_
+0000000000067240 t _ZN8fasttext11DenseMatrixC2Ell
+00000000000123a0 t _ZN8fasttext11DenseMatrixC2Ell.cold
+00000000000672e0 t _ZN8fasttext11DenseMatrixC2EllPf
+00000000000123ce t _ZN8fasttext11DenseMatrixC2EllPf.cold
+0000000000067200 t _ZN8fasttext11DenseMatrixC2Ev
+0000000000012372 t _ZN8fasttext11DenseMatrixC2Ev.cold
+0000000000025bc0 t _ZN8fasttext11DenseMatrixD0Ev
+0000000000025b90 t _ZN8fasttext11DenseMatrixD1Ev
+0000000000025b90 t _ZN8fasttext11DenseMatrixD2Ev
+000000000008a670 t _ZN8fasttext11QuantMatrix12quantizeNormERKNS_6VectorE
+0000000000015052 t _ZN8fasttext11QuantMatrix14addVectorToRowERKNS_6VectorElf
+000000000008a380 t _ZN8fasttext11QuantMatrix4loadERSi
+000000000008a6b0 t _ZN8fasttext11QuantMatrix8quantizeEONS_11DenseMatrixE
+00000000000150e2 t _ZN8fasttext11QuantMatrix8quantizeEONS_11DenseMatrixE.cold
+000000000008a760 t _ZN8fasttext11QuantMatrixC1EONS_11DenseMatrixEib
+000000000008a630 t _ZN8fasttext11QuantMatrixC1Ev
+000000000008a760 t _ZN8fasttext11QuantMatrixC2EONS_11DenseMatrixEib
+00000000000150f4 t _ZN8fasttext11QuantMatrixC2EONS_11DenseMatrixEib.cold
+000000000008a630 t _ZN8fasttext11QuantMatrixC2Ev
+000000000007d2d0 t _ZN8fasttext11QuantMatrixD0Ev
+000000000007b5f0 t _ZN8fasttext11QuantMatrixD1Ev
+000000000007b5f0 t _ZN8fasttext11QuantMatrixD2Ev
+000000000007d740 t _ZN8fasttext11SoftmaxLoss7forwardERKSt6vectorIiSaIiEEiRNS_5Model5StateEfb
+000000000007e8f0 t _ZN8fasttext11SoftmaxLossC1ERSt10shared_ptrINS_6MatrixEE
+000000000007e8f0 t _ZN8fasttext11SoftmaxLossC2ERSt10shared_ptrINS_6MatrixEE
+000000000007d3d0 t _ZN8fasttext11SoftmaxLossD0Ev
+000000000007b870 t _ZN8fasttext11SoftmaxLossD1Ev
+000000000007b870 t _ZN8fasttext11SoftmaxLossD2Ev
+000000000007e320 t _ZN8fasttext12OneVsAllLoss7forwardERKSt6vectorIiSaIiEEiRNS_5Model5StateEfb
+000000000007e8d0 t _ZN8fasttext12OneVsAllLossC1ERSt10shared_ptrINS_6MatrixEE
+000000000007e8d0 t _ZN8fasttext12OneVsAllLossC2ERSt10shared_ptrINS_6MatrixEE
+000000000007d380 t _ZN8fasttext12OneVsAllLossD0Ev
+000000000007b820 t _ZN8fasttext12OneVsAllLossD1Ev
+000000000007b820 t _ZN8fasttext12OneVsAllLossD2Ev
+0000000000071d20 t _ZN8fasttext12comparePairsERKSt4pairIfNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEES9_
+000000000007d5e0 t _ZN8fasttext12comparePairsERKSt4pairIfiES3_
+0000000000068a50 t _ZN8fasttext15averageRowsFastILj16EEEvRNS_6VectorERKSt6vectorIiSaIiEERKNS_11DenseMatrixE
+00000000000681d0 t _ZN8fasttext15averageRowsFastILj256EEEvRNS_6VectorERKSt6vectorIiSaIiEERKNS_11DenseMatrixE
+0000000000068800 t _ZN8fasttext15averageRowsFastILj32EEEvRNS_6VectorERKSt6vectorIiSaIiEERKNS_11DenseMatrixE
+0000000000067ff0 t _ZN8fasttext15averageRowsFastILj512EEEvRNS_6VectorERKSt6vectorIiSaIiEERKNS_11DenseMatrixE
+00000000000683b0 t _ZN8fasttext15averageRowsFastILj64EEEvRNS_6VectorERKSt6vectorIiSaIiEERKNS_11DenseMatrixE
+0000000000061d50 t _ZN8fasttext16AutotuneStrategy10updateBestERKNS_4ArgsE
+0000000000062020 t _ZN8fasttext16AutotuneStrategy3askEd
+0000000000011fba t _ZN8fasttext16AutotuneStrategy3askEd.cold
+0000000000060890 t _ZN8fasttext16AutotuneStrategy8getIndexEiRKSt6vectorIiSaIiEE
+0000000000061f10 t _ZN8fasttext16AutotuneStrategyC1ERKNS_4ArgsEm
+0000000000061f10 t _ZN8fasttext16AutotuneStrategyC2ERKNS_4ArgsEm
+0000000000011f8e t _ZN8fasttext16AutotuneStrategyC2ERKNS_4ArgsEm.cold
+0000000000087e60 t _ZN8fasttext16ProductQuantizer13get_centroidsEih
+00000000000899a0 t _ZN8fasttext16ProductQuantizer4loadERSi
+0000000000088390 t _ZN8fasttext16ProductQuantizer5MStepEPKfPfPKhii
+0000000000089610 t _ZN8fasttext16ProductQuantizer5trainEiPKf
+0000000000014ea8 t _ZN8fasttext16ProductQuantizer5trainEiPKf.cold
+00000000000890d0 t _ZN8fasttext16ProductQuantizer6kmeansEPKfPfii
+0000000000014e72 t _ZN8fasttext16ProductQuantizer6kmeansEPKfPfii.cold
+0000000000087ce0 t _ZN8fasttext16ProductQuantizerC1Eii
+0000000000087ce0 t _ZN8fasttext16ProductQuantizerC2Eii
+000000000007e8b0 t _ZN8fasttext18BinaryLogisticLossC1ERSt10shared_ptrINS_6MatrixEE
+000000000007e8b0 t _ZN8fasttext18BinaryLogisticLossC2ERSt10shared_ptrINS_6MatrixEE
+000000000007e4b0 t _ZN8fasttext20NegativeSamplingLoss11getNegativeEiRSt26linear_congruential_engineImLm48271ELm0ELm2147483647EE
+000000000007e0f0 t _ZN8fasttext20NegativeSamplingLoss7forwardERKSt6vectorIiSaIiEEiRNS_5Model5StateEfb
+000000000007ef60 t _ZN8fasttext20NegativeSamplingLossC1ERSt10shared_ptrINS_6MatrixEEiRKSt6vectorIlSaIlEE
+000000000007ef60 t _ZN8fasttext20NegativeSamplingLossC2ERSt10shared_ptrINS_6MatrixEEiRKSt6vectorIlSaIlEE
+0000000000014516 t _ZN8fasttext20NegativeSamplingLossC2ERSt10shared_ptrINS_6MatrixEEiRKSt6vectorIlSaIlEE.cold
+000000000007d420 t _ZN8fasttext20NegativeSamplingLossD0Ev
+000000000007b8c0 t _ZN8fasttext20NegativeSamplingLossD1Ev
+000000000007b8c0 t _ZN8fasttext20NegativeSamplingLossD2Ev
+000000000007d950 t _ZN8fasttext23HierarchicalSoftmaxLoss7forwardERKSt6vectorIiSaIiEEiRNS_5Model5StateEfb
+000000000007f140 t _ZN8fasttext23HierarchicalSoftmaxLoss9buildTreeERKSt6vectorIlSaIlEE
+0000000000014546 t _ZN8fasttext23HierarchicalSoftmaxLoss9buildTreeERKSt6vectorIlSaIlEE.cold
+000000000007fbb0 t _ZN8fasttext23HierarchicalSoftmaxLossC1ERSt10shared_ptrINS_6MatrixEERKSt6vectorIlSaIlEE
+000000000007fbb0 t _ZN8fasttext23HierarchicalSoftmaxLossC2ERSt10shared_ptrINS_6MatrixEERKSt6vectorIlSaIlEE
+0000000000014582 t _ZN8fasttext23HierarchicalSoftmaxLossC2ERSt10shared_ptrINS_6MatrixEERKSt6vectorIlSaIlEE.cold
+000000000007d490 t _ZN8fasttext23HierarchicalSoftmaxLossD0Ev
+000000000007bc60 t _ZN8fasttext23HierarchicalSoftmaxLossD1Ev
+000000000007bc60 t _ZN8fasttext23HierarchicalSoftmaxLossD2Ev
+000000000005b920 t _ZN8fasttext4Args14printBasicHelpEv
+000000000005bee0 t _ZN8fasttext4Args17printAutotuneHelpEv
+000000000005bba0 t _ZN8fasttext4Args17printTrainingHelpEv
+0000000000011950 t _ZN8fasttext4Args17printTrainingHelpEv.cold
+000000000005b9c0 t _ZN8fasttext4Args19printDictionaryHelpEv
+000000000005c010 t _ZN8fasttext4Args21printQuantizationHelpEv
+000000000001198c t _ZN8fasttext4Args21printQuantizationHelpEv.cold
+000000000005c410 t _ZN8fasttext4Args4loadERSi
+000000000005c2f0 t _ZN8fasttext4Args4saveERSo
+000000000005e350 t _ZN8fasttext4Args9parseArgsERKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS7_EE
+0000000000011cca t _ZN8fasttext4Args9parseArgsERKSt6vectorINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESaIS7_EE.cold
+000000000005c2c0 t _ZN8fasttext4Args9printHelpEv
+000000000005e340 t _ZN8fasttext4Args9setManualERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+00000000000654e0 t _ZN8fasttext4ArgsC1ERKS0_
+000000000005b270 t _ZN8fasttext4ArgsC1Ev
+00000000000654e0 t _ZN8fasttext4ArgsC2ERKS0_
+000000000005b270 t _ZN8fasttext4ArgsC2Ev
+0000000000011816 t _ZN8fasttext4ArgsC2Ev.cold
+000000000002a990 t _ZN8fasttext4ArgsD1Ev
+000000000002a990 t _ZN8fasttext4ArgsD2Ev
+000000000007e650 t _ZN8fasttext4LossC1ERSt10shared_ptrINS_6MatrixEE
+000000000007e650 t _ZN8fasttext4LossC2ERSt10shared_ptrINS_6MatrixEE
+00000000000144e4 t _ZN8fasttext4LossC2ERSt10shared_ptrINS_6MatrixEE.cold
+000000000007fc70 t _ZN8fasttext4LossD0Ev
+000000000007fc20 t _ZN8fasttext4LossD1Ev
+000000000007fc20 t _ZN8fasttext4LossD2Ev
+00000000000868d0 t _ZN8fasttext5Meter3logERKSt6vectorIiSaIiEERKS1_ISt4pairIfiESaIS7_EE
+00000000000870b0 t _ZN8fasttext5Meter6recallEi
+0000000000014dbe t _ZN8fasttext5Meter6recallEi.cold
+00000000000872a0 t _ZN8fasttext5Meter7f1ScoreEi
+0000000000014de8 t _ZN8fasttext5Meter7f1ScoreEi.cold
+0000000000086ec0 t _ZN8fasttext5Meter9precisionEi
+0000000000014d94 t _ZN8fasttext5Meter9precisionEi.cold
+000000000002a840 t _ZN8fasttext5MeterD1Ev
+000000000002a840 t _ZN8fasttext5MeterD2Ev
+00000000000878c0 t _ZN8fasttext5Model5State18incrementNExamplesEf
+0000000000087800 t _ZN8fasttext5Model5StateC1Eiii
+0000000000087800 t _ZN8fasttext5Model5StateC2Eiii
+0000000000014e12 t _ZN8fasttext5Model5StateC2Eiii.cold
+000000000007bff0 t _ZN8fasttext5Model5StateD1Ev
+000000000007bff0 t _ZN8fasttext5Model5StateD2Ev
+0000000000087ad0 t _ZN8fasttext5Model6updateERKSt6vectorIiSaIiEES5_ifRNS0_5StateE
+00000000000878d0 t _ZN8fasttext5ModelC1ESt10shared_ptrINS_6MatrixEES3_S1_INS_4LossEEb
+00000000000878d0 t _ZN8fasttext5ModelC2ESt10shared_ptrINS_6MatrixEES3_S1_INS_4LossEEb
+0000000000070e40 t _ZN8fasttext5entryD1Ev
+0000000000070e40 t _ZN8fasttext5entryD2Ev
+000000000008ab50 t _ZN8fasttext5utils10ClockPrintC1Ei
+000000000008ab50 t _ZN8fasttext5utils10ClockPrintC2Ei
+000000000008ab30 t _ZN8fasttext5utils11getDurationERKNSt6chrono10time_pointINS1_3_V212steady_clockENS1_8durationIlSt5ratioILl1ELl1000000000EEEEEESB_
+000000000008ac60 t _ZN8fasttext5utils16compareFirstLessERKSt4pairIddERKd
+000000000008ab00 t _ZN8fasttext5utils4seekERSt14basic_ifstreamIcSt11char_traitsIcEEl
+000000000008aae0 t _ZN8fasttext5utils4sizeERSt14basic_ifstreamIcSt11char_traitsIcEE
+000000000008ab60 t _ZN8fasttext5utilslsERSoRKNS0_10ClockPrintE
+0000000000084f40 t _ZN8fasttext6MatrixC1Ell
+0000000000084f20 t _ZN8fasttext6MatrixC1Ev
+0000000000084f40 t _ZN8fasttext6MatrixC2Ell
+0000000000084f20 t _ZN8fasttext6MatrixC2Ev
+000000000008b080 t _ZN8fasttext6Vector3mulERKNS_6MatrixERKS0_
+000000000008adb0 t _ZN8fasttext6Vector3mulEf
+000000000008aca0 t _ZN8fasttext6Vector4zeroEv
+000000000008b060 t _ZN8fasttext6Vector6addRowERKNS_6MatrixEl
+000000000008b040 t _ZN8fasttext6Vector6addRowERKNS_6MatrixElf
+000000000008b0e0 t _ZN8fasttext6Vector6argmaxEv
+000000000008ae40 t _ZN8fasttext6Vector9addVectorERKS0_
+000000000008af30 t _ZN8fasttext6Vector9addVectorERKS0_f
+000000000008ac70 t _ZN8fasttext6VectorC1El
+000000000008ac70 t _ZN8fasttext6VectorC2El
+000000000001515e t _ZN8fasttext6VectorC2El.cold
+0000000000087c10 t _ZN8fasttext6distL2EPKfS1_i
+000000000007de90 t _ZN8fasttext7std_logEf
+0000000000061a40 t _ZN8fasttext8Autotune10startTimerERKNS_4ArgsE
+0000000000011f54 t _ZN8fasttext8Autotune10startTimerERKNS_4ArgsE.cold
+0000000000062f60 t _ZN8fasttext8Autotune16printSkippedArgsERKNS_4ArgsE
+0000000000011fe2 t _ZN8fasttext8Autotune16printSkippedArgsERKNS_4ArgsE.cold
+0000000000060c80 t _ZN8fasttext8Autotune5abortEv
+0000000000060b60 t _ZN8fasttext8Autotune5timerERKNSt6chrono10time_pointINS1_3_V212steady_clockENS1_8durationIlSt5ratioILl1ELl1000000000EEEEEEd
+0000000000063360 t _ZN8fasttext8Autotune5trainERKNS_4ArgsE
+0000000000012024 t _ZN8fasttext8Autotune5trainERKNS_4ArgsE.cold
+00000000000617a0 t _ZN8fasttext8Autotune8quantizeERNS_4ArgsERKS1_
+0000000000011f24 t _ZN8fasttext8Autotune8quantizeERNS_4ArgsERKS1_.cold
+0000000000060d70 t _ZN8fasttext8Autotune9printArgsERKNS_4ArgsES3_
+0000000000011eba t _ZN8fasttext8Autotune9printArgsERKNS_4ArgsES3_.cold
+00000000000609b0 t _ZN8fasttext8Autotune9printInfoEd
+0000000000060960 t _ZN8fasttext8AutotuneC1ERKSt10shared_ptrINS_8FastTextEE
+0000000000060960 t _ZN8fasttext8AutotuneC2ERKSt10shared_ptrINS_8FastTextEE
+000000000002b460 t _ZN8fasttext8AutotuneD1Ev
+000000000002b460 t _ZN8fasttext8AutotuneD2Ev
+000000000007b580 t _ZN8fasttext8FastText10AbortErrorD0Ev
+000000000007b570 t _ZN8fasttext8FastText10AbortErrorD1Ev
+000000000007b570 t _ZN8fasttext8FastText10AbortErrorD2Ev
+0000000000074780 t _ZN8fasttext8FastText10buildModelEv
+0000000000012ec8 t _ZN8fasttext8FastText10buildModelEv.cold
+0000000000072e50 t _ZN8fasttext8FastText10checkModelERSi
+0000000000072890 t _ZN8fasttext8FastText10createLossERSt10shared_ptrINS_6MatrixEE
+0000000000012aee t _ZN8fasttext8FastText10createLossERSt10shared_ptrINS_6MatrixEE.cold
+0000000000075ab0 t _ZN8fasttext8FastText10saveOutputERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+000000000001311e t _ZN8fasttext8FastText10saveOutputERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+0000000000073290 t _ZN8fasttext8FastText10supervisedERNS_5Model5StateEfRKSt6vectorIiSaIiEES8_
+0000000000076250 t _ZN8fasttext8FastText11saveVectorsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+00000000000133b6 t _ZN8fasttext8FastText11saveVectorsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+0000000000074bc0 t _ZN8fasttext8FastText11setMatricesERKSt10shared_ptrINS_11DenseMatrixEES5_
+0000000000076940 t _ZN8fasttext8FastText11trainThreadEiRKSt8functionIFvffddlEE
+0000000000013692 t _ZN8fasttext8FastText11trainThreadEiRKSt8functionIFvffddlEE.cold
+000000000007ad50 t _ZN8fasttext8FastText12getAnalogiesEiRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES8_S8_
+000000000001440c t _ZN8fasttext8FastText12getAnalogiesEiRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEES8_S8_.cold
+0000000000072f40 t _ZN8fasttext8FastText12progressInfoEf
+00000000000789a0 t _ZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEE
+0000000000013f5c t _ZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEE.cold
+0000000000075430 t _ZN8fasttext8FastText17getSentenceVectorERSiRNS_6VectorE
+0000000000012ff2 t _ZN8fasttext8FastText17getSentenceVectorERSiRNS_6VectorE.cold
+0000000000074020 t _ZN8fasttext8FastText21precomputeWordVectorsERNS_11DenseMatrixE
+0000000000012d3e t _ZN8fasttext8FastText21precomputeWordVectorsERNS_11DenseMatrixE.cold
+0000000000074100 t _ZN8fasttext8FastText22lazyComputeWordVectorsEv
+0000000000012d6c t _ZN8fasttext8FastText22lazyComputeWordVectorsEv.cold
+00000000000734b0 t _ZN8fasttext8FastText4cbowERNS_5Model5StateEfRKSt6vectorIiSaIiEE
+0000000000012c5e t _ZN8fasttext8FastText4cbowERNS_5Model5StateEfRKSt6vectorIiSaIiEE.cold
+0000000000073ec0 t _ZN8fasttext8FastText4testERSiif
+0000000000012d2e t _ZN8fasttext8FastText4testERSiif.cold
+0000000000012d82 t _ZN8fasttext8FastText5abortEv
+0000000000077e70 t _ZN8fasttext8FastText5getNNERKNS_11DenseMatrixERKNS_6VectorEiRKSt3setINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt4lessISD_ESaISD_E
+E
+0000000000013df6 t _ZN8fasttext8FastText5getNNERKNS_11DenseMatrixERKNS_6VectorEiRKSt3setINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEESt4lessISD_ESaISD_E
+E.cold
+000000000007aa00 t _ZN8fasttext8FastText5getNNERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEi
+00000000000143b0 t _ZN8fasttext8FastText5getNNERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEi.cold
+0000000000079f70 t _ZN8fasttext8FastText5trainERKNS_4ArgsERKSt8functionIFvffddlEE
+00000000000141cc t _ZN8fasttext8FastText5trainERKNS_4ArgsERKSt8functionIFvffddlEE.cold
+0000000000078f00 t _ZN8fasttext8FastText8quantizeERKNS_4ArgsERKSt8functionIFvffddlEE
+0000000000014046 t _ZN8fasttext8FastText8quantizeERKNS_4ArgsERKSt8functionIFvffddlEE.cold
+0000000000073950 t _ZN8fasttext8FastText8skipgramERNS_5Model5StateEfRKSt6vectorIiSaIiEE
+00000000000766b0 t _ZN8fasttext8FastText9loadModelERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+0000000000013524 t _ZN8fasttext8FastText9loadModelERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+0000000000074de0 t _ZN8fasttext8FastText9loadModelERSi
+0000000000012f20 t _ZN8fasttext8FastText9loadModelERSi.cold
+0000000000073020 t _ZN8fasttext8FastText9printInfoEffRSo
+0000000000075f70 t _ZN8fasttext8FastText9saveModelERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+000000000001328a t _ZN8fasttext8FastText9saveModelERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+0000000000072eb0 t _ZN8fasttext8FastText9signModelERSo
+0000000000072ac0 t _ZN8fasttext8FastTextC1Ev
+0000000000072ac0 t _ZN8fasttext8FastTextC2Ev
+0000000000084a10 t _ZN8fasttext8FastTextD1Ev
+0000000000084a10 t _ZN8fasttext8FastTextD2Ev
+000000000008b130 t _ZN8fasttextlsERSoRKNS_6VectorE
+000000000004a280 t _ZN8pybind115enum_IN8fasttext10model_nameEE5valueEPKcS2_S5_
+0000000000058650 t _ZN8pybind115enum_IN8fasttext10model_nameEEC1IJEEERKNS_6handleEPKcDpRKT_
+0000000000058650 t _ZN8pybind115enum_IN8fasttext10model_nameEEC2IJEEERKNS_6handleEPKcDpRKT_
+0000000000049ea0 t _ZN8pybind115enum_IN8fasttext11metric_nameEE5valueEPKcS2_S5_
+0000000000056c50 t _ZN8pybind115enum_IN8fasttext11metric_nameEEC1IJEEERKNS_6handleEPKcDpRKT_
+0000000000056c50 t _ZN8pybind115enum_IN8fasttext11metric_nameEEC2IJEEERKNS_6handleEPKcDpRKT_
+000000000004a090 t _ZN8pybind115enum_IN8fasttext9loss_nameEE5valueEPKcS2_S5_
+0000000000057950 t _ZN8pybind115enum_IN8fasttext9loss_nameEEC1IJEEERKNS_6handleEPKcDpRKT_
+0000000000057950 t _ZN8pybind115enum_IN8fasttext9loss_nameEEC2IJEEERKNS_6handleEPKcDpRKT_
+0000000000047d10 t _ZN8pybind116class_IN8fasttext10model_nameEJEE13init_instanceISt10unique_ptrIS2_St14default_deleteIS2_EELi0EEEvPNS_6detail8instanceEPKv
+0000000000027160 t _ZN8pybind116class_IN8fasttext10model_nameEJEE32dealloc_without_manipulating_gilERNS_6detail16value_and_holderE
+0000000000026b50 t _ZN8pybind116class_IN8fasttext10model_nameEJEE43dealloc_release_gil_before_calling_cpp_dtorERNS_6detail16value_and_holderE
+0000000000048110 t _ZN8pybind116class_IN8fasttext11DenseMatrixEJEE13init_instanceISt10unique_ptrIS2_St14default_deleteIS2_EELi0EEEvPNS_6detail8instanceEPKv
+0000000000027ac0 t _ZN8pybind116class_IN8fasttext11DenseMatrixEJEE32dealloc_without_manipulating_gilERNS_6detail16value_and_holderE
+00000000000191a0 t _ZN8pybind116class_IN8fasttext11DenseMatrixEJEE3defIZNS_6detail8initimpl11constructorIJEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_h
+olderEE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0
+000000000000efb2 t _ZN8pybind116class_IN8fasttext11DenseMatrixEJEE3defIZNS_6detail8initimpl11constructorIJEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_h
+olderEE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0.cold
+0000000000019000 t _ZN8pybind116class_IN8fasttext11DenseMatrixEJEE3defIZNS_6detail8initimpl11constructorIJllEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and
+_holderEllE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0
+000000000000ef74 t _ZN8pybind116class_IN8fasttext11DenseMatrixEJEE3defIZNS_6detail8initimpl11constructorIJllEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and
+_holderEllE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0.cold
+0000000000026da0 t _ZN8pybind116class_IN8fasttext11DenseMatrixEJEE43dealloc_release_gil_before_calling_cpp_dtorERNS_6detail16value_and_holderE
+0000000000047f10 t _ZN8pybind116class_IN8fasttext11metric_nameEJEE13init_instanceISt10unique_ptrIS2_St14default_deleteIS2_EELi0EEEvPNS_6detail8instanceEPKv
+0000000000027340 t _ZN8pybind116class_IN8fasttext11metric_nameEJEE32dealloc_without_manipulating_gilERNS_6detail16value_and_holderE
+0000000000026910 t _ZN8pybind116class_IN8fasttext11metric_nameEJEE43dealloc_release_gil_before_calling_cpp_dtorERNS_6detail16value_and_holderE
+0000000000059d50 t _ZN8pybind116class_IN8fasttext4ArgsEJEE13def_readwriteIS2_NS1_10model_nameEJEEERS3_PKcMT_T0_DpRKT1_
+0000000000059f50 t _ZN8pybind116class_IN8fasttext4ArgsEJEE13def_readwriteIS2_NS1_9loss_nameEJEEERS3_PKcMT_T0_DpRKT1_
+0000000000059350 t _ZN8pybind116class_IN8fasttext4ArgsEJEE13def_readwriteIS2_NSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEJEEERS3_PKcMT_T0_DpRKT1_
+0000000000059950 t _ZN8pybind116class_IN8fasttext4ArgsEJEE13def_readwriteIS2_bJEEERS3_PKcMT_T0_DpRKT1_
+0000000000059b50 t _ZN8pybind116class_IN8fasttext4ArgsEJEE13def_readwriteIS2_dJEEERS3_PKcMT_T0_DpRKT1_
+0000000000059550 t _ZN8pybind116class_IN8fasttext4ArgsEJEE13def_readwriteIS2_iJEEERS3_PKcMT_T0_DpRKT1_
+0000000000059750 t _ZN8pybind116class_IN8fasttext4ArgsEJEE13def_readwriteIS2_mJEEERS3_PKcMT_T0_DpRKT1_
+0000000000047c10 t _ZN8pybind116class_IN8fasttext4ArgsEJEE13init_instanceISt10unique_ptrIS2_St14default_deleteIS2_EELi0EEEvPNS_6detail8instanceEPKv
+0000000000020d00 t _ZN8pybind116class_IN8fasttext4ArgsEJEE19def_property_staticIJNS_9is_methodENS_19return_value_policyEEEERS3_PKcRKNS_12cpp_functionESC_DpRKT_.
+isra.0
+000000000001088a t _ZN8pybind116class_IN8fasttext4ArgsEJEE19def_property_staticIJNS_9is_methodENS_19return_value_policyEEEERS3_PKcRKNS_12cpp_functionESC_DpRKT_.
+isra.0.cold
+000000000002ac30 t _ZN8pybind116class_IN8fasttext4ArgsEJEE32dealloc_without_manipulating_gilERNS_6detail16value_and_holderE
+0000000000018b20 t _ZN8pybind116class_IN8fasttext4ArgsEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_RKNSt7__cxx1112basic_stringIcSt11char_traits
+IcESaIcEEEE_JEEERS3_PKcOT_DpRKT0_.constprop.0.isra.0
+000000000000eeba t _ZN8pybind116class_IN8fasttext4ArgsEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_RKNSt7__cxx1112basic_stringIcSt11char_traits
+IcESaIcEEEE_JEEERS3_PKcOT_DpRKT0_.constprop.0.isra.0.cold
+00000000000194e0 t _ZN8pybind116class_IN8fasttext4ArgsEJEE3defIZNS_6detail8initimpl11constructorIJEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_holderEE_
+JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0
+000000000000f02e t _ZN8pybind116class_IN8fasttext4ArgsEJEE3defIZNS_6detail8initimpl11constructorIJEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_holderEE_
+JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0.cold
+000000000002ab10 t _ZN8pybind116class_IN8fasttext4ArgsEJEE43dealloc_release_gil_before_calling_cpp_dtorERNS_6detail16value_and_holderE
+0000000000048210 t _ZN8pybind116class_IN8fasttext5MeterEJEE13init_instanceISt10unique_ptrIS2_St14default_deleteIS2_EELi0EEEvPNS_6detail8instanceEPKv
+0000000000027fd0 t _ZN8pybind116class_IN8fasttext5MeterEJEE32dealloc_without_manipulating_gilERNS_6detail16value_and_holderE
+000000000004be00 t _ZN8pybind116class_IN8fasttext5MeterEJEE3defIMS2_KFSt6vectorISt4pairIddESaIS7_EEiEJEEERS3_PKcOT_DpRKT0_
+000000000004bfe0 t _ZN8pybind116class_IN8fasttext5MeterEJEE3defIMS2_KFSt6vectorISt4pairIddESaIS7_EEvEJEEERS3_PKcOT_DpRKT0_
+000000000004bc20 t _ZN8pybind116class_IN8fasttext5MeterEJEE3defIMS2_KFSt6vectorISt4pairIffESaIS7_EEiEJEEERS3_PKcOT_DpRKT0_
+000000000004c3a0 t _ZN8pybind116class_IN8fasttext5MeterEJEE3defIMS2_KFddEJEEERS3_PKcOT_DpRKT0_
+000000000004c1c0 t _ZN8pybind116class_IN8fasttext5MeterEJEE3defIMS2_KFdidEJEEERS3_PKcOT_DpRKT0_
+0000000000018e60 t _ZN8pybind116class_IN8fasttext5MeterEJEE3defIZNS_6detail8initimpl11constructorIJbEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_holderE
+bE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0
+000000000000ef36 t _ZN8pybind116class_IN8fasttext5MeterEJEE3defIZNS_6detail8initimpl11constructorIJbEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_holderE
+bE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0.cold
+0000000000028160 t _ZN8pybind116class_IN8fasttext5MeterEJEE43dealloc_release_gil_before_calling_cpp_dtorERNS_6detail16value_and_holderE
+0000000000048010 t _ZN8pybind116class_IN8fasttext6VectorEJEE13init_instanceISt10unique_ptrIS2_St14default_deleteIS2_EELi0EEEvPNS_6detail8instanceEPKv
+0000000000027430 t _ZN8pybind116class_IN8fasttext6VectorEJEE32dealloc_without_manipulating_gilERNS_6detail16value_and_holderE
+0000000000019340 t _ZN8pybind116class_IN8fasttext6VectorEJEE3defIZNS_6detail8initimpl11constructorIJlEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_holder
+ElE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0
+000000000000eff0 t _ZN8pybind116class_IN8fasttext6VectorEJEE3defIZNS_6detail8initimpl11constructorIJlEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_holder
+ElE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0.cold
+0000000000026c70 t _ZN8pybind116class_IN8fasttext6VectorEJEE43dealloc_release_gil_before_calling_cpp_dtorERNS_6detail16value_and_holderE
+0000000000048310 t _ZN8pybind116class_IN8fasttext8FastTextEJEE13init_instanceISt10unique_ptrIS2_St14default_deleteIS2_EELi0EEEvPNS_6detail8instanceEPKv
+000000000002b170 t _ZN8pybind116class_IN8fasttext8FastTextEJEE32dealloc_without_manipulating_gilERNS_6detail16value_and_holderE
+000000000004c580 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIMS2_KFKNS1_4ArgsEvEJEEERS3_PKcOT_DpRKT0_
+000000000004c760 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIPFSt4pairISt6vectorINS_3strESaIS7_EES9_ERS2_NSt7__cxx1112basic_stringIcSt11char_traitsIcESaIc
+EEEPKcEJEEERS3_SJ_OT_DpRKT0_
+00000000000184d0 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_E27_JEEERS3_PKcOT_DpRKT0_.constprop.0.is
+ra.0
+000000000000edc2 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_E27_JEEERS3_PKcOT_DpRKT0_.constprop.0.is
+ra.0.cold
+0000000000018800 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_RKNSt7__cxx1112basic_stringIcSt11char_tr
+aitsIcESaIcEEEE19_JEEERS3_PKcOT_DpRKT0_.constprop.0.isra.0
+000000000000ee3e t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_RKNSt7__cxx1112basic_stringIcSt11char_tr
+aitsIcESaIcEEEE19_JEEERS3_PKcOT_DpRKT0_.constprop.0.isra.0.cold
+0000000000018670 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_RKNSt7__cxx1112basic_stringIcSt11char_tr
+aitsIcESaIcEEEiPKcE24_JEEERS3_SH_OT_DpRKT0_.constprop.0.isra.0
+000000000000ee00 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_RKNSt7__cxx1112basic_stringIcSt11char_tr
+aitsIcESaIcEEEiPKcE24_JEEERS3_SH_OT_DpRKT0_.constprop.0.isra.0.cold
+0000000000018990 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_RKSt6vectorINSt7__cxx1112basic_stringIcS
+t11char_traitsIcESaIcEEESaISE_EEifPKcE17_JEEERS3_SK_OT_DpRKT0_.constprop.0.isra.0
+000000000000ee7c t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_RKSt6vectorINSt7__cxx1112basic_stringIcS
+t11char_traitsIcESaIcEEESaISE_EEifPKcE17_JEEERS3_SK_OT_DpRKT0_.constprop.0.isra.0.cold
+0000000000018cc0 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZNS_6detail8initimpl11constructorIJEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_holde
+rEE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0
+000000000000eef8 t _ZN8pybind116class_IN8fasttext8FastTextEJEE3defIZNS_6detail8initimpl11constructorIJEE7executeIS3_JELi0EEEvRT_DpRKT0_EUlRNS5_16value_and_holde
+rEE_JNS5_24is_new_style_constructorEEEERS3_PKcOSA_SF_.isra.0.cold
+000000000002afa0 t _ZN8pybind116class_IN8fasttext8FastTextEJEE43dealloc_release_gil_before_calling_cpp_dtorERNS_6detail16value_and_holderE
+0000000000047e10 t _ZN8pybind116class_IN8fasttext9loss_nameEJEE13init_instanceISt10unique_ptrIS2_St14default_deleteIS2_EELi0EEEvPNS_6detail8instanceEPKv
+0000000000027250 t _ZN8pybind116class_IN8fasttext9loss_nameEJEE32dealloc_without_manipulating_gilERNS_6detail16value_and_holderE
+0000000000026a30 t _ZN8pybind116class_IN8fasttext9loss_nameEJEE43dealloc_release_gil_before_calling_cpp_dtorERNS_6detail16value_and_holderE
+0000000000015b30 t _ZN8pybind116detail16type_caster_baseIN8fasttext4ArgsEEcvRS3_Ev.isra.0
+000000000000e4d2 t _ZN8pybind116detail16type_caster_baseIN8fasttext4ArgsEEcvRS3_Ev.isra.0.cold
+0000000000015b20 t _ZN8pybind116detail16type_caster_baseIN8fasttext8FastTextEEcvRS3_Ev.isra.0
+000000000000e480 t _ZN8pybind116detail16type_caster_baseIN8fasttext8FastTextEEcvRS3_Ev.isra.0.cold
+000000000008eea0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJN8fasttext10model_nameEEEENS0_11type_casterIivEEE4kSigE
+00000000000ab710 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJN8fasttext10model_nameEEEENS0_11type_casterIivEEE6kTypesE
+000000000008ee20 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJN8fasttext11metric_nameEEEENS0_11type_casterIivEEE4kSigE
+00000000000ab6f0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJN8fasttext11metric_nameEEEENS0_11type_casterIivEEE6kTypesE
+000000000008ee60 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJN8fasttext9loss_nameEEEENS0_11type_casterIivEEE4kSigE
+00000000000ab700 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJN8fasttext9loss_nameEEEENS0_11type_casterIivEEE6kTypesE
+000000000008fe40 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEEEENS0_11type_casterISt6vectorISt4pairIddESaISB_EEvE
+EE4kSigE
+00000000000aaf20 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEEEENS0_11type_casterISt6vectorISt4pairIddESaISB_EEvE
+EE6kTypesE
+000000000008fd00 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEdEEENS0_11type_casterIdvEEE4kSigE
+00000000000aaf00 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEdEEENS0_11type_casterIdvEEE6kTypesE
+000000000008fee0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEiEEENS0_11type_casterISt6vectorISt4pairIddESaISB_EEv
+EEE4kSigE
+00000000000aaf30 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEiEEENS0_11type_casterISt6vectorISt4pairIddESaISB_EEv
+EEE6kTypesE
+000000000008ffc0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEiEEENS0_11type_casterISt6vectorISt4pairIffESaISB_EEv
+EEE4kSigE
+00000000000aaf40 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEiEEENS0_11type_casterISt6vectorISt4pairIffESaISB_EEv
+EEE6kTypesE
+000000000008fd80 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEidEEENS0_11type_casterIdvEEE4kSigE
+00000000000aaf10 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext5MeterEidEEENS0_11type_casterIdvEEE6kTypesE
+000000000008fcd8 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext8FastTextEEEENS0_11type_casterINS3_4ArgsEvEEE4kSigE
+00000000000aaee0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJPKN8fasttext8FastTextEEEENS0_11type_casterINS3_4ArgsEvEEE6kTypesE
+000000000008ed50 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterINS3_10model_nameEvEEE4kSigE
+00000000000ab6b0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterINS3_10model_nameEvEEE6kTypesE
+000000000008ed60 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterINS3_9loss_nameEvEEE4kSigE
+00000000000ab6d0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterINS3_9loss_nameEvEEE6kTypesE
+000000000008ee00 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterINSt7__cxx1112basic_stringIcSt11c
+har_traitsIcESaIcEEEvEEE4kSigE
+00000000000aad10 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterINSt7__cxx1112basic_stringIcSt11c
+har_traitsIcESaIcEEEvEEE6kTypesE
+000000000008ed40 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterIbvEEE4kSigE
+00000000000aace0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterIbvEEE6kTypesE
+000000000008edc0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterIdvEEE4kSigE
+00000000000aad00 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterIdvEEE6kTypesE
+000000000008ed80 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterIivEEE4kSigE
+00000000000aacf0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterIivEEE6kTypesE
+000000000008ed00 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterImvEEE4kSigE
+00000000000aacd0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRKN8fasttext4ArgsEEEENS0_11type_casterImvEEE6kTypesE
+000000000008ef50 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKNS3_10model_nameEEEENS0_11type_casterINS0_9void_type
+EvEEE4kSigE
+00000000000ab720 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKNS3_10model_nameEEEENS0_11type_casterINS0_9void_type
+EvEEE6kTypesE
+000000000008ef70 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKNS3_9loss_nameEEEENS0_11type_casterINS0_9void_typeEv
+EEE4kSigE
+00000000000ab740 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKNS3_9loss_nameEEEENS0_11type_casterINS0_9void_typeEv
+EEE6kTypesE
+0000000000090110 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+EEENS0_11type_casterINS0_9void_typeEvEEE4kSigE
+00000000000aaf80 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+EEENS0_11type_casterINS0_9void_typeEvEEE6kTypesE
+000000000008ef30 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKbEEENS0_11type_casterINS0_9void_typeEvEEE4kSigE
+00000000000aad40 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKbEEENS0_11type_casterINS0_9void_typeEvEEE6kTypesE
+000000000008f000 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKdEEENS0_11type_casterINS0_9void_typeEvEEE4kSigE
+00000000000aad60 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKdEEENS0_11type_casterINS0_9void_typeEvEEE6kTypesE
+000000000008efa0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKiEEENS0_11type_casterINS0_9void_typeEvEEE4kSigE
+00000000000aad50 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKiEEENS0_11type_casterINS0_9void_typeEvEEE6kTypesE
+000000000008eee0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKmEEENS0_11type_casterINS0_9void_typeEvEEE4kSigE
+00000000000aad30 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext4ArgsERKmEEENS0_11type_casterINS0_9void_typeEvEEE6kTypesE
+000000000008fcc8 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextEEEENS0_11type_casterINS3_11DenseMatrixEvEEE4kSigE
+00000000000ab760 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextEEEENS0_11type_casterINS3_11DenseMatrixEvEEE6kTypes
+E
+000000000008f0a0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextEEEENS0_11type_casterIbvEEE4kSigE
+00000000000aad70 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextEEEENS0_11type_casterIbvEEE6kTypesE
+000000000008fc80 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENS_6bufferES6_EEENS0_11type_casterINS0_9void_typeE
+vEEE4kSigE
+00000000000aaed0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENS_6bufferES6_EEENS0_11type_casterINS0_9void_typeE
+vEEE6kTypesE
+000000000008fc60 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEEEENS0_11type_casterINS0_9void_typeEvEEE4kSigE
+00000000000aaec0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEEEENS0_11type_casterINS0_9void_typeEvEEE6kTypesE
+000000000008fa80 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEEEENS0_11type_casterISt6vectorISB_SaISB_EEvEEE4kSigE
+00000000000aae60 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEEEENS0_11type_casterISt6vectorISB_SaISB_EEvEEE6kTypesE
+000000000008f340 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEEEENS0_11type_casterIivEEE4kSigE
+00000000000aadd0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEEEENS0_11type_casterIivEEE6kTypesE
+000000000008f0c0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEPKcEEENS0_11type_casterISt4pairISt6vectorINS_3strESaISI_EESH_IiSaIiEEEvEEE4kSigE
+00000000000aad80 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEPKcEEENS0_11type_casterISt4pairISt6vectorINS_3strESaISI_EESH_IiSaIiEEEvEEE6kTypesE
+000000000008fa00 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEPKcEEENS0_11type_casterISt4pairISt6vectorINS_3strESaISI_EESK_EvEEE4kSigE
+00000000000aae50 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEPKcEEENS0_11type_casterISt4pairISt6vectorINS_3strESaISI_EESK_EvEEE6kTypesE
+000000000008f700 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEbibidiiibEEENS0_11type_casterINS0_9void_typeEvEEE4kSigE
+00000000000aae20 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEbibidiiibEEENS0_11type_casterINS0_9void_typeEvEEE6kTypesE
+000000000008f3c0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEifEEENS0_11type_casterISt13unordered_mapISB_NS_4dictESt4hashISB_ESt8equal_toISB_ESaISt4pairIKSB_SF_EEEvEEE4kSigE
+00000000000aadf0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEifEEENS0_11type_casterISt13unordered_mapISB_NS_4dictESt4hashISB_ESt8equal_toISB_ESaISt4pairIKSB_SF_EEEvEEE6kTypesE
+000000000008f600 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEifPKcEEENS0_11type_casterISt6vectorISt4pairIfNS_3strEESaISJ_EEvEEE4kSigE
+00000000000aae10 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcE
+EEifPKcEEENS0_11type_casterISt6vectorISt4pairIfNS_3strEESaISJ_EEvEEE6kTypesE
+000000000008f880 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextEPKcEEENS0_11type_casterISt4pairISt6vectorINS_3strE
+SaISC_EESB_IlSaIlEEEvEEE4kSigE
+00000000000aae30 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextEPKcEEENS0_11type_casterISt4pairISt6vectorINS_3strE
+SaISC_EESB_IlSaIlEEEvEEE6kTypesE
+000000000008f380 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEEEEENS0_11type_casterIivEEE4kSigE
+00000000000aade0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEEEEENS0_11type_casterIivEEE6kTypesE
+000000000008f160 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEESD_SD_iPKcEEENS0_11type_casterISt6vectorISt4pairIfNS_3strEESaISL_EEvEEE4kSigE
+00000000000aad90 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEESD_SD_iPKcEEENS0_11type_casterISt6vectorISt4pairIfNS_3strEESaISL_EEvEEE6kTypesE
+000000000008fae0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEEiEEENS0_11type_casterINS3_5MeterEvEEE4kSigE
+00000000000aae90 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEEiEEENS0_11type_casterINS3_5MeterEvEEE6kTypesE
+000000000008f220 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEEiPKcEEENS0_11type_casterISt6vectorISt4pairIfNS_3strEESaISL_EEvEEE4kSigE
+00000000000aada0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEEiPKcEEENS0_11type_casterISt6vectorISt4pairIfNS_3strEESaISL_EEvEEE6kTypesE
+000000000008fb40 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEEifEEENS0_11type_casterISt5tupleIJlddEEvEEE4kSigE
+00000000000aaeb0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaI
+cEEEifEEENS0_11type_casterISt5tupleIJlddEEvEEE6kTypesE
+000000000008f480 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKSt6vectorINSt7__cxx1112basic_stringIcSt11char_tr
+aitsIcESaIcEEESaISC_EEifPKcEEENS0_11type_casterISt4pairIS6_IS6_INS_3strESaISM_EESaISO_EES6_INS_7array_tIfLi16EEESaISS_EEEvEEE4kSigE
+00000000000aae00 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERKSt6vectorINSt7__cxx1112basic_stringIcSt11char_tr
+aitsIcESaIcEEESaISC_EEifPKcEEENS0_11type_casterISt4pairIS6_IS6_INS_3strESaISM_EESaISO_EES6_INS_7array_tIfLi16EEESaISS_EEEvEEE6kTypesE
+0000000000090090 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERNS3_4ArgsEEEENS0_11type_casterINS0_9void_typeEvEE
+E4kSigE
+00000000000aaf50 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERNS3_4ArgsEEEENS0_11type_casterINS0_9void_typeEvEE
+E6kTypesE
+000000000008fac0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERNS3_6VectorENSt7__cxx1112basic_stringIcSt11char_t
+raitsIcESaIcEEEEEENS0_11type_casterINS0_9void_typeEvEEE4kSigE
+00000000000aae70 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERNS3_6VectorENSt7__cxx1112basic_stringIcSt11char_t
+raitsIcESaIcEEEEEENS0_11type_casterINS0_9void_typeEvEEE6kTypesE
+000000000008f2e0 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERNS3_6VectorEiEEENS0_11type_casterINS0_9void_typeE
+vEEE4kSigE
+00000000000aadb0 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextERNS3_6VectorEiEEENS0_11type_casterINS0_9void_typeE
+vEEE6kTypesE
+000000000008f920 r _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextESt6vectorINSt7__cxx1112basic_stringIcSt11char_trai
+tsIcESaIcEEESaISC_EEPKcEEENS0_11type_casterISt4pairIS6_IS6_INS_3strESaISK_EESaISM_EESO_EvEEE4kSigE
+00000000000aae40 d _ZN8pybind116detail25ReadableFunctionSignatureINS0_15argument_loaderIJRN8fasttext8FastTextESt6vectorINSt7__cxx1112basic_stringIcSt11char_trai
+tsIcESaIcEEESaISC_EEPKcEEENS0_11type_casterISt4pairIS6_IS6_INS_3strESaISK_EESaISM_EESO_EvEEE6kTypesE
+000000000006ec30 t _ZNK8fasttext10Dictionary11addSubwordsERSt6vectorIiSaIiEESt17basic_string_viewIcSt11char_traitsIcEEi
+0000000000012894 t _ZNK8fasttext10Dictionary11addSubwordsERSt6vectorIiSaIiEESt17basic_string_viewIcSt11char_traitsIcEEi.cold
+000000000006e970 t _ZNK8fasttext10Dictionary11getSubwordsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+0000000000012840 t _ZNK8fasttext10Dictionary11getSubwordsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+000000000006f8e0 t _ZNK8fasttext10Dictionary11getSubwordsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIiSaIiEERS9_IS6_SaIS6_EE
+0000000000012930 t _ZNK8fasttext10Dictionary11getSubwordsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIiSaIiEERS9_IS6_SaIS6_EE.cold
+000000000006bf00 t _ZNK8fasttext10Dictionary11getSubwordsEi
+000000000006dc70 t _ZNK8fasttext10Dictionary13addWordNgramsERSt6vectorIiSaIiEERKS3_i
+000000000006f4f0 t _ZNK8fasttext10Dictionary15computeSubwordsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIiSaIiEEPS9_IS6_SaIS6_EE
+0000000000012910 t _ZNK8fasttext10Dictionary15computeSubwordsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIiSaIiEEPS9_IS6_SaIS6_EE.cold
+000000000006df60 t _ZNK8fasttext10Dictionary15computeSubwordsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIiSaIiEEPS9_IS6_SaIS6_EE.constprop
+.0
+0000000000012758 t _ZNK8fasttext10Dictionary15computeSubwordsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEERSt6vectorIiSaIiEEPS9_IS6_SaIS6_EE.constprop
+.0.cold
+000000000006f260 t _ZNK8fasttext10Dictionary18getStringNoNewlineESt17basic_string_viewIcSt11char_traitsIcEERSt6vectorIiSaIiEES8_
+00000000000128f0 t _ZNK8fasttext10Dictionary18getStringNoNewlineESt17basic_string_viewIcSt11char_traitsIcEERSt6vectorIiSaIiEES8_.cold
+000000000006c710 t _ZNK8fasttext10Dictionary4dumpERSo
+000000000001267c t _ZNK8fasttext10Dictionary4dumpERSo.cold
+000000000006be80 t _ZNK8fasttext10Dictionary4findESt17basic_string_viewIcSt11char_traitsIcEE
+000000000006bdc0 t _ZNK8fasttext10Dictionary4findESt17basic_string_viewIcSt11char_traitsIcEEj
+000000000006c120 t _ZNK8fasttext10Dictionary4hashESt17basic_string_viewIcSt11char_traitsIcEE
+000000000006c400 t _ZNK8fasttext10Dictionary4saveERSo
+000000000001264a t _ZNK8fasttext10Dictionary4saveERSo.cold
+000000000006bf60 t _ZNK8fasttext10Dictionary5getIdESt17basic_string_viewIcSt11char_traitsIcEE
+000000000006bf40 t _ZNK8fasttext10Dictionary5getIdESt17basic_string_viewIcSt11char_traitsIcEEj
+000000000006c310 t _ZNK8fasttext10Dictionary5resetERSi
+000000000006bed0 t _ZNK8fasttext10Dictionary6nwordsEv
+000000000006bf20 t _ZNK8fasttext10Dictionary7discardEif
+000000000006cee0 t _ZNK8fasttext10Dictionary7getLineERSiRSt6vectorIiSaIiEERSt26linear_congruential_engineImLm48271ELm0ELm2147483647EE
+0000000000012700 t _ZNK8fasttext10Dictionary7getLineERSiRSt6vectorIiSaIiEERSt26linear_congruential_engineImLm48271ELm0ELm2147483647EE.cold
+000000000006f000 t _ZNK8fasttext10Dictionary7getLineERSiRSt6vectorIiSaIiEES5_
+00000000000128b4 t _ZNK8fasttext10Dictionary7getLineERSiRSt6vectorIiSaIiEES5_.cold
+000000000006bfd0 t _ZNK8fasttext10Dictionary7getTypeESt17basic_string_viewIcSt11char_traitsIcEE
+000000000006bfb0 t _ZNK8fasttext10Dictionary7getTypeEi
+000000000006c080 t _ZNK8fasttext10Dictionary7getWordB5cxx11Ei
+000000000006bee0 t _ZNK8fasttext10Dictionary7nlabelsEv
+000000000006bef0 t _ZNK8fasttext10Dictionary7ntokensEv
+000000000006c340 t _ZNK8fasttext10Dictionary8getLabelB5cxx11Ei
+00000000000124f6 t _ZNK8fasttext10Dictionary8getLabelB5cxx11Ei.cold
+000000000006db00 t _ZNK8fasttext10Dictionary8pushHashERSt6vectorIiSaIiEEi
+000000000006c150 t _ZNK8fasttext10Dictionary8readWordERSiRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+00000000000692c0 t _ZNK8fasttext10Dictionary8readWordERSiRNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.constprop.0
+000000000006da60 t _ZNK8fasttext10Dictionary9getCountsENS_10entry_typeE
+000000000001273a t _ZNK8fasttext10Dictionary9getCountsENS_10entry_typeE.cold
+0000000000066c30 t _ZNK8fasttext11DenseMatrix14addRowToVectorERNS_6VectorEi
+0000000000066d30 t _ZNK8fasttext11DenseMatrix14addRowToVectorERNS_6VectorEif
+0000000000067820 t _ZNK8fasttext11DenseMatrix19averageRowsToVectorERNS_6VectorERKSt6vectorIiSaIiEE
+0000000000067060 t _ZNK8fasttext11DenseMatrix4dumpERSo
+0000000000066f80 t _ZNK8fasttext11DenseMatrix4saveERSo
+0000000000066e90 t _ZNK8fasttext11DenseMatrix6dotRowERKNS_6VectorEl
+00000000000122f2 t _ZNK8fasttext11DenseMatrix6dotRowERKNS_6VectorEl.cold
+0000000000067740 t _ZNK8fasttext11DenseMatrix9l2NormRowERNS_6VectorE
+000000000001244c t _ZNK8fasttext11DenseMatrix9l2NormRowERNS_6VectorE.cold
+00000000000676c0 t _ZNK8fasttext11DenseMatrix9l2NormRowEl
+00000000000123fc t _ZNK8fasttext11DenseMatrix9l2NormRowEl.cold
+000000000008a110 t _ZNK8fasttext11QuantMatrix14addRowToVectorERNS_6VectorEi
+000000000008a0b0 t _ZNK8fasttext11QuantMatrix14addRowToVectorERNS_6VectorEif
+000000000008a250 t _ZNK8fasttext11QuantMatrix19averageRowsToVectorERNS_6VectorERKSt6vectorIiSaIiEE
+000000000001509a t _ZNK8fasttext11QuantMatrix4dumpERSo
+000000000008a160 t _ZNK8fasttext11QuantMatrix4saveERSo
+000000000008a050 t _ZNK8fasttext11QuantMatrix6dotRowERKNS_6VectorEl
+000000000007d5f0 t _ZNK8fasttext11SoftmaxLoss13computeOutputERNS_5Model5StateE
+0000000000088cf0 t _ZNK8fasttext16ProductQuantizer12compute_codeEPKfPh
+0000000000088ff0 t _ZNK8fasttext16ProductQuantizer13compute_codesEPKfPhi
+0000000000087e10 t _ZNK8fasttext16ProductQuantizer13get_centroidsEih
+0000000000087eb0 t _ZNK8fasttext16ProductQuantizer15assign_centroidEPKfS2_Phi
+0000000000089060 t _ZNK8fasttext16ProductQuantizer4saveERSo
+00000000000880e0 t _ZNK8fasttext16ProductQuantizer5EstepEPKfS2_Phii
+0000000000088c00 t _ZNK8fasttext16ProductQuantizer7addcodeERNS_6VectorEPKhif
+00000000000889a0 t _ZNK8fasttext16ProductQuantizer7mulcodeERKNS_6VectorEPKhif
+000000000007d890 t _ZNK8fasttext18BinaryLogisticLoss13computeOutputERNS_5Model5StateE
+000000000007df40 t _ZNK8fasttext18BinaryLogisticLoss14binaryLogisticEiRNS_5Model5StateEbfb
+000000000007e910 t _ZNK8fasttext23HierarchicalSoftmaxLoss3dfsEififRSt6vectorISt4pairIfiESaIS3_EERKNS_6VectorE
+000000000007ebe0 t _ZNK8fasttext23HierarchicalSoftmaxLoss7predictEifRSt6vectorISt4pairIfiESaIS3_EERNS_5Model5StateE
+000000000005ced0 t _ZNK8fasttext4Args11hasAutotuneEv
+000000000005b600 t _ZNK8fasttext4Args12boolToStringB5cxx11Eb
+000000000005b520 t _ZNK8fasttext4Args12lossToStringB5cxx11ENS_9loss_nameE
+000000000005b640 t _ZNK8fasttext4Args13modelToStringB5cxx11ENS_10model_nameE
+000000000005b720 t _ZNK8fasttext4Args14metricToStringB5cxx11ENS_11metric_nameE
+000000000005d020 t _ZNK8fasttext4Args17getAutotuneMetricEv
+0000000000011a0e t _ZNK8fasttext4Args17getAutotuneMetricEv.cold
+000000000005d9e0 t _ZNK8fasttext4Args20getAutotuneModelSizeEv
+0000000000011b64 t _ZNK8fasttext4Args20getAutotuneModelSizeEv.cold
+000000000005d660 t _ZNK8fasttext4Args22getAutotuneMetricLabelB5cxx11Ev
+0000000000011abe t _ZNK8fasttext4Args22getAutotuneMetricLabelB5cxx11Ev.cold
+000000000005d480 t _ZNK8fasttext4Args22getAutotuneMetricValueEv
+0000000000011a96 t _ZNK8fasttext4Args22getAutotuneMetricValueEv.cold
+000000000005c530 t _ZNK8fasttext4Args4dumpERSo
+00000000000119dc t _ZNK8fasttext4Args4dumpERSo.cold
+000000000005cee0 t _ZNK8fasttext4Args8isManualERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+000000000007deb0 t _ZNK8fasttext4Loss3logEf
+000000000007eeb0 t _ZNK8fasttext4Loss7predictEifRSt6vectorISt4pairIfiESaIS3_EERNS_5Model5StateE
+000000000007dee0 t _ZNK8fasttext4Loss7sigmoidEf
+000000000007ec80 t _ZNK8fasttext4Loss9findKBestEifRSt6vectorISt4pairIfiESaIS3_EERKNS_6VectorE
+0000000000085a60 t _ZNK8fasttext5Meter11scoreVsTrueEi
+0000000000014d0c t _ZNK8fasttext5Meter11scoreVsTrueEi.cold
+0000000000085e20 t _ZNK8fasttext5Meter17getPositiveCountsEi
+0000000000014d2a t _ZNK8fasttext5Meter17getPositiveCountsEi.cold
+0000000000086790 t _ZNK8fasttext5Meter17precisionAtRecallEd
+0000000000086630 t _ZNK8fasttext5Meter17precisionAtRecallEid
+0000000000086830 t _ZNK8fasttext5Meter17recallAtPrecisionEd
+00000000000866d0 t _ZNK8fasttext5Meter17recallAtPrecisionEid
+0000000000085730 t _ZNK8fasttext5Meter19writeGeneralMetricsERSoi
+0000000000086070 t _ZNK8fasttext5Meter20precisionRecallCurveEi
+0000000000014d5e t _ZNK8fasttext5Meter20precisionRecallCurveEi.cold
+0000000000086770 t _ZNK8fasttext5Meter20precisionRecallCurveEv
+0000000000085560 t _ZNK8fasttext5Meter6recallEv
+00000000000855e0 t _ZNK8fasttext5Meter7f1ScoreEv
+00000000000854e0 t _ZNK8fasttext5Meter9precisionEv
+0000000000087970 t _ZNK8fasttext5Model13computeHiddenERKSt6vectorIiSaIiEERNS0_5StateE
+00000000000878a0 t _ZNK8fasttext5Model5State7getLossEv
+0000000000087990 t _ZNK8fasttext5Model7predictERKSt6vectorIiSaIiEEifRS1_ISt4pairIfiESaIS7_EERNS0_5StateE
+0000000000014e2c t _ZNK8fasttext5Model7predictERKSt6vectorIiSaIiEEifRS1_ISt4pairIfiESaIS7_EERNS0_5StateE.cold
+0000000000087bf0 t _ZNK8fasttext5Model7std_logEf
+0000000000084f60 t _ZNK8fasttext6Matrix4sizeEl
+000000000008acd0 t _ZNK8fasttext6Vector4normEv
+0000000000060c60 t _ZNK8fasttext8Autotune12keepTrainingEd
+0000000000060ca0 t _ZNK8fasttext8Autotune14getMetricScoreERNS_5MeterERKNS_11metric_nameEdRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+0000000000011e54 t _ZNK8fasttext8Autotune14getMetricScoreERNS_5MeterERKNS_11metric_nameEdRKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+0000000000061400 t _ZNK8fasttext8Autotune20getCutoffForFileSizeEbbil
+0000000000011ede t _ZNK8fasttext8Autotune20getCutoffForFileSizeEbbil.cold
+0000000000072cd0 t _ZNK8fasttext8FastText10getLabelIdERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+0000000000077b10 t _ZNK8fasttext8FastText11predictLineERSiRSt6vectorISt4pairIfNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEESaISA_EEif
+0000000000013d6c t _ZNK8fasttext8FastText11predictLineERSiRSt6vectorISt4pairIfNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEESaISA_EEif.cold
+00000000000741e0 t _ZNK8fasttext8FastText12getDimensionEv
+0000000000072c90 t _ZNK8fasttext8FastText12getSubwordIdERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+00000000000741b0 t _ZNK8fasttext8FastText12keepTrainingEl
+0000000000072b20 t _ZNK8fasttext8FastText13getDictionaryEv
+0000000000072d10 t _ZNK8fasttext8FastText13getWordVectorERNS_6VectorERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+0000000000012c40 t _ZNK8fasttext8FastText13getWordVectorERNS_6VectorERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+0000000000072b00 t _ZNK8fasttext8FastText14addInputVectorERNS_6VectorEi
+0000000000072b70 t _ZNK8fasttext8FastText14getInputMatrixEv
+0000000000012bb4 t _ZNK8fasttext8FastText14getInputMatrixEv.cold
+0000000000077070 t _ZNK8fasttext8FastText15getNgramVectorsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+00000000000137c2 t _ZNK8fasttext8FastText15getNgramVectorsERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+0000000000072bf0 t _ZNK8fasttext8FastText15getOutputMatrixEv
+0000000000012bfa t _ZNK8fasttext8FastText15getOutputMatrixEv.cold
+0000000000072f00 t _ZNK8fasttext8FastText15getTargetCountsEv
+0000000000072df0 t _ZNK8fasttext8FastText16getSubwordVectorERNS_6VectorERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+0000000000074370 t _ZNK8fasttext8FastText16selectEmbeddingsEi
+0000000000012e90 t _ZNK8fasttext8FastText16selectEmbeddingsEi.cold
+0000000000074200 t _ZNK8fasttext8FastText18createRandomMatrixEv
+0000000000012e44 t _ZNK8fasttext8FastText18createRandomMatrixEv.cold
+00000000000772b0 t _ZNK8fasttext8FastText22getInputMatrixFromFileERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+0000000000013842 t _ZNK8fasttext8FastText22getInputMatrixFromFileERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE.cold
+00000000000742d0 t _ZNK8fasttext8FastText23createTrainOutputMatrixEv
+0000000000012e6a t _ZNK8fasttext8FastText23createTrainOutputMatrixEv.cold
+0000000000073ce0 t _ZNK8fasttext8FastText4testERSiifRNS_5MeterE
+0000000000012cd6 t _ZNK8fasttext8FastText4testERSiifRNS_5MeterE.cold
+0000000000072b50 t _ZNK8fasttext8FastText7getArgsEv
+00000000000741f0 t _ZNK8fasttext8FastText7isQuantEv
+0000000000073c30 t _ZNK8fasttext8FastText7predictEiRKSt6vectorIiSaIiEERS1_ISt4pairIfiESaIS7_EEf
+0000000000012c84 t _ZNK8fasttext8FastText7predictEiRKSt6vectorIiSaIiEERS1_ISt4pairIfiESaIS7_EEf.cold
+0000000000072c80 t _ZNK8fasttext8FastText9getWordIdERKNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEE
+0000000000087490 t _ZNKSt10_HashtableIiSt4pairIKiN8fasttext5Meter7MetricsEESaIS5_ENSt8__detail10_Select1stESt8equal_toIiESt4hashIiENS7_18_Mod_range_hashingENS7_
+20_Default_ranged_hashENS7_20_Prime_rehash_policyENS7_17_Hashtable_traitsILb0ELb0ELb1EEEE4findERS1_
+000000000008a210 t _ZNKSt14default_deleteIN8fasttext16ProductQuantizerEEclEPS1_.isra.0
+0000000000087520 t _ZNSt10_HashtableIiSt4pairIKiN8fasttext5Meter7MetricsEESaIS5_ENSt8__detail10_Select1stESt8equal_toIiESt4hashIiENS7_18_Mod_range_hashingENS7_2
+0_Default_ranged_hashENS7_20_Prime_rehash_policyENS7_17_Hashtable_traitsILb0ELb0ELb1EEEE9_M_rehashEmRKm
+0000000000060340 t _ZNSt17_Function_handlerIFvvEZN8fasttext8Autotune10startTimerERKNS1_4ArgsEEUlvE0_E10_M_managerERSt9_Any_dataRKS8_St18_Manager_operation
+0000000000060380 t _ZNSt17_Function_handlerIFvvEZN8fasttext8Autotune10startTimerERKNS1_4ArgsEEUlvE0_E9_M_invokeERKSt9_Any_data
+00000000000159b0 t _ZNSt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_E
+_SaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+0000000000015990 t _ZNSt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_E
+_SaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+0000000000016310 t _ZNSt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_E
+_SaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+00000000000159a0 t _ZNSt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_E
+_SaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+0000000000015980 t _ZNSt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_E
+_SaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+0000000000015980 t _ZNSt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_E
+_SaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+000000000007b510 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000007c110 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+000000000007ba10 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+000000000007b490 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+000000000007b400 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+000000000007b400 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+0000000000025be0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+0000000000026490 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+0000000000027ee0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+0000000000025ba0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+0000000000025b50 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+0000000000025b50 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+000000000007b500 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000007bdb0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+000000000007b5b0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+000000000007b480 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+000000000007b3f0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+000000000007b3f0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+000000000007b550 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000007b9a0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+000000000007bad0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+000000000007b4d0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+000000000007b440 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+000000000007b440 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+000000000007b540 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000007b930 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+000000000007bb10 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+000000000007b4c0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+000000000007b430 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+000000000007b430 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+000000000007b560 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000007bbd0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+000000000007bb90 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+000000000007b4e0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+000000000007b450 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+000000000007b450 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+000000000007b4f0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000007be80 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+000000000007bb50 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+000000000007b470 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+000000000007b460 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+000000000007b460 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+000000000007b520 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000007b6a0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+000000000007ba90 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+000000000007b4a0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+000000000007b410 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+000000000007b410 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+000000000007b530 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+000000000007c2b0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+000000000007ba50 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+000000000007b4b0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+000000000007b420 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+000000000007b420 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+00000000000845f0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_destroyEv
+00000000000846d0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EE10_M_disposeEv
+0000000000084600 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EE14_M_get_deleterERKSt9type_info
+00000000000845e0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EED0Ev
+00000000000845d0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EED1Ev
+00000000000845d0 t _ZNSt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EED2Ev
+0000000000067580 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext11DenseMatrix7uniformEfjiEUlvE_EEEEE6_M_runEv
+0000000000066e60 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext11DenseMatrix7uniformEfjiEUlvE_EEEEED0Ev
+0000000000066e50 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext11DenseMatrix7uniformEfjiEUlvE_EEEEED1Ev
+0000000000066e50 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext11DenseMatrix7uniformEfjiEUlvE_EEEEED2Ev
+0000000000060c40 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8Autotune10startTimerERKNS3_4ArgsEEUlvE_EEEEE6_M_runEv
+0000000000060700 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8Autotune10startTimerERKNS3_4ArgsEEUlvE_EEEEED0Ev
+0000000000060580 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8Autotune10startTimerERKNS3_4ArgsEEUlvE_EEEEED1Ev
+0000000000060580 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8Autotune10startTimerERKNS3_4ArgsEEUlvE_EEEEED2Ev
+0000000000077060 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEEEUlvE_EEEEE6_M_runEv
+0000000000071d60 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEEEUlvE_EEEEED0Ev
+0000000000071d30 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEEEUlvE_EEEEED1Ev
+0000000000071d30 t _ZNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEEEUlvE_EEEEED2Ev
+000000000007fcc0 t _ZNSt6vectorIN8fasttext23HierarchicalSoftmaxLoss4NodeESaIS2_EE17_M_default_appendEm
+0000000000070f80 t _ZNSt6vectorIN8fasttext5entryESaIS1_EE17_M_realloc_insertIJRKS1_EEEvN9__gnu_cxx17__normal_iteratorIPS1_S3_EEDpOT_
+0000000000071540 t _ZNSt6vectorIN8fasttext5entryESaIS1_EE8_M_eraseEN9__gnu_cxx17__normal_iteratorIPS1_S3_EES7_
+000000000007c470 t _ZNSt6vectorISt4pairINSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEN8fasttext6VectorEESaIS9_EE17_M_realloc_insertIJRS6_S8_EEEvN9__gnu_c
+xx17__normal_iteratorIPS9_SB_EEDpOT_
+00000000000266d0 t _ZNSt8__detail16_Hashtable_allocISaINS_10_Hash_nodeISt4pairIKiN8fasttext5Meter7MetricsEELb0EEEEE16_M_allocate_nodeIJRKS7_EEEPS8_DpOT_.isra.0
+0000000000087650 t _ZNSt8__detail9_Map_baseIiSt4pairIKiN8fasttext5Meter7MetricsEESaIS6_ENS_10_Select1stESt8equal_toIiESt4hashIiENS_18_Mod_range_hashingENS_20_De
+fault_ranged_hashENS_20_Prime_rehash_policyENS_17_Hashtable_traitsILb0ELb0ELb1EEELb1EEixERS2_
+0000000000069b80 t _ZSt13__adjust_heapIN9__gnu_cxx17__normal_iteratorIPN8fasttext5entryESt6vectorIS3_SaIS3_EEEElS3_NS0_5__ops15_Iter_comp_iterIZNS2_10Dictionary
+9thresholdEllEUlRKS3_SD_E_EEEvT_T0_SH_T1_T2_.constprop.0
+0000000000071ee0 t _ZSt13__adjust_heapIN9__gnu_cxx17__normal_iteratorIPiSt6vectorIiSaIiEEEEliNS0_5__ops15_Iter_comp_iterIZNK8fasttext8FastText16selectEmbeddings
+EiEUlmmE_EEEvT_T0_SE_T1_T2_
+00000000000697b0 t _ZSt16__insertion_sortIN9__gnu_cxx17__normal_iteratorIPN8fasttext5entryESt6vectorIS3_SaIS3_EEEENS0_5__ops15_Iter_comp_iterIZNS2_10Dictionary9
+thresholdEllEUlRKS3_SD_E_EEEvT_SG_T0_.constprop.0
+0000000000071da0 t _ZSt16__insertion_sortIN9__gnu_cxx17__normal_iteratorIPiSt6vectorIiSaIiEEEENS0_5__ops15_Iter_comp_iterIZNK8fasttext8FastText16selectEmbedding
+sEiEUlmmE_EEEvT_SD_T0_
+000000000006a240 t _ZSt16__introsort_loopIN9__gnu_cxx17__normal_iteratorIPN8fasttext5entryESt6vectorIS3_SaIS3_EEEElNS0_5__ops15_Iter_comp_iterIZNS2_10Dictionary
+9thresholdEllEUlRKS3_SD_E_EEEvT_SG_T0_T1_
+00000000000723d0 t _ZSt16__introsort_loopIN9__gnu_cxx17__normal_iteratorIPiSt6vectorIiSaIiEEEElNS0_5__ops15_Iter_comp_iterIZNK8fasttext8FastText16selectEmbeddin
+gsEiEUlmmE_EEEvT_SD_T0_T1_
+0000000000069480 t _ZSt25__unguarded_linear_insertIN9__gnu_cxx17__normal_iteratorIPN8fasttext5entryESt6vectorIS3_SaIS3_EEEENS0_5__ops14_Val_comp_iterIZNS2_10Dic
+tionary9thresholdEllEUlRKS3_SD_E_EEEvT_T0_.constprop.0
+00000000000ab3a0 d _ZTIFSt4pairISt6vectorIN8pybind113strESaIS2_EES4_ERN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKcE
+00000000000ab4a8 V _ZTIN8fasttext10model_nameE
+00000000000ab778 d _ZTIN8fasttext11DenseMatrix19EncounteredNaNErrorE
+00000000000ab7f8 d _ZTIN8fasttext11DenseMatrixE
+00000000000abac0 d _ZTIN8fasttext11QuantMatrixE
+00000000000ab9c0 d _ZTIN8fasttext11SoftmaxLossE
+00000000000ab4c8 V _ZTIN8fasttext11metric_nameE
+00000000000ab978 d _ZTIN8fasttext12OneVsAllLossE
+00000000000ab960 d _ZTIN8fasttext18BinaryLogisticLossE
+00000000000ab990 d _ZTIN8fasttext20NegativeSamplingLossE
+00000000000ab9a8 d _ZTIN8fasttext23HierarchicalSoftmaxLossE
+00000000000ab498 d _ZTIN8fasttext4ArgsE
+00000000000ab950 d _ZTIN8fasttext4LossE
+00000000000ab4e8 d _ZTIN8fasttext5MeterE
+00000000000ab7e8 d _ZTIN8fasttext6MatrixE
+00000000000ab4d8 d _ZTIN8fasttext6VectorE
+00000000000ab7a8 d _ZTIN8fasttext8Autotune12TimeoutErrorE
+00000000000ab790 d _ZTIN8fasttext8FastText10AbortErrorE
+00000000000ab4f8 d _ZTIN8fasttext8FastTextE
+00000000000ab4b8 V _ZTIN8fasttext9loss_nameE
+00000000000ab810 d _ZTINSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext11DenseMatrix7uniformEfjiEUlvE_EEEEEE
+00000000000ab7c0 d _ZTINSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8Autotune10startTimerERKNS3_4ArgsEEUlvE_EEEEEE
+00000000000ab850 d _ZTINSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEEEUlvE_EEEEEE
+00000000000ab538 d _ZTIPFSt4pairISt6vectorIN8pybind113strESaIS2_EES4_ERN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKcE
+00000000000ab590 d _ZTISt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_
+E_SaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab8f8 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab5a8 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab910 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab898 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab8b0 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab880 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab868 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab8e0 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab8c8 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000aba48 d _ZTISt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab7d8 d _ZTIZN8fasttext8Autotune10startTimerERKNS_4ArgsEEUlvE0_
+000000000008e420 r _ZTSFSt4pairISt6vectorIN8pybind113strESaIS2_EES4_ERN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKcE
+000000000008e930 V _ZTSN8fasttext10model_nameE
+0000000000091520 r _ZTSN8fasttext11DenseMatrix19EncounteredNaNErrorE
+0000000000091700 r _ZTSN8fasttext11DenseMatrixE
+0000000000092ab0 r _ZTSN8fasttext11QuantMatrixE
+0000000000092050 r _ZTSN8fasttext11SoftmaxLossE
+000000000008e970 V _ZTSN8fasttext11metric_nameE
+0000000000091fc0 r _ZTSN8fasttext12OneVsAllLossE
+0000000000091fa0 r _ZTSN8fasttext18BinaryLogisticLossE
+0000000000091fe0 r _ZTSN8fasttext20NegativeSamplingLossE
+0000000000092020 r _ZTSN8fasttext23HierarchicalSoftmaxLossE
+000000000008e910 r _ZTSN8fasttext4ArgsE
+0000000000091f70 r _ZTSN8fasttext4LossE
+000000000008e9b0 r _ZTSN8fasttext5MeterE
+00000000000916e0 r _ZTSN8fasttext6MatrixE
+000000000008e990 r _ZTSN8fasttext6VectorE
+00000000000915a0 r _ZTSN8fasttext8Autotune12TimeoutErrorE
+0000000000091560 r _ZTSN8fasttext8FastText10AbortErrorE
+000000000008e9d0 r _ZTSN8fasttext8FastTextE
+000000000008e950 V _ZTSN8fasttext9loss_nameE
+0000000000091720 r _ZTSNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext11DenseMatrix7uniformEfjiEUlvE_EEEEEE
+00000000000912c0 r _ZTSNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8Autotune10startTimerERKNS3_4ArgsEEUlvE_EEEEEE
+0000000000091b60 r _ZTSNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEEEUlvE_EEEEEE
+000000000008ea60 r _ZTSPFSt4pairISt6vectorIN8pybind113strESaIS2_EES4_ERN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEPKcE
+000000000008e5e0 r _ZTSSt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_
+E_SaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091e60 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EE
+000000000008eba0 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091ec0 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091ce0 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091d40 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091c60 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091be0 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091e00 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091da0 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000092980 r _ZTSSt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EE
+0000000000091340 r _ZTSZN8fasttext8Autotune10startTimerERKNS_4ArgsEEUlvE0_
+000000000008e560 r _ZTSZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRN8fasttext8FastTextERNS2_4ArgsEE0_clES4_S6_EUlPS3_E_
+00000000000ab828 d _ZTVN8fasttext11DenseMatrix19EncounteredNaNErrorE
+00000000000aafb8 d _ZTVN8fasttext11DenseMatrixE
+00000000000ab340 d _ZTVN8fasttext11QuantMatrixE
+00000000000ab2d0 d _ZTVN8fasttext11SoftmaxLossE
+00000000000ab228 d _ZTVN8fasttext12OneVsAllLossE
+00000000000aba10 d _ZTVN8fasttext18BinaryLogisticLossE
+00000000000ab260 d _ZTVN8fasttext20NegativeSamplingLossE
+00000000000ab298 d _ZTVN8fasttext23HierarchicalSoftmaxLossE
+00000000000ab9d8 d _ZTVN8fasttext4LossE
+00000000000aba60 d _ZTVN8fasttext6MatrixE
+00000000000ab928 d _ZTVN8fasttext8FastText10AbortErrorE
+00000000000ab018 d _ZTVNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext11DenseMatrix7uniformEfjiEUlvE_EEEEEE
+00000000000aaf90 d _ZTVNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8Autotune10startTimerERKNS3_4ArgsEEUlvE_EEEEEE
+00000000000ab040 d _ZTVNSt6thread11_State_implINS_8_InvokerISt5tupleIJZN8fasttext8FastText12startThreadsERKSt8functionIFvffddlEEEUlvE_EEEEEE
+00000000000aac20 d _ZTVSt19_Sp_counted_deleterIPN8fasttext8FastTextEZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRS1_RNS0_4ArgsEE0_clES6_S8_EUlS2_
+E_SaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab1b8 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext10DictionaryESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000aac60 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext11DenseMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab1f0 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext11QuantMatrixESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab0d8 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext11SoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab110 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext12OneVsAllLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab0a0 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext20NegativeSamplingLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab068 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext23HierarchicalSoftmaxLossESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab180 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext4ArgsESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab148 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext5ModelESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000ab308 d _ZTVSt23_Sp_counted_ptr_inplaceIN8fasttext8FastTextESaIvELN9__gnu_cxx12_Lock_policyE2EE
+00000000000accc0 b _ZZ22PyInit_fasttext_pybindE13mod_def_slots
+00000000000aca40 d _ZZ22PyInit_fasttext_pybindE3def
+0000000000019680 t _ZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEifE18_cl
+ES4_SA_if.constprop.0
+000000000000f06c t _ZZL29pybind11_init_fasttext_pybindRN8pybind117module_EENKUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEEifE18_cl
+ES4_SA_if.constprop.0.cold
+0000000000054b10 t _ZZN8pybind1112cpp_function10initializeIRKZNS_5enum_IN8fasttext10model_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E0_iJS4_EJEEEvOT_PFT0_DpT1_ED
+pRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_
+0000000000053430 t _ZZN8pybind1112cpp_function10initializeIRKZNS_5enum_IN8fasttext11metric_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E0_iJS4_EJEEEvOT_PFT0_DpT1_E
+DpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_
+0000000000054530 t _ZZN8pybind1112cpp_function10initializeIRKZNS_5enum_IN8fasttext9loss_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E0_iJS4_EJEEEvOT_PFT0_DpT1_EDpR
+KT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_
+00000000000556d0 t _ZZN8pybind1112cpp_function10initializeIRPFSt4pairISt6vectorINS_3strESaIS4_EES6_ERN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11char_tra
+itsIcESaIcEEEPKcES7_JSA_SG_SI_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNES12_
+000000000001fdd0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext4ArgsERKNSt7__cxx1112basic_stringIcSt11ch
+ar_traitsIcESaIcEEEE_vJS6_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_
+0000000000010467 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext4ArgsERKNSt7__cxx1112basic_stringIcSt11ch
+ar_traitsIcESaIcEEEE_vJS6_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_.cold
+000000000001f9f0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextEE27_bJS6_EJNS_4nameENS_9is_meth
+odENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESO_
+000000000001038b t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextEE27_bJS6_EJNS_4nameENS_9is_meth
+odENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESO_.cold
+000000000001f3b0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextEE3_PKNS4_11DenseMatrixEJS6_EJNS
+_4nameENS_9is_methodENS_7siblingENS_19return_value_policyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESS_
+000000000001fac0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextEE4_PKNS4_11DenseMatrixEJS6_EJNS
+_4nameENS_9is_methodENS_7siblingENS_19return_value_policyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESS_
+000000000001ed00 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENS_6bufferES7_E5_vJS6_S7_S7_EJN
+S_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESP_
+0000000000010122 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENS_6bufferES7_E5_vJS6_S7_S7_EJN
+S_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESP_.cold
+000000000001e690 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEE11_St6vectorISC_SaISC_EEJS6_SC_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESX_
+000000000000ff83 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEE11_St6vectorISC_SaISC_EEJS6_SC_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESX_.c
+old
+0000000000020850 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEE20_iJS6_SC_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESU_
+000000000001071c t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEE20_iJS6_SC_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESU_.cold
+0000000000020b80 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEE6_vJS6_SC_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESU_
+0000000000010810 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEE6_vJS6_SC_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESU_.cold
+0000000000020a00 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEE7_vJS6_SC_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESU_
+0000000000010796 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEE7_vJS6_SC_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESU_.cold
+000000000001cb80 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEPKcE26_St4pairISt6vectorINS_3strESaISI_EESH_IiSaIiEEEJS6_SC_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detai
+l13function_callEE1_4_FUNES14_
+000000000000f9fd t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEPKcE26_St4pairISt6vectorINS_3strESaISI_EESH_IiSaIiEEEJS6_SC_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detai
+l13function_callEE1_4_FUNES14_.cold
+000000000001bd10 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEbibidiiibE15_vJS6_SC_bibidiiibEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESU_
+000000000000f7ac t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEbibidiiibE15_vJS6_SC_bibidiiibEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESU_.col
+d
+000000000001b330 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEifE18_St13unordered_mapISC_NS_4dictESt4hashISC_ESt8equal_toISC_ESaISt4pairIKSC_SF_EEEJS6_SC_ifEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_P
+FT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNES15_
+000000000000f5bc t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEifE18_St13unordered_mapISC_NS_4dictESt4hashISC_ESt8equal_toISC_ESaISt4pairIKSC_SF_EEEJS6_SC_ifEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_P
+FT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNES15_.cold
+000000000001b6b0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEifPKcE16_St6vectorISt4pairIfNS_3strEESaISJ_EEJS6_SC_ifSE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13fun
+ction_callEE1_4_FUNES12_
+000000000000f707 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextENSt7__cxx1112basic_stringIcSt11
+char_traitsIcESaIcEEEifPKcE16_St6vectorISt4pairIfNS_3strEESaISJ_EEJS6_SC_ifSE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13fun
+ction_callEE1_4_FUNES12_.cold
+000000000001c3e0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextEPKcE13_St4pairISt6vectorINS_3st
+rESaISC_EESB_IlSaIlEEEJS6_S8_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+000000000000f878 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextEPKcE13_St4pairISt6vectorINS_3st
+rESaISC_EESB_IlSaIlEEEJS6_S8_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_.cold
+000000000001fed0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextEPKcE14_St4pairISt6vectorINS_3st
+rESaISC_EESB_IlSaIlEEEJS6_S8_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+00000000000104a5 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextEPKcE14_St4pairISt6vectorINS_3st
+rESaISC_EESB_IlSaIlEEEJS6_S8_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_.cold
+000000000001b1f0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEE19_iJS6_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_
+000000000000f57e t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEE19_iJS6_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_.cold
+000000000001fc90 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEE21_iJS6_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_
+0000000000010429 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEE21_iJS6_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_.cold
+000000000001a500 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEESE_SE_iPKcE25_St6vectorISt4pairIfNS_3strEESaISL_EEJS6_SE_SE_SE_iSG_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_
+6detail13function_callEE1_4_FUNES14_
+000000000000f460 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEESE_SE_iPKcE25_St6vectorISt4pairIfNS_3strEESaISL_EEJS6_SE_SE_SE_iSG_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_
+6detail13function_callEE1_4_FUNES14_.cold
+000000000001d780 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEiE9_NS4_5MeterEJS6_SE_iEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENKUlRNS_6detail13function_callEE1_clESX_.constprop.
+0
+000000000000fd28 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEiE9_NS4_5MeterEJS6_SE_iEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENKUlRNS_6detail13function_callEE1_clESX_.constprop.
+0.cold
+000000000001de80 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEiE9_NS4_5MeterEJS6_SE_iEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESX_
+000000000001ab80 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEiPKcE24_St6vectorISt4pairIfNS_3strEESaISL_EEJS6_SE_iSG_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13fun
+ction_callEE1_4_FUNES14_
+000000000000f4a2 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEiPKcE24_St6vectorISt4pairIfNS_3strEESaISL_EEJS6_SE_iSG_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13fun
+ction_callEE1_4_FUNES14_.cold
+000000000001de90 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEifE8_St5tupleIJlddEEJS6_SE_ifEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+000000000000fe1e t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKNSt7__cxx1112basic_stringIcSt
+11char_traitsIcESaIcEEEifE8_St5tupleIJlddEEJS6_SE_ifEJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_.co
+ld
+0000000000023b10 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKSt6vectorINSt7__cxx1112basic_
+stringIcSt11char_traitsIcESaIcEEESaISD_EEifPKcE17_St4pairIS7_IS7_INS_3strESaISM_EESaISO_EES7_INS_7array_tIfLi16EEESaISS_EEEJS6_SH_ifSJ_EJNS_4nameENS_9is_methodE
+NS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNES1C_
+00000000000112e9 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERKSt6vectorINSt7__cxx1112basic_
+stringIcSt11char_traitsIcESaIcEEESaISD_EEifPKcE17_St4pairIS7_IS7_INS_3strESaISM_EESaISO_EES7_INS_7array_tIfLi16EEESaISS_EEEJS6_SH_ifSJ_EJNS_4nameENS_9is_methodE
+NS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNES1C_.cold
+000000000001f580 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERNS4_4ArgsEE0_vJS6_S8_EJNS_4nam
+eENS_5scopeENS_7siblingENS_10call_guardIJNS_18gil_scoped_releaseEEEEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNEST_
+00000000000102d1 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERNS4_4ArgsEE0_vJS6_S8_EJNS_4nam
+eENS_5scopeENS_7siblingENS_10call_guardIJNS_18gil_scoped_releaseEEEEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNEST_.cold
+000000000001d520 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERNS4_6VectorENSt7__cxx1112basic
+_stringIcSt11char_traitsIcESaIcEEEE10_vJS6_S8_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_
+000000000000fbd1 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERNS4_6VectorENSt7__cxx1112basic
+_stringIcSt11char_traitsIcESaIcEEEE10_vJS6_S8_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_.cold
+0000000000020640 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERNS4_6VectorENSt7__cxx1112basic
+_stringIcSt11char_traitsIcESaIcEEEE23_vJS6_S8_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_
+00000000000105e8 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERNS4_6VectorENSt7__cxx1112basic
+_stringIcSt11char_traitsIcESaIcEEEE23_vJS6_S8_SE_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESW_.cold
+000000000001b070 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERNS4_6VectorEiE22_vJS6_S8_iEJNS
+_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESQ_
+000000000000f4e0 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextERNS4_6VectorEiE22_vJS6_S8_iEJNS
+_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESQ_.cold
+0000000000024c70 t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextESt6vectorINSt7__cxx1112basic_st
+ringIcSt11char_traitsIcESaIcEEESaISD_EEPKcE12_St4pairIS7_IS7_INS_3strESaISK_EESaISM_EESO_EJS6_SF_SH_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT
+2_ENUlRNS_6detail13function_callEE1_4_FUNES16_
+000000000001149c t _ZZN8pybind1112cpp_function10initializeIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRN8fasttext8FastTextESt6vectorINSt7__cxx1112basic_st
+ringIcSt11char_traitsIcESaIcEEESaISD_EEPKcE12_St4pairIS7_IS7_INS_3strESaISK_EESaISM_EESO_EJS6_SF_SH_EJNS_4nameENS_9is_methodENS_7siblingEEEEvOT_PFT0_DpT1_EDpRKT
+2_ENUlRNS_6detail13function_callEE1_4_FUNES16_.cold
+0000000000030280 t _ZZN8pybind1112cpp_function10initializeIZNOS_6detail8initimpl7factoryIZNS_5enum_IN8fasttext10model_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUliE_P
+FNS2_9void_typeEvEFS7_iESL_E7executeINS_6class_IS7_JEEEJNS_3argEEEEvRT_DpRKT0_EUlRNS2_16value_and_holderEiE_vJS10_iEJNS_4nameENS_9is_methodENS_7siblingENS2_24is
+_new_style_constructorESS_EEEvOST_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNES1H_
+0000000000030140 t _ZZN8pybind1112cpp_function10initializeIZNOS_6detail8initimpl7factoryIZNS_5enum_IN8fasttext11metric_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUliE_
+PFNS2_9void_typeEvEFS7_iESL_E7executeINS_6class_IS7_JEEEJNS_3argEEEEvRT_DpRKT0_EUlRNS2_16value_and_holderEiE_vJS10_iEJNS_4nameENS_9is_methodENS_7siblingENS2_24i
+s_new_style_constructorESS_EEEvOST_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNES1H_
+0000000000030320 t _ZZN8pybind1112cpp_function10initializeIZNOS_6detail8initimpl7factoryIZNS_5enum_IN8fasttext9loss_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUliE_PFN
+S2_9void_typeEvEFS7_iESL_E7executeINS_6class_IS7_JEEEJNS_3argEEEEvRT_DpRKT0_EUlRNS2_16value_and_holderEiE_vJS10_iEJNS_4nameENS_9is_methodENS_7siblingENS2_24is_n
+ew_style_constructorESS_EEEvOST_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNES1H_
+00000000000527f0 t _ZZN8pybind1112cpp_function10initializeIZNS0_C4IKN8fasttext4ArgsENS3_8FastTextEJEJNS_4nameENS_9is_methodENS_7siblingEEEEMT0_KFT_DpT1_EDpRKT2_
+EUlPKS6_E_S5_JSL_EJS7_S8_S9_EEEvOSB_PFSA_SD_ESJ_ENKUlRNS_6detail13function_callEE1_clESS_.isra.0
+0000000000052970 t _ZZN8pybind1112cpp_function10initializeIZNS0_C4IKN8fasttext4ArgsENS3_8FastTextEJEJNS_4nameENS_9is_methodENS_7siblingEEEEMT0_KFT_DpT1_EDpRKT2_
+EUlPKS6_E_S5_JSL_EJS7_S8_S9_EEEvOSB_PFSA_SD_ESJ_ENUlRNS_6detail13function_callEE1_4_FUNESS_
+0000000000052ce0 t _ZZN8pybind1112cpp_function10initializeIZNS0_C4ISt6vectorISt4pairIddESaIS5_EEN8fasttext5MeterEJEJNS_4nameENS_9is_methodENS_7siblingEEEEMT0_KF
+T_DpT1_EDpRKT2_EUlPKS9_E_S7_JSO_EJSA_SB_SC_EEEvOSE_PFSD_SG_ESM_ENUlRNS_6detail13function_callEE1_4_FUNESV_
+0000000000053a10 t _ZZN8pybind1112cpp_function10initializeIZNS0_C4ISt6vectorISt4pairIddESaIS5_EEN8fasttext5MeterEJiEJNS_4nameENS_9is_methodENS_7siblingEEEEMT0_K
+FT_DpT1_EDpRKT2_EUlPKS9_iE_S7_JSO_iEJSA_SB_SC_EEEvOSE_PFSD_SG_ESM_ENUlRNS_6detail13function_callEE1_4_FUNESV_
+0000000000052fc0 t _ZZN8pybind1112cpp_function10initializeIZNS0_C4ISt6vectorISt4pairIffESaIS5_EEN8fasttext5MeterEJiEJNS_4nameENS_9is_methodENS_7siblingEEEEMT0_K
+FT_DpT1_EDpRKT2_EUlPKS9_iE_S7_JSO_iEJSA_SB_SC_EEEvOSE_PFSD_SG_ESM_ENUlRNS_6detail13function_callEE1_4_FUNESV_
+0000000000052980 t _ZZN8pybind1112cpp_function10initializeIZNS0_C4IdN8fasttext5MeterEJdEJNS_4nameENS_9is_methodENS_7siblingEEEEMT0_KFT_DpT1_EDpRKT2_EUlPKS4_dE_d
+JSJ_dEJS5_S6_S7_EEEvOS9_PFS8_SB_ESH_ENUlRNS_6detail13function_callEE1_4_FUNESQ_
+0000000000052b70 t _ZZN8pybind1112cpp_function10initializeIZNS0_C4IdN8fasttext5MeterEJidEJNS_4nameENS_9is_methodENS_7siblingEEEEMT0_KFT_DpT1_EDpRKT2_EUlPKS4_idE
+_dJSJ_idEJS5_S6_S7_EEEvOS9_PFS8_SB_ESH_ENUlRNS_6detail13function_callEE1_4_FUNESQ_
+00000000000301e0 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext10model_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlRNS_6detail16value_and_holderEiE3_
+vJSI_iEJNSG_24is_new_style_constructorENS_4nameENS_9is_methodENS_3argENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNSG_13function_callEE1_4_FUNES11_
+0000000000054820 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext10model_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E1_iJS4_EJNS_4nameENS_9is_metho
+dENS_7siblingENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+0000000000054e00 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext10model_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E2_iJS4_EJNS_4nameENS_9is_metho
+dENS_7siblingENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+0000000000030460 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext11metric_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlRNS_6detail16value_and_holderEiE3
+_vJSI_iEJNSG_24is_new_style_constructorENS_4nameENS_9is_methodENS_3argENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNSG_13function_callEE1_4_FUNES11_
+00000000000514c0 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext11metric_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E1_iJS4_EJNS_4nameENS_9is_meth
+odENS_7siblingENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+0000000000053720 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext11metric_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E2_iJS4_EJNS_4nameENS_9is_meth
+odENS_7siblingENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+00000000000303c0 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext9loss_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlRNS_6detail16value_and_holderEiE3_vJ
+SI_iEJNSG_24is_new_style_constructorENS_4nameENS_9is_methodENS_3argENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNSG_13function_callEE1_4_FUNES11_
+00000000000553e0 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext9loss_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E1_iJS4_EJNS_4nameENS_9is_methodE
+NS_7siblingENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+00000000000550f0 t _ZZN8pybind1112cpp_function10initializeIZNS_5enum_IN8fasttext9loss_nameEEC4IJEEERKNS_6handleEPKcDpRKT_EUlS4_E2_iJS4_EJNS_4nameENS_9is_methodE
+NS_7siblingENS_8pos_onlyEEEEvOT_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESY_
+0000000000016480 t _ZZN8pybind1112cpp_function10initializeIZNS_6class_IN8fasttext11DenseMatrixEJEE10def_bufferIZL29pybind11_init_fasttext_pybindRNS_7module_EEUl
+RS4_E2_EERS5_OT_EUlNS_6handleEE0_vJSE_EJEEEvSD_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESR_
+0000000000016410 t _ZZN8pybind1112cpp_function10initializeIZNS_6class_IN8fasttext6VectorEJEE10def_bufferIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS4_E1
+_EERS5_OT_EUlNS_6handleEE0_vJSE_EJEEEvSD_PFT0_DpT1_EDpRKT2_ENUlRNS_6detail13function_callEE1_4_FUNESR_
+0000000000051d60 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsENS4_10model_nameEE5writeIMS5_S6_Li0EEES0_T
+_RKNS_6handleEEUlRS5_RKS6_E_vJSE_SG_EJNS_9is_methodEEEEvOSA_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESU_
+0000000000054310 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsENS4_10model_nameEE8readonlyIMS5_S6_Li0EEES
+0_T_RKNS_6handleEEUlRKS5_E_RKS6_JSF_EJNS_9is_methodEEEEvOSA_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESV_
+0000000000052120 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsENS4_9loss_nameEE5writeIMS5_S6_Li0EEES0_T_R
+KNS_6handleEEUlRS5_RKS6_E_vJSE_SG_EJNS_9is_methodEEEEvOSA_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESU_
+00000000000517b0 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsENS4_9loss_nameEE8readonlyIMS5_S6_Li0EEES0_
+T_RKNS_6handleEEUlRKS5_E_RKS6_JSF_EJNS_9is_methodEEEEvOSA_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESV_
+0000000000053300 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsENSt7__cxx1112basic_stringIcSt11char_traits
+IcESaIcEEEE5writeIMS5_SB_Li0EEES0_T_RKNS_6handleEEUlRS5_RKSB_E_vJSJ_SL_EJNS_9is_methodEEEEvOSF_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESZ_
+00000000000540a0 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsENSt7__cxx1112basic_stringIcSt11char_traits
+IcESaIcEEEE8readonlyIMS5_SB_Li0EEES0_T_RKNS_6handleEEUlRKS5_E_RKSB_JSK_EJNS_9is_methodEEEEvOSF_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNES10_
+0000000000051ba0 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsEbE5writeIMS5_bLi0EEES0_T_RKNS_6handleEEUlR
+S5_RKbE_vJSD_SF_EJNS_9is_methodEEEEvOS9_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNEST_
+00000000000541d0 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsEbE8readonlyIMS5_bLi0EEES0_T_RKNS_6handleEE
+UlRKS5_E_RKbJSE_EJNS_9is_methodEEEEvOS9_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESU_
+0000000000052640 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsEdE5writeIMS5_dLi0EEES0_T_RKNS_6handleEEUlR
+S5_RKdE_vJSD_SF_EJNS_9is_methodEEEEvOS9_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNEST_
+0000000000053d40 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsEdE8readonlyIMS5_dLi0EEES0_T_RKNS_6handleEE
+UlRKS5_E_RKdJSE_EJNS_9is_methodEEEEvOS9_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESU_
+00000000000524e0 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsEiE5writeIMS5_iLi0EEES0_T_RKNS_6handleEEUlR
+S5_RKiE_vJSD_SF_EJNS_9is_methodEEEEvOS9_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNEST_
+0000000000053f80 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsEiE8readonlyIMS5_iLi0EEES0_T_RKNS_6handleEE
+UlRKS5_E_RKiJSE_EJNS_9is_methodEEEEvOS9_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESU_
+00000000000519d0 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsEmE5writeIMS5_mLi0EEES0_T_RKNS_6handleEEUlR
+S5_RKmE_vJSD_SF_EJNS_9is_methodEEEEvOS9_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNEST_
+0000000000053e60 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail29property_cpp_function_classicIN8fasttext4ArgsEmE8readonlyIMS5_mLi0EEES0_T_RKNS_6handleEE
+UlRKS5_E_RKmJSE_EJNS_9is_methodEEEEvOS9_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESU_
+0000000000026550 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail8initimpl11constructorIJEE7executeINS_6class_IN8fasttext11DenseMatrixEJEEEJELi0EEEvRT_DpRK
+T0_EUlRNS2_16value_and_holderEE_vJSI_EJNS_4nameENS_9is_methodENS_7siblingENS2_24is_new_style_constructorEEEEvOSB_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4
+_FUNESZ_
+00000000000265e0 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail8initimpl11constructorIJEE7executeINS_6class_IN8fasttext4ArgsEJEEEJELi0EEEvRT_DpRKT0_EUlRN
+S2_16value_and_holderEE_vJSI_EJNS_4nameENS_9is_methodENS_7siblingENS2_24is_new_style_constructorEEEEvOSB_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUNESZ_
+00000000000264c0 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail8initimpl11constructorIJEE7executeINS_6class_IN8fasttext8FastTextEJEEEJELi0EEEvRT_DpRKT0_E
+UlRNS2_16value_and_holderEE_vJSI_EJNS_4nameENS_9is_methodENS_7siblingENS2_24is_new_style_constructorEEEEvOSB_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUN
+ESZ_
+0000000000028320 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail8initimpl11constructorIJbEE7executeINS_6class_IN8fasttext5MeterEJEEEJELi0EEEvRT_DpRKT0_EUl
+RNS2_16value_and_holderEbE_vJSI_bEJNS_4nameENS_9is_methodENS_7siblingENS2_24is_new_style_constructorEEEEvOSB_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FUN
+ESZ_
+000000000005a250 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail8initimpl11constructorIJlEE7executeINS_6class_IN8fasttext6VectorEJEEEJELi0EEEvRT_DpRKT0_EU
+lRNS2_16value_and_holderElE_vJSI_lEJNS_4nameENS_9is_methodENS_7siblingENS2_24is_new_style_constructorEEEEvOSB_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_callEE1_4_FU
+NESZ_
+000000000005a420 t _ZZN8pybind1112cpp_function10initializeIZNS_6detail8initimpl11constructorIJllEE7executeINS_6class_IN8fasttext11DenseMatrixEJEEEJELi0EEEvRT_Dp
+RKT0_EUlRNS2_16value_and_holderEllE_vJSI_llEJNS_4nameENS_9is_methodENS_7siblingENS2_24is_new_style_constructorEEEEvOSB_PFT0_DpT1_EDpRKT2_ENUlRNS2_13function_cal
+lEE1_4_FUNESZ_
+000000000001a340 t _ZZN8pybind116class_IN8fasttext11DenseMatrixEJEE10def_bufferIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_E2_EERS3_OT_ENUlP7_objectPv
+E_4_FUNESD_SE_
+000000000000f3c7 t _ZZN8pybind116class_IN8fasttext11DenseMatrixEJEE10def_bufferIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_E2_EERS3_OT_ENUlP7_objectPv
+E_4_FUNESD_SE_.cold
+000000000001a1c0 t _ZZN8pybind116class_IN8fasttext6VectorEJEE10def_bufferIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_E1_EERS3_OT_ENUlP7_objectPvE_4_FU
+NESD_SE_
+000000000000f32e t _ZZN8pybind116class_IN8fasttext6VectorEJEE10def_bufferIZL29pybind11_init_fasttext_pybindRNS_7module_EEUlRS2_E1_EERS3_OT_ENUlP7_objectPvE_4_FU
+NESD_SE_.cold
+0000000000025c00 t _ZZN8pybind116detail16type_caster_baseIN8fasttext10model_nameEE21make_copy_constructorIS3_vEEDTcmnw_T_picl7declvalIKS6_EEEtlPFPvPKvEEEPS7_ENU
+lSA_E_4_FUNESA_
+0000000000025c20 t _ZZN8pybind116detail16type_caster_baseIN8fasttext10model_nameEE21make_move_constructorIS3_vEEDTcmnw_T_picl7declvalIOS6_EEEtlPFPvPKvEEEPKS6_EN
+UlSA_E_4_FUNESA_
+0000000000026090 t _ZZN8pybind116detail16type_caster_baseIN8fasttext11DenseMatrixEE21make_move_constructorIS3_vEEDTcmnw_T_picl7declvalIOS6_EEEtlPFPvPKvEEEPKS6_E
+NUlSA_E_4_FUNESA_
+0000000000025c80 t _ZZN8pybind116detail16type_caster_baseIN8fasttext11metric_nameEE21make_copy_constructorIS3_vEEDTcmnw_T_picl7declvalIKS6_EEEtlPFPvPKvEEEPS7_EN
+UlSA_E_4_FUNESA_
+0000000000025ca0 t _ZZN8pybind116detail16type_caster_baseIN8fasttext11metric_nameEE21make_move_constructorIS3_vEEDTcmnw_T_picl7declvalIOS6_EEEtlPFPvPKvEEEPKS6_E
+NUlSA_E_4_FUNESA_
+0000000000027530 t _ZZN8pybind116detail16type_caster_baseIN8fasttext4ArgsEE21make_copy_constructorIS3_vEEDTcmnw_T_picl7declvalIKS6_EEEtlPFPvPKvEEEPS7_ENUlSA_E_4
+_FUNESA_
+0000000000028590 t _ZZN8pybind116detail16type_caster_baseIN8fasttext4ArgsEE21make_move_constructorIS3_vEEDTcmnw_T_picl7declvalIOS6_EEEtlPFPvPKvEEEPKS6_ENUlSA_E_
+4_FUNESA_
+0000000000027c40 t _ZZN8pybind116detail16type_caster_baseIN8fasttext5MeterEE21make_copy_constructorIS3_vEEDTcmnw_T_picl7declvalIKS6_EEEtlPFPvPKvEEEPS7_ENUlSA_E_
+4_FUNESA_
+0000000000025cc0 t _ZZN8pybind116detail16type_caster_baseIN8fasttext5MeterEE21make_move_constructorIS3_vEEDTcmnw_T_picl7declvalIOS6_EEEtlPFPvPKvEEEPKS6_ENUlSA_E
+_4_FUNESA_
+0000000000025c40 t _ZZN8pybind116detail16type_caster_baseIN8fasttext9loss_nameEE21make_copy_constructorIS3_vEEDTcmnw_T_picl7declvalIKS6_EEEtlPFPvPKvEEEPS7_ENUlS
+A_E_4_FUNESA_
+0000000000025c60 t _ZZN8pybind116detail16type_caster_baseIN8fasttext9loss_nameEE21make_move_constructorIS3_vEEDTcmnw_T_picl7declvalIOS6_EEEtlPFPvPKvEEEPKS6_ENUl
+SA_E_4_FUNESA_
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# apt-cache search fasttext-cpp 2>/dev/null | head -5
+apt-get update && apt-get install -y python3-fasttext-cpp 2>&1 | tail -10
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# apt-get update && apt-get install -y python3-fasttext-cpp 2>&1 | tail -10
+Hit:1 http://deb.debian.org/debian bookworm InRelease
+Hit:2 http://deb.debian.org/debian bookworm-updates InRelease
+Hit:3 http://deb.debian.org/debian-security bookworm-security InRelease
+Reading package lists... Done
+Reading package lists...
+Building dependency tree...
+Reading state information...
+E: Unable to locate package python3-fasttext-cpp
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# cd /usr/local/lib/python3.13/site-packages/fasttext
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# python3 -c "import fasttext_pybind; print([x for x in dir(fasttext_pybind) if 'Fast' in x])"
+[]
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# python3 -c "import fasttext_pybind; print([x for x in dir(fasttext_pybind) if 'fast' in x])"
+['fasttext']
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# find /usr/local/lib/python3.13 -name '*.a' -o -name '*.so' 2>/dev/null | grep -i fasttext
+/usr/local/lib/python3.13/site-packages/fasttext_pybind.cpython-313-x86_64-linux-gnu.so
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# find /usr/local -name '*.a' -o -name '*.so' 2>/dev/null | grep -i fasttext
+/usr/local/lib/python3.13/site-packages/fasttext_pybind.cpython-313-x86_64-linux-gnu.so
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# pip search fasttext-cpp 2>&1 | head -5
+ERROR: XMLRPC request failed [code: -32500]
+RuntimeError: PyPI no longer supports 'pip search' (or XML-RPC search). Please use https://pypi.org/search (via a browser) instead. See https://warehouse.pypa.i
+o/api-reference/xml-rpc.html#deprecated-methods for more information.
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext# pip install fasttext-cpp 2>&1 | tail -10
+ERROR: Could not find a version that satisfies the requirement fasttext-cpp (from versions: none)
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+ERROR: No matching distribution found for fasttext-cpp
+root@0afb67a380fd:/usr/local/lib/python3.13/site-packages/fasttext#

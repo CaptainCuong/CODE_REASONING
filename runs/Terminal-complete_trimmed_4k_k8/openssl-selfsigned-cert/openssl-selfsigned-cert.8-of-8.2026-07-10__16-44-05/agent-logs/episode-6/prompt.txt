@@ -1,0 +1,125 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@f7f90cc28f7c:/app/ssl# cd /app/ssl
+root@f7f90cc28f7c:/app/ssl# openssl x509 -in server.crt -subject server.crt -noout 2>&1
+x509: Use -help for summary.
+root@f7f90cc28f7c:/app/ssl# echo $?
+1
+root@f7f90cc28f7c:/app/ssl# openssl x509 -in server.crt -validity server.crt -noout 2>&1
+x509: Use -help for summary.
+root@f7f90cc28f7c:/app/ssl# echo $?
+1
+root@f7f90cc28f7c:/app/ssl# openssl x509 -in server.crt -fingerprint sha256 server.crt -noout 2>&1
+x509: Use -help for summary.
+root@f7f90cc28f7c:/app/ssl# echo $?
+1
+root@f7f90cc28f7c:/app/ssl# rm -f /app/ssl/verification.txt
+root@f7f90cc28f7c:/app/ssl# cat > /app/ssl/verification.txt << 'EOF'
+> Subject: $(openssl x509 -in server.crt -subject server.crt -noout)
+> Validity: $(openssl x509 -in server.crt -validity server.crt -noout)
+> Fingerprint: $(openssl x509 -in server.crt -fingerprint sha256 server.crt -noout)
+> EOF
+root@f7f90cc28f7c:/app/ssl# chmod 600 /app/ssl/verification.txt
+root@f7f90cc28f7c:/app/ssl# cat /app/ssl/verification.txt
+Subject: $(openssl x509 -in server.crt -subject server.crt -noout)
+Validity: $(openssl x509 -in server.crt -validity server.crt -noout)
+Fingerprint: $(openssl x509 -in server.crt -fingerprint sha256 server.crt -noout)
+root@f7f90cc28f7c:/app/ssl# cat > /app/check_cert.py << 'EOF'
+> import sys
+> import subprocess
+> import os
+> import ssl
+> from datetime import datetime
+>
+> def get_subject(cert_path):
+>     try:
+>         with open(cert_path, 'rb') as f:
+>             cert_data = f.read()
+>         # Use ssl.Certificate if available
+>         if hasattr(ssl, 'Certificate'):
+>             cert = ssl.Certificate(cert_data)
+>             return cert.subject
+>         else:
+>             # Fallback: use OpenSSL via subprocess
+>             # We'll run the command and capture the line starting with 'Subject:'
+>             result = subprocess.check_output(['openssl', 'x509', '-subject', cert_path], stderr=subprocess.STDOUT)
+>             lines = result.split('\n')
+>             for line in lines:
+>                 if line.startswith('Subject:'):
+>                     return line.split(':')[1].strip()
+>     except subprocess.CalledProcessError as e:
+>         print(f'ERROR: Failed to get subject: {e}', file=sys.stderr)
+>         sys.exit(1)
+>     except Exception as e:
+>         print(f'ERROR: Failed to load certificate: {e}', file=sys.stderr)
+>         sys.exit(1)
+>
+> def get_validity_dates(cert_path):
+>     try:
+>         result = subprocess.check_output(['openssl', 'x509', '-validity', cert_path], stderr=subprocess.STDOUT)
+>         lines = result.split('\n')
+>         for line in lines:
+>             if line.startswith('Valid from:'):
+>                 start = line.split()[1].rstrip(' to')
+>                 end = line.split()[-1]
+>                 return start, end
+>                 break
+>         return None, None
+>     except subprocess.CalledProcessError as e:
+>         print(f'ERROR: Failed to get validity dates: {e}', file=sys.stderr)
+>         sys.exit(1)
+>     except Exception as e:
+>         print(f'ERROR: Failed to get validity dates: {e}', file=sys.stderr)
+>         sys.exit(1)
+>
+> def get_fingerprint(cert_path):
+>     try:
+>         result = subprocess.check_output(['openssl', 'x509', '-fingerprint', 'sha256', cert_path], stderr=subprocess.STDOUT)
+>         lines = result.split('\n')
+>         for line in lines:
+>             if line.startswith('Fingerprint:'):
+>                 return line.split(':')[1].strip()
+>                 break
+>         return None
+>     except subprocess.CalledProcessError as e:
+>         print(f'WARNING: Could not compute SHA-256 fingerprint: {e}', file=sys.stderr)
+>         return None
+>     except Exception as e:
+>         print(f'WARNING: Could not compute SHA-256 fingerprint: {e}', file=sys.stderr)
+>         return None
+>
+> def main():
+>     cert_path = '/app/ssl/server.crt'
+>     if not os.path.exists(cert_path):
+>         print('ERROR: Certificate file not found')
+>         sys.exit(1)
+>     # Subject
+>     subj = get_subject(cert_path)
+>     print(f'Subject: {subj}')
+>     # Common Name
+>     common = subj.get('commonName') or subj.get('CN')
+>     print(f'Common Name: {common}')
+>     # Validity dates
+>     start, end = get_validity_dates(cert_path)
+>     if start and end:
+>         print(f'Validity: {start} to {end}')
+>     else:
+>         print('Validity: Could not determine validity dates')
+>     # SHA-256 fingerprint
+>     fp = get_fingerprint(cert_path)
+>     if fp:
+>         print(f'SHA-256 Fingerprint: {fp}')
+>     else:
+>         print('WARNING: Could not compute SHA-256 fingerprint')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f7f90cc28f7c:/app/ssl# chmod 755 /app/check_cert.py
+root@f7f90cc28f7c:/app/ssl# python3 /app/check_cert.py
+ERROR: Failed to get subject: Command '['openssl', 'x509', '-subject', '/app/ssl/server.crt']' returned non-zero exit status 1.
+root@f7f90cc28f7c:/app/ssl#

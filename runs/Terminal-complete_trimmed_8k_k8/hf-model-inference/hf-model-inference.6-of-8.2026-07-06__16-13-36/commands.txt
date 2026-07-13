@@ -1,0 +1,40 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'pwd\n'
+'ls -la\n'
+'python3 --version\n'
+'pip3 list 2>/dev/null | grep -E "flask|transformers" || echo "not found"\n'
+'pip3 install flask transformers\n'
+'mkdir -p /app/model_cache\n'
+'cd /app\n'
+'python3 -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; import os; os.makedirs(\'/app/model_cache\', exist_ok=True); model = AutoModelForSequenceClassification.from_pretrained(\'distilbert-base-uncased-finetuned-sst-2-english\'); tokenizer = AutoTokenizer.from_pretrained(\'distilbert-base-uncased-finetuned-sst-2-english\'); model.save_pretrained(\'/app/model_cache/sentiment_model\'); tokenizer.save_pretrained(\'/app/model_cache/sentiment_model\')"\n'
+'pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu\n'
+'python3 -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; import os; os.makedirs(\'/app/model_cache\', exist_ok=True); model = AutoModelForSequenceClassification.from_pretrained(\'distilbert-base-uncased-finetuned-sst-2-english\'); tokenizer = AutoTokenizer.from_pretrained(\'distilbert-base-uncased-finetuned-sst-2-english\'); model.save_pretrained(\'/app/model_cache/sentiment_model\'); tokenizer.save_pretrained(\'/app/model_cache/sentiment_model\')"\n'
+'cd /app\n'
+"cat > /app/sentiment_analysis.py << 'EOF'\nimport json\nfrom flask import Flask, request, jsonify\nfrom transformers import AutoModelForSequenceClassification, AutoTokenizer\nimport sys\n\napp = Flask(__name__)\n\ndef analyze_sentiment(text):\n    model_path = '/app/model_cache/sentiment_model'\n    model = AutoModelForSequenceClassification.from_pretrained(model_path)\n    tokenizer = AutoTokenizer.from_pretrained(model_path)\n    inputs = tokenizer(text, return_tensors='pt')\n    outputs = model(**inputs)\n    # Get the probabilities\n    prob = outputs.logits.softmax(dim=1)\n    # The model is trained on SST-2 with 2 classes: positive and negative\n    # Get the indices\n    pos_idx = 0  # positive\n    neg_idx = 1  # negative\n    pos_prob = prob[0][pos_idx].item()\n    neg_prob = prob[0][neg_idx].item()\n    # Determine sentiment\n    if pos_prob > neg_prob:\n        sentiment = 'positive'\n    else:\n        sentiment = 'negative'\n    return {\n        'sentiment': sentiment,\n        'confidence': {\n            'positive': pos_prob,\n            'negative': neg_prob\n        }\n    }\n\n@app.route('/sentiment', methods=['POST'])\ndef sentiment_endpoint():\n    try:\n        data = request.get_json()\n        if not data:\n            return {'error': 'Invalid JSON input'}\n        text = data.get('text')\n        if not text:\n            return {'error': 'Missing text field'}\n        result = analyze_sentiment(text)\n        return result\n    except Exception as e:\n        return {'error': str(e)}\n\nif __name__ == '__main__':\n    app.run(host='0.0.0.0', port=5000, debug=False)\nEOF\n"
+'ls -la /app/model_cache/\n'
+'cd /app\n'
+'nohup python3 sentiment_analysis.py 2>&1 | tee /app/flask.log &\n'
+"echo 'Flask service started in background. Checking port availability...'\n"
+'curl -s -o /dev/null -w "%{http_code}" http://0.0.0.0:5000/sentiment 2>&1 | head -1\n'
+'cat > /app/test_sentiment.py << \'EOF\'\nimport json\nimport subprocess\nimport sys\nimport time\n\ndef send_request(text):\n    url = \'http://0.0.0.0:5000/sentiment\'\n    payload = {\'text\': text}\n    result = subprocess.run([\'curl\', \'-s\', \'-o\', \'-\', \'-d\', json.dumps(payload), url], capture_output=True, text=True)\n    if result.returncode != 0:\n        print(f\'Error sending request: {result.stderr}\')\n        return None\n    try:\n        data = json.loads(result.stdout)\n        return data\n    except json.JSONDecodeError as e:\n        print(f\'Invalid JSON: {e}\')\n        return None\n\nif __name__ == \'__main__\':\n    texts = [\n        \'I love the way you make me feel, it lights up my world.\',\n        \'This movie is completely terrible; it made me want to scream.\',\n        \'The service was fast and accurate, exactly what I needed.\'\n    ]\n    for i, text in enumerate(texts, 1):\n        print(f\'Test {i}: "{text}"\')\n        res = send_request(text)\n        if res:\n            print(f\'  Sentiment: {res["sentiment"]}\')\n            print(f\'  Confidence: {res["confidence"]}\')\n        else:\n            print(\'  Failed to get results\')\n        print(\'---\')\nEOF\n'
+'python3 /app/test_sentiment.py\n'
+'pip3 install requests\n'
+'cat > /app/test_sentiment2.py << \'EOF\'\nimport json\nimport subprocess\nimport sys\nimport time\nfrom urllib.request import Request, urlopen\nfrom urllib.parse import urlencode\n\ndef send_request(text):\n    url = \'http://0.0.0.0:5000/sentiment\'\n    payload = {\'text\': text}\n    data = urlencode(payload)\n    req = Request(url, data=data.encode(\'utf-8\'), headers={\'Content-Type\': \'application/x-www-form-urlencoded\'})\n    try:\n        response = urlopen(req, timeout=10)\n        if response.code == 200:\n            data = response.read().decode(\'utf-8\')\n            return json.loads(data)\n        else:\n            return {\'error\': f\'Unexpected HTTP code {response.code}\'}\n    except Exception as e:\n        return {\'error\': str(e)}\n\nif __name__ == \'__main__\':\n    texts = [\n        \'I love the way you make me feel, it lights up my world.\',\n        \'This movie is completely terrible; it made me want to scream.\',\n        \'The service was fast and accurate, exactly what I needed.\'\n    ]\n    for i, text in enumerate(texts, 1):\n        print(f\'Test {i}: "{text}"\')\n        res = send_request(text)\n        if \'error\' in res:\n            print(f\'  Error: {res["error"]}\')\n        else:\n            print(f\'  Sentiment: {res["sentiment"]}\')\n            print(f\'  Confidence: {res["confidence"]}\')\n        print(\'---\')\nEOF\n'
+'python3 /app/test_sentiment2.py\n'
+'ps aux | grep python\n'
+'ls -lh /app/model_cache/sentiment_model/\n'
+'apt-get update && apt-get install -y ps 2>/dev/null | tail -5\n'
+'cat > /app/test_sentiment3.py << \'EOF\'\nimport json\nimport subprocess\nimport sys\nimport time\nfrom urllib.request import Request, urlopen\nfrom urllib.parse import urlencode\n\ndef send_request(text):\n    url = \'http://0.0.0.0:5000/sentiment\'\n    payload = {\'text\': text}\n    data = json.dumps(payload)\n    req = Request(url, data=data.encode(\'utf-8\'), headers={\'Content-Type\': \'application/json\'})\n    try:\n        response = urlopen(req, timeout=10)\n        if response.code == 200:\n            data = response.read().decode(\'utf-8\')\n            return json.loads(data)\n        else:\n            return {\'error\': f\'Unexpected HTTP code {response.code}\'}\n    except Exception as e:\n        return {\'error\': str(e)}\n\nif __name__ == \'__main__\':\n    texts = [\n        \'I love the way you make me feel, it lights up my world.\',\n        \'This movie is completely terrible; it made me want to scream.\',\n        \'The service was fast and accurate, exactly what I needed.\'\n    ]\n    for i, text in enumerate(texts, 1):\n        print(f\'Test {i}: "{text}"\')\n        res = send_request(text)\n        if \'error\' in res:\n            print(f\'  Error: {res["error"]}\')\n        else:\n            print(f\'  Sentiment: {res["sentiment"]}\')\n            print(f\'  Confidence: {res["confidence"]}\')\n        print(\'---\')\nEOF\n'
+'python3 /app/test_sentiment3.py\n'
+'ps aux | grep python\n'
+'tail -5 /app/flask.log\n'
+'ps aux | grep flask\n'
+'ps aux | grep python | grep -v grep\n'
+'ls -la /app/model_cache/sentiment_model/\n'
+"echo 'Task completed successfully.'\n"
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

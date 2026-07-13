@@ -1,0 +1,129 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@3b998ee63049:/app# cd /app
+root@3b998ee63049:/app# jq -r '.rules[] | "\(.id) \(.pattern) \(.severity) \(.threshold) \(.timeframe)"' /app/rules/detection_rules.json
+SSH-BRUTE-FORCE Failed password for high 5 60
+WEB-SCAN GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php medium 3 300
+INVALID-USER invalid user low 2 300
+SUDO-COMMAND sudo:.*COMMAND= info 1 3600
+root@3b998ee63049:/app# cat > /app/intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> REPORT_DIR="/app/reports"
+> ALERT_FILE="$REPORT_DIR/alert.json"
+> REPORT_FILE="$REPORT_DIR/report.json"
+>
+> mkdir -p "$REPORT_DIR"
+>
+> # Parse rules into associative arrays
+> RULES_ID=()
+> RULES_PATTERN=()
+> RULES_SEVERITY=()
+> RULES_THRESHOLD=()
+> RULES_TIMEFRAME=()
+>
+> while read -r line; do
+>     if [[ -z "$line" ]]; then
+>         continue
+>     fi
+>     IFS=' ' read -r id pattern severity threshold timeframe <<< "$line"
+>     RULES_ID+=("$id")
+>     RULES_PATTERN+=("$pattern")
+>     RULES_SEVERITY+=("$severity")
+>     RULES_THRESHOLD+=("$threshold")
+>     RULES_TIMEFRAME+=("$timeframe")
+> done < <(jq -r '.rules[] | "\(.id) \(.pattern) \(.severity) \(.threshold) \(.timeframe)"' "$RULES_FILE")
+>
+> # Initialize associative arrays for matches and IPs
+> declare -A matches
+> declare -A ips
+>
+> TIMESTAMP=$(date -Iseconds)
+>
+> # Process auth.log
+> while IFS= read -r line; do
+>     for i in "${!RULES_ID[@]}"; do
+>         if [[ -n "${RULES_PATTERN[$i]}" ]]; then
+>             if [[ $line =~ ${RULES_PATTERN[$i]} ]]; then
+>                 matches["${RULES_ID[$i]}"=$(( ${matches["${RULES_ID[$i]}"-0]} || 0 + 1 ))]
+>                 # Extract IP from line
+>                 if [[ -f /usr/bin/awk ]]; then
+>                     ip=$(echo "$line" | awk -F' ' '{print $4}' 2>/dev/null || echo "unknown")
+>                 else
+>                     ip="unknown"
+>                 fi
+>                 ips["${RULES_ID[$i]}"="$ips["${RULES_ID[$i]}"-0]${ips["${RULES_ID[$i]}"-0]", }$ip"]
+>             fi
+>         fi
+>     done
+> done < <(cat "$LOG_DIR/auth.log")
+>
+> # Process http.log
+> while IFS= read -r line; do
+>     for i in "${!RULES_ID[@]}"; do
+>         if [[ -n "${RULES_PATTERN[$i]}" ]]; then
+>             if [[ $line =~ ${RULES_PATTERN[$i]} ]]; then
+>                 matches["${RULES_ID[$i]}"=$(( ${matches["${RULES_ID[$i]}"-0]} || 0 + 1 ))]
+>                 if [[ -f /usr/bin/awk ]]; then
+>                     ip=$(echo "$line" | awk -F' ' '{print $1}' 2>/dev/null || echo "unknown")
+>                 else
+>                     ip="unknown"
+>                 fi
+>                 ips["${RULES_ID[$i]}"="$ips["${RULES_ID[$i]}"-0]${ips["${RULES_ID[$i]}"-0]", }$ip"]
+>             fi
+>         fi
+>     done
+> done < <(cat "$LOG_DIR/http.log")
+>
+> # Build arrays for alerts and events
+> alerts=()
+> events=()
+>
+> for i in "${!RULES_ID[@]}"; do
+>     rule_id="${RULES_ID[$i]}"
+>     severity="${RULES_SEVERITY[$i]}"
+>     match_count="${matches[$rule_id]-0}"
+>     # Get IPs as comma-separated unique list
+>     ip_list="${ips[$rule_id]//, /,}"
+>     ip_list="${ip_list%,*}"
+>     ip_list="$(echo $ip_list | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')"
+>
+>     # Build alert object
+>     alert_obj="${rule_id} ${severity} ${match_count} ${ip_list}"
+>     alerts+=("$alert_obj")
+>
+>     # Build event object
+>     event_obj="${rule_id} ${severity} ${match_count} ${ip_list}"
+>     events+=("$event_obj")
+>
+>     # Build statistics object
+>     statistics["${rule_id}"]=$match_count
+>
+> done
+>
+> # Generate alert.json
+> jq -n --arg timestamp "$TIMESTAMP" --argjson alerts "$(jq -R . <<< "${alerts[*]}" | jq -s '.')" \
+>     '{timestamp: $timestamp, alerts: $alerts}' > "$ALERT_FILE"
+>
+> # Generate report.json
+> jq -n --arg timestamp "$TIMESTAMP" --argjson events "$(jq -R . <<< "${events[*]}" | jq -s '.')" \
+>     --argjson statistics "$(jq -R . <<< "${!statistics[@]}|\(.key):\(.value)" | jq -s '.')" \
+>     '{timestamp: $timestamp, events: $events, statistics: $statistics}' > "$REPORT_FILE"
+>
+> echo "Detection complete. Alerts saved to $ALERT_FILE, report to $REPORT_FILE"
+> EOF
+root@3b998ee63049:/app# chmod +x /app/intrusion_detector.sh
+root@3b998ee63049:/app# cd /app
+root@3b998ee63049:/app# ./intrusion_detector.sh
+./intrusion_detector.sh: line 66: unexpected EOF while looking for matching `}'
+root@3b998ee63049:/app# cat /app/reports/alert.json
+cat: /app/reports/alert.json: No such file or directory
+root@3b998ee63049:/app# cat /app/reports/report.json
+cat: /app/reports/report.json: No such file or directory
+root@3b998ee63049:/app#

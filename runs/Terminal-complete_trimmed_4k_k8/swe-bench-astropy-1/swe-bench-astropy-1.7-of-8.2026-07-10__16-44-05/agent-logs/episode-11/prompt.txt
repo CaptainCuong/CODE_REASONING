@@ -1,0 +1,94 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@3645ab3bc7f5:/app# cat > /app/debug_separability.py << 'EOF'
+> import astropy.modeling.separable as sep
+> from astropy.modeling import models as m
+> import numpy as np
+>
+> left = m.Pix2Sky_TAN()
+> right = m.Linear1D(10)
+> print('left matrix:', sep.separability_matrix(left))
+> print('right matrix:', sep.separability_matrix(right))
+>
+> import astropy.modeling.utils as utils
+> from astropy.modeling import Model
+> noutp = sep._compute_n_outputs(left, right)
+> cleft = sep._coord_matrix(left, 'left', noutp)
+> cright = sep._coord_matrix(right, 'right', noutp)
+> print('cleft:', cleft)
+> print('cright:', cright)
+> result = np.hstack([cleft, cright])
+> print('result:', result)
+>
+> # Now test the _cstack function
+> from astropy.modeling import models as m
+> left = m.Linear1D(10)
+> right = m.Linear1D(5)
+> cm = left & right
+> print('\nTesting cm matrix:')
+> print(sep.separability_matrix(cm))
+>
+> # Let's also test the nested compound
+> nested = m.Pix2Sky_TAN() & cm
+> print('\nTesting nested matrix:')
+> print(sep.separability_matrix(nested))
+>
+> # We'll also examine the _separable function to see what it returns for nested.
+> import inspect
+> print('\n--- _separable source ---')
+> print(inspect.getsource(sep._separable))
+> EOF
+root@3645ab3bc7f5:/app# python3 /app/debug_separability.py
+left matrix: [[ True  True]
+ [ True  True]]
+right matrix: [[ True]]
+cleft: [[1. 1.]
+ [1. 1.]
+ [0. 0.]]
+cright: [[0.]
+ [0.]
+ [1.]]
+result: [[1. 1. 0.]
+ [1. 1. 0.]
+ [0. 0. 1.]]
+
+Testing cm matrix:
+[[ True False]
+ [False  True]]
+
+Testing nested matrix:
+[[ True  True False False]
+ [ True  True False False]
+ [False False  True False]
+ [False False False  True]]
+
+--- _separable source ---
+def _separable(transform):
+    """
+    Calculate the separability of outputs.
+
+    Parameters
+    ----------
+    transform : `astropy.modeling.Model`
+        A transform (usually a compound model).
+
+    Returns :
+    is_separable : ndarray of dtype np.bool
+        An array of shape (transform.n_outputs,) of boolean type
+        Each element represents the separablity of the corresponding output.
+    """
+    if (
+        transform_matrix := transform._calculate_separability_matrix()
+    ) is not NotImplemented:
+        return transform_matrix
+    elif isinstance(transform, CompoundModel):
+        sepleft = _separable(transform.left)
+        sepright = _separable(transform.right)
+        return _operators[transform.op](sepleft, sepright)
+    elif isinstance(transform, Model):
+        return _coord_matrix(transform, "left", transform.n_outputs)
+
+root@3645ab3bc7f5:/app#

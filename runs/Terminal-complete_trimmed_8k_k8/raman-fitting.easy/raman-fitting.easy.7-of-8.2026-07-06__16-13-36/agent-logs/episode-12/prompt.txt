@@ -1,0 +1,141 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+nd
+root@ab6bcd5c4563:/app# cat > fit_final.py << 'EOF'
+> import numpy as np
+> import scipy.signal as signal
+> import scipy.optimize as opt
+> import json
+>
+> # Load and preprocess data
+> with open('graphene.dat', 'r') as f:
+>     lines = f.readlines()
+>
+> data = []
+> for line in lines:
+>     line = line.strip('\r\n')
+>     parts = line.split(',')
+>     if len(parts) != 3:
+>         continue
+>     intensity = float(parts[2])
+>     x = float(parts[0])
+>     data.append([x, intensity])
+>
+> data = np.array(data)
+> x = data[:, 0]
+> y = data[:, 1]
+> print('Data shape:', x.shape)
+> print('x min, max:', x.min(), x.max())
+> print('y min, max:', y.min(), y.max())
+>
+> # Find peaks with prominence
+> peaks, props = signal.find_peaks(y, prominence=50)
+> print('Number of peaks:', len(peaks))
+> print('Peak indices:', peaks[:10])
+>
+> # Get prominences
+> prominences = props['prominences']
+> # Sort peaks by prominence descending
+> sorted_indices = np.argsort(prominences)[::-1]
+> peak_indices = peaks[sorted_indices[:2]]
+> print('Top 2 peaks indices:', peak_indices)
+> print('Corresponding prominences:', prominences[sorted_indices[:2]])
+>
+> # Compute scaling factor using known peak positions
+> x_peak1 = x[peak_indices[0]]  # lower x
+> x_peak2 = x[peak_indices[1]]  # higher x
+> print('Assuming G at x=', x_peak1, 'and 2D at x=', x_peak2)
+>
+> expected_diff_cm = 2700 - 1580
+> scaling_factor = expected_diff_cm / (x_peak2 - x_peak1)
+> print('Scaling factor (cm per arbitrary unit):', scaling_factor)
+>
+> # Define Lorentzian function
+> def lorentzian(x, x0, gamma, amplitude, offset):
+>     return amplitude * gamma / ( (x - x0)**2 + gamma**2 ) + offset
+>
+> # Fit each peak
+> def fit_peak(x, y, x0_guess, y0_guess, peak_idx):
+>     # Use a window around the peak to avoid fitting noise too much
+>     start = max(0, peak_idx - 50)
+>     end = min(len(x), peak_idx + 50)
+>     xi_window = x[start:end]
+>     yi_window = y[start:end]
+>     # Initial guess: amplitude = peak intensity, gamma = 10, offset = 0
+>     p0 = (x0_guess, 10, y0_guess, 0)
+>     try:
+>         popt, pcov = opt.curve_fit(lorentzian, xi_window, yi_window, p0=p0, maxfev=5000)
+>         return popt
+>     except Exception as e:
+>         print('Fit failed for peak at x=', x0_guess, e)
+>         return None
+>
+> results = {}
+> for idx, peak_idx in enumerate(peak_indices):
+>     xi = x[peak_idx]
+>     yi = y[peak_idx]
+>     popt = fit_peak(x, y, xi, yi, peak_idx)
+>     if popt is None:
+>         print('Could not fit peak at x=', xi)
+>         continue
+>     x0_arb, gamma_arb, amp_arb, offset_arb = popt
+>     # Convert to cm-1
+>     x0_cm = x0_arb * scaling_factor
+>     gamma_cm = gamma_arb * scaling_factor
+>     results[f'Peak{idx+1}'] = {
+>         'x0': float(x0_cm),
+>         'gamma': float(gamma_cm),
+>         'amplitude': float(amp_arb),
+>         'offset': float(offset_arb)
+>     }
+>
+> # Assign G to the lower x peak, 2D to the higher x peak
+> results['G'] = results['Peak1']
+> results['2D'] = results['Peak2']
+>
+> # Write results
+> with open('results.json', 'w') as f:
+>     json.dump(results, f, indent=2)
+> print('Results written to results.json')
+> print(json.dumps(results, indent=2))
+> EOF
+root@ab6bcd5c4563:/app# python3 fit_final.py
+Data shape: (3565,)
+x min, max: 1648.0 47183.0
+y min, max: 485.0 999994.0
+Number of peaks: 1200
+Peak indices: [ 2  5  7  9 11 14 17 20 23 27]
+Top 2 peaks indices: [2897 1401]
+Corresponding prominences: [999120. 998650.]
+Assuming G at x= 1863.0 and 2D at x= 3073.0
+Scaling factor (cm per arbitrary unit): 0.9256198347107438
+Results written to results.json
+{
+  "Peak1": {
+    "x0": 1720.7642965496277,
+    "gamma": -279.54186477175756,
+    "amplitude": -4502300832.017437,
+    "offset": -14340876.988289533
+  },
+  "Peak2": {
+    "x0": 2843.9918118061714,
+    "gamma": 30.485109443506143,
+    "amplitude": 3505808.8768856595,
+    "offset": 465571.6895986762
+  },
+  "G": {
+    "x0": 1720.7642965496277,
+    "gamma": -279.54186477175756,
+    "amplitude": -4502300832.017437,
+    "offset": -14340876.988289533
+  },
+  "2D": {
+    "x0": 2843.9918118061714,
+    "gamma": 30.485109443506143,
+    "amplitude": 3505808.8768856595,
+    "offset": 465571.6895986762
+  }
+}
+root@ab6bcd5c4563:/app#

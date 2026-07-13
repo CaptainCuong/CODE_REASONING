@@ -1,0 +1,65 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@cb6b61ca4db2:/app# cd /app/ssl
+root@cb6b61ca4db2:/app/ssl# rm -f server.csr server.crt verification.txt check_cert.py
+root@cb6b61ca4db2:/app/ssl# openssl genrsa -out server.key 2048
+root@cb6b61ca4db2:/app/ssl# chmod 600 server.key
+root@cb6b61ca4db2:/app/ssl# openssl req -new -key server.key -subj "/C=US/ST=CA/L=San Francisco/O=DevOps Team/CN=dev-internal.company.local" -out server.csr
+root@cb6b61ca4db2:/app/ssl# openssl x509 -req -in server.csr -signkey server.key -days 365 -out server.crt
+Certificate request self-signature ok
+subject=C = US, ST = CA, L = San Francisco, O = DevOps Team, CN = dev-internal.company.local
+root@cb6b61ca4db2:/app/ssl# cat server.key server.crt > server.pem
+root@cb6b61ca4db2:/app/ssl# openssl x509 -in server.crt -noout -subject > verification.txt 2>&1
+root@cb6b61ca4db2:/app/ssl# echo '---' >> verification.txt
+root@cb6b61ca4db2:/app/ssl# openssl x509 -in server.crt -noout -dates >> verification.txt
+root@cb6b61ca4db2:/app/ssl# echo '---' >> verification.txt
+root@cb6b61ca4db2:/app/ssl# openssl x509 -in server.crt -fingerprint -sha256 >> verification.txt
+root@cb6b61ca4db2:/app/ssl# echo 'Subject:' >> verification.txt
+root@cb6b61ca4db2:/app/ssl# grep '^subject:' verification.txt | cut -d' ' -f3- >> verification.txt
+root@cb6b61ca4db2:/app/ssl# echo 'Validity dates:' >> verification.txt
+root@cb6b61ca4db2:/app/ssl# grep '^notBefore:' verification.txt | cut -d' ' -f2- >> verification.txt
+root@cb6b61ca4db2:/app/ssl# echo 'SHA-256 fingerprint:' >> verification.txt
+root@cb6b61ca4db2:/app/ssl# grep '^SHA256' verification.txt | cut -d' ' -f2- >> verification.txt
+root@cb6b61ca4db2:/app/ssl# cd /app
+root@cb6b61ca4db2:/app# cat > check_cert.py << 'EOF'
+> import ssl
+> import sys
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>     try:
+>         # Load certificate
+>         with open(cert_path, 'rb') as f:
+>             cert_data = f.read()
+>         cert = ssl.Certificate(cert_data)
+>         print('Certificate loaded successfully.')
+>         print('Subject:', cert.subject)
+>         print('Common Name:', cert.subject.get('commonName', 'N/A'))
+>         # Get expiration date
+>         not_after = cert.not_after
+>         if not_after:
+>             # Convert to YYYY-MM-DD
+>             date_str = not_after.strftime('%Y-%m-%d')
+>             print('Expiration date:', date_str)
+>         else:
+>             print('No expiration date found.')
+>         # Verify that the certificate can be used for TLS
+>         # We'll create a simple SSL context to check
+>         context = ssl.SSLSocketContext(ssl.SSLv23_METHOD)
+>         context.set_verify(ssl.CERT_NONE)
+>         context.load_cert_chain(cert_path, key_path)
+>         print('Certificate verification successful.')
+>     except Exception as e:
+>         print('Error:', e)
+>         sys.exit(1)
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@cb6b61ca4db2:/app# python3 check_cert.py
+Error: module 'ssl' has no attribute 'Certificate'
+root@cb6b61ca4db2:/app#

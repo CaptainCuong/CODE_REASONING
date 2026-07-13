@@ -1,0 +1,234 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@174e784e12f0:/usr/local/lib/python3.13/site-packages/fasttext# grep -n 'self.labels' FastText.py
+root@174e784e12f0:/usr/local/lib/python3.13/site-packages/fasttext# grep -n 'labels' FastText.py
+95:        self._labels = None
+197:        Given a string, get a list of labels and a list of
+199:        of returned labels. A choice of 5, will return the 5
+200:        most probable labels. By default this returns only
+202:        the returned labels by a threshold on probability. A
+203:        choice of 0.5 will return labels with at least 0.5
+205:        determine the returned labels.
+226:            all_labels, all_probs = self.f.multilinePredict(
+230:            return all_labels, all_probs
+235:                probs, labels = zip(*predictions)
+237:                probs, labels = ([], ())
+239:            return labels, np.array(probs, copy=False)
+272:    def get_labels(self, include_freq=False, on_unicode_error="strict"):
+274:        Get the entire list of labels of the dictionary optionally
+275:        including the frequency of the individual labels. Unsupervised
+276:        models use words as labels, which is why get_labels
+292:        Split a line of text into words and labels. Labels must start with
+383:    def labels(self):
+384:        if self._labels is None:
+385:            self._labels = self.get_labels()
+386:        return self._labels
+574:    The input field must not contain any labels or use the specified label prefix
+root@174e784e12f0:/usr/local/lib/python3.13/site-packages/fasttext# sed -n '200,350p' FastText.py
+        most probable labels. By default this returns only
+        the most likely label and probability. threshold filters
+        the returned labels by a threshold on probability. A
+        choice of 0.5 will return labels with at least 0.5
+        probability. k and threshold will be applied together to
+        determine the returned labels.
+
+        This function assumes to be given
+        a single line of text. We split words on whitespace (space,
+        newline, tab, vertical tab) and the control characters carriage
+        return, formfeed and the null character.
+
+        If the model is not supervised, this function will throw a ValueError.
+
+        If given a list of strings, it will return a list of results as usually
+        received for a single line of text.
+        """
+
+        def check(entry):
+            if entry.find("\n") != -1:
+                raise ValueError("predict processes one line at a time (remove '\\n')")
+            entry += "\n"
+            return entry
+
+        if type(text) == list:
+            text = [check(entry) for entry in text]
+            all_labels, all_probs = self.f.multilinePredict(
+                text, k, threshold, on_unicode_error
+            )
+
+            return all_labels, all_probs
+        else:
+            text = check(text)
+            predictions = self.f.predict(text, k, threshold, on_unicode_error)
+            if predictions:
+                probs, labels = zip(*predictions)
+            else:
+                probs, labels = ([], ())
+
+            return labels, np.array(probs, copy=False)
+
+    def get_input_matrix(self):
+        """
+        Get a reference to the full input matrix of a Model. This only
+        works if the model is not quantized.
+        """
+        if self.f.isQuant():
+            raise ValueError("Can't get quantized Matrix")
+        return np.array(self.f.getInputMatrix())
+
+    def get_output_matrix(self):
+        """
+        Get a reference to the full output matrix of a Model. This only
+        works if the model is not quantized.
+        """
+        if self.f.isQuant():
+            raise ValueError("Can't get quantized Matrix")
+        return np.array(self.f.getOutputMatrix())
+
+    def get_words(self, include_freq=False, on_unicode_error="strict"):
+        """
+        Get the entire list of words of the dictionary optionally
+        including the frequency of the individual words. This
+        does not include any subwords. For that please consult
+        the function get_subwords.
+        """
+        pair = self.f.getVocab(on_unicode_error)
+        if include_freq:
+            return (pair[0], np.array(pair[1]))
+        else:
+            return pair[0]
+
+    def get_labels(self, include_freq=False, on_unicode_error="strict"):
+        """
+        Get the entire list of labels of the dictionary optionally
+        including the frequency of the individual labels. Unsupervised
+        models use words as labels, which is why get_labels
+        will call and return get_words for this type of
+        model.
+        """
+        a = self.f.getArgs()
+        if a.model == model_name.supervised:
+            pair = self.f.getLabels(on_unicode_error)
+            if include_freq:
+                return (pair[0], np.array(pair[1]))
+            else:
+                return pair[0]
+        else:
+            return self.get_words(include_freq)
+
+    def get_line(self, text, on_unicode_error="strict"):
+        """
+        Split a line of text into words and labels. Labels must start with
+        the prefix used to create the model (__label__ by default).
+        """
+
+        def check(entry):
+            if entry.find("\n") != -1:
+                raise ValueError("get_line processes one line at a time (remove '\\n')")
+            entry += "\n"
+            return entry
+
+        if type(text) == list:
+            text = [check(entry) for entry in text]
+            return self.f.multilineGetLine(text, on_unicode_error)
+        else:
+            text = check(text)
+            return self.f.getLine(text, on_unicode_error)
+
+    def save_model(self, path):
+        """Save the model to the given path"""
+        self.f.saveModel(path)
+
+    def test(self, path, k=1, threshold=0.0):
+        """Evaluate supervised model using file given by path"""
+        return self.f.test(path, k, threshold)
+
+    def test_label(self, path, k=1, threshold=0.0):
+        """
+        Return the precision and recall score for each label.
+
+        The returned value is a dictionary, where the key is the label.
+        For example:
+        f.test_label(...)
+        {'__label__italian-cuisine' : {'precision' : 0.7, 'recall' : 0.74}}
+        """
+        return self.f.testLabel(path, k, threshold)
+
+    def get_meter(self, path, k=-1):
+        meter = _Meter(self, self.f.getMeter(path, k))
+
+        return meter
+
+    def quantize(
+        self,
+        input=None,
+        qout=False,
+        cutoff=0,
+        retrain=False,
+        epoch=None,
+        lr=None,
+        thread=None,
+        verbose=None,
+        dsub=2,
+        qnorm=False,
+    ):
+        """
+        Quantize the model reducing the size of the model and
+        it's memory footprint.
+        """
+        a = self.f.getArgs()
+root@174e784e12f0:/usr/local/lib/python3.13/site-packages/fasttext# sed -n '250,300p' FastText.py
+    def get_output_matrix(self):
+        """
+        Get a reference to the full output matrix of a Model. This only
+        works if the model is not quantized.
+        """
+        if self.f.isQuant():
+            raise ValueError("Can't get quantized Matrix")
+        return np.array(self.f.getOutputMatrix())
+
+    def get_words(self, include_freq=False, on_unicode_error="strict"):
+        """
+        Get the entire list of words of the dictionary optionally
+        including the frequency of the individual words. This
+        does not include any subwords. For that please consult
+        the function get_subwords.
+        """
+        pair = self.f.getVocab(on_unicode_error)
+        if include_freq:
+            return (pair[0], np.array(pair[1]))
+        else:
+            return pair[0]
+
+    def get_labels(self, include_freq=False, on_unicode_error="strict"):
+        """
+        Get the entire list of labels of the dictionary optionally
+        including the frequency of the individual labels. Unsupervised
+        models use words as labels, which is why get_labels
+        will call and return get_words for this type of
+        model.
+        """
+        a = self.f.getArgs()
+        if a.model == model_name.supervised:
+            pair = self.f.getLabels(on_unicode_error)
+            if include_freq:
+                return (pair[0], np.array(pair[1]))
+            else:
+                return pair[0]
+        else:
+            return self.get_words(include_freq)
+
+    def get_line(self, text, on_unicode_error="strict"):
+        """
+        Split a line of text into words and labels. Labels must start with
+        the prefix used to create the model (__label__ by default).
+        """
+
+        def check(entry):
+            if entry.find("\n") != -1:
+                raise ValueError("get_line processes one line at a time (remove '\\n')")
+            entry += "\n"
+            return entry
+root@174e784e12f0:/usr/local/lib/python3.13/site-packages/fasttext#

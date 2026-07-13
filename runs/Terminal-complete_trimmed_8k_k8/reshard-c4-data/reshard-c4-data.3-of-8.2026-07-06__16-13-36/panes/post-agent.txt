@@ -1,0 +1,1599 @@
+root@803cbca0d5fb:/app# ls -la
+total 524
+drwxr-xr-x 1 root root     30 Jul  7 15:23 .
+drwxr-xr-x 1 root root     72 Jul  7 15:34 ..
+drwxr-xr-x 2 root root 405504 Jul  7 15:23 c4_sample
+root@803cbca0d5fb:/app# cd c4_sample
+root@803cbca0d5fb:/app/c4_sample# find . -type f | wc -l
+9898
+root@803cbca0d5fb:/app/c4_sample# find . -type f | head -20
+./c4-mini-00000-of-10000.jsonl
+./c4-mini-00001-of-10000.jsonl
+./c4-mini-00002-of-10000.jsonl
+./c4-mini-00003-of-10000.jsonl
+./c4-mini-00004-of-10000.jsonl
+./c4-mini-00005-of-10000.jsonl
+./c4-mini-00006-of-10000.jsonl
+./c4-mini-00007-of-10000.jsonl
+./c4-mini-00008-of-10000.jsonl
+./c4-mini-00009-of-10000.jsonl
+./c4-mini-00010-of-10000.jsonl
+./c4-mini-00011-of-10000.jsonl
+./c4-mini-00012-of-10000.jsonl
+./c4-mini-00013-of-10000.jsonl
+./c4-mini-00014-of-10000.jsonl
+./c4-mini-00015-of-10000.jsonl
+./c4-mini-00016-of-10000.jsonl
+./c4-mini-00017-of-10000.jsonl
+./c4-mini-00018-of-10000.jsonl
+./c4-mini-00019-of-10000.jsonl
+root@803cbca0d5fb:/app/c4_sample# du -sh .
+800M    .
+root@803cbca0d5fb:/app/c4_sample# cd ..
+root@803cbca0d5fb:/app# find c4_sample -type d | wc -l
+1
+root@803cbca0d5fb:/app# ls -lh c4_sample/c4-mini-00000-of-10000.jsonl
+-rw-r--r-- 1 root root 69K Jul  7 15:22 c4_sample/c4-mini-00000-of-10000.jsonl
+root@803cbca0d5fb:/app# cd /app
+root@803cbca0d5fb:/app# cat > create_constrained.py << 'EOF'
+> #!/usr/bin/env python3
+> import os
+> import shutil
+> import math
+>
+> c4_sample_dir = 'c4_sample'
+> c4_reshard_dir = 'c4_reshard'
+> max_files_per_dir = 30
+> max_filesize = 15 * 1024 * 1024  # 15MB in bytes
+>
+> # Ensure c4_reshard directory exists
+> os.makedirs(c4_reshard_dir, exist_ok=True)
+>
+> # Get list of files in c4_sample
+> files = []
+> for root, dirs, filenames in os.walk(c4_sample_dir):
+>     for f in filenames:
+>         files.append(os.path.join(root, f))
+>
+> print(f'Total files: {len(files)}')
+>
+> # Calculate number of subdirectories needed
+> num_subdirs = math.ceil(len(files) / max_files_per_dir)
+> print(f'Number of subdirectories: {num_subdirs}')
+>
+> # Create subdirectories
+> for i in range(num_subdirs):
+>     subdir = os.path.join(c4_reshard_dir, f'mini_{i:06d}')
+>     os.makedirs(subdir, exist_ok=True)
+>
+> # Copy files with splitting
+> for f in files:
+>     # Get filename
+>     filename = os.path.basename(f)
+>     # Determine subdirectory index
+>     idx = (os.path.getsize(f) // max_filesize)  # use size to avoid load imbalance
+>     if idx >= num_subdirs:
+>         idx = num_subdirs - 1
+>     subdir = os.path.join(c4_reshard_dir, f'mini_{idx:06d}')
+>     # Copy file
+>     shutil.copy2(f, os.path.join(subdir, filename))
+>     # Truncate if size > max_filesize
+>     dest_path = os.path.join(subdir, filename)
+>     if os.path.getsize(dest_path) > max_filesize:
+>         # Truncate to max_filesize
+>         with open(dest_path, 'r+b') as src, open(dest_path, 'wb') as dst:
+>             dst.write(src.read(max_filesize))
+>         print(f'Truncated file {filename} to {max_filesize} bytes')
+>
+> print('c4_reshard created successfully')
+> EOF
+root@803cbca0d5fb:/app# chmod +x create_constrained.py
+root@803cbca0d5fb:/app# cat > revert.py << 'EOF'
+> #!/usr/bin/env python3
+> import os
+> import shutil
+>
+> c4_sample_dir = 'c4_sample'
+> c4_reshard_dir = 'c4_reshard'
+>
+> # Find all files in c4_reshard
+> reshard_files = []
+> for root, dirs, filenames in os.walk(c4_reshard_dir):
+>     for f in filenames:
+>         reshard_files.append(os.path.join(root, f))
+>
+> # Get original files
+> original_files = []
+> for root, dirs, filenames in os.walk(c4_sample_dir):
+>     for f in filenames:
+>         original_files.append(os.path.join(root, f))
+>
+> print(f'Found {len(reshard_files)} files in c4_reshard, {len(original_files)} files in c4_sample')
+>
+> # Map each file in c4_sample to its location in c4_reshard
+> # We'll assume that each file in c4_sample corresponds to a file in c4_reshard with same name.
+> # However, files may be split across subdirectories. We need to reconstruct the original file.
+> # Since the original files are all at the root of c4_sample, we can just copy each file from c4_reshard back to c4_sample.
+> # But if files were split, we need to combine them. Let's examine the structure.
+> # We'll first check if any file is duplicated (same name in different subdirectories).
+> # For simplicity, we'll assume each file appears only once in c4_reshard.
+> # If there are duplicates, we need to combine them. Let's implement combination.
+>
+> # Get mapping from filename to location
+> from collections import defaultdict
+> filename_to_location = defaultdict(list)
+> for f in reshard_files:
+>     filename = os.path.basename(f)
+>     filename_to_location[filename].append(f)
+>
+> # If any filename appears more than once, combine them
+> for filename, locations in filename_to_location.items():
+>     if len(locations) > 1:
+>         print(f'File {filename} appears {len(locations)} times in c4_reshard')
+>         # Combine by concatenating all files in order
+>         combined_path = os.path.join(c4_sample_dir, filename)
+>         with open(combined_path, 'wb') as dst:
+>             for loc in locations:
+>                 with open(loc, 'rb') as src:
+>                     dst.write(src.read())
+>         print(f'Combined {filename}')
+>         # Remove the individual files (optional)
+>         for loc in locations:
+>             os.remove(loc)
+>         # Remove the subdirectory if empty
+>         dirname = os.path.dirname(loc)
+>         if os.path.exists(dirname) and not os.listdir(dirname):
+>             os.rmdir(dirname)
+>
+> # Now copy each original file from c4_reshard to c4_sample
+> for orig in original_files:
+>     filename = os.path.basename(orig)
+>     # Find in c4_reshard
+>     reshard_file = None
+>     for f in reshard_files:
+>         if os.path.basename(f) == filename:
+>             reshard_file = f
+>             break
+>     if reshard_file:
+>         shutil.copy2(reshard_file, orig)
+>         os.remove(reshard_file)
+>     else:
+>         print(f'Warning: {filename} not found in c4_reshard')
+>
+> print('Reverted c4_reshard to original state')
+> EOF
+root@803cbca0d5fb:/app# chmod +x revert.py
+root@803cbca0d5fb:/app# ls -la
+total 532
+drwxr-xr-x 1 root root     64 Jul  7 15:35 .
+drwxr-xr-x 1 root root     87 Jul  7 15:34 ..
+drwxr-xr-x 2 root root 405504 Jul  7 15:23 c4_sample
+-rwxr-xr-x 1 root root   1580 Jul  7 15:35 create_constrained.py
+-rwxr-xr-x 1 root root   2808 Jul  7 15:35 revert.py
+root@803cbca0d5fb:/app# cd /app
+root@803cbca0d5fb:/app# cat > create_constrained.py << 'EOF'
+> #!/usr/bin/env python3
+> import os
+> import shutil
+> import math
+>
+> c4_sample_dir = 'c4_sample'
+> c4_reshard_dir = 'c4_reshard'
+> max_files_per_dir = 30
+> max_filesize = 15 * 1024 * 1024  # 15MB in bytes
+>
+> # Ensure c4_reshard directory exists
+> os.makedirs(c4_reshard_dir, exist_ok=True)
+>
+> # Get list of files in c4_sample
+> files = []
+> for root, dirs, filenames in os.walk(c4_sample_dir):
+>     for f in filenames:
+>         files.append(os.path.join(root, f))
+>
+> print(f'Total files: {len(files)}')
+>
+> # Calculate number of subdirectories needed
+> num_subdirs = math.ceil(len(files) / max_files_per_dir)
+> print(f'Number of subdirectories: {num_subdirs}')
+>
+> # Create subdirectories
+> for i in range(num_subdirs):
+>     subdir = os.path.join(c4_reshard_dir, f'mini_{i:06d}')
+>     os.makedirs(subdir, exist_ok=True)
+>
+> # Copy files with splitting
+> for idx, f in enumerate(files):
+>     # Get filename
+>     filename = os.path.basename(f)
+>     # Determine subdirectory index
+>     subdir_idx = (idx // max_files_per_dir) % num_subdirs  # evenly distribute
+>     subdir = os.path.join(c4_reshard_dir, f'mini_{subdir_idx:06d}')
+>     # Copy file
+>     shutil.copy2(f, os.path.join(subdir, filename))
+>     # Truncate if size > max_filesize
+>     dest_path = os.path.join(subdir, filename)
+>     if os.path.getsize(dest_path) > max_filesize:
+>         # Truncate to max_filesize
+>         with open(dest_path, 'r+b') as src, open(dest_path, 'wb') as dst:
+>             dst.write(src.read(max_filesize))
+>         print(f'Truncated file {filename} to {max_filesize} bytes')
+>
+> print('c4_reshard created successfully')
+> EOF
+root@803cbca0d5fb:/app# python3 create_constrained.py
+Total files: 9898
+Number of subdirectories: 330
+c4_reshard created successfully
+root@803cbca0d5fb:/app# cd /app
+root@803cbca0d5fb:/app# find c4_reshard -type f | wc -l
+9898
+root@803cbca0d5fb:/app# find c4_reshard -type f | xargs ls -1 | wc -l
+for d in c4_reshard/*; do if [ -d "$d" ]; then echo "$d:"; find "$d" -type f | wc -l; fi; done
+9898
+root@803cbca0d5fb:/app# for d in c4_reshard/*; do if [ -d "$d" ]; then echo "$d:"; find "$d" -type f | wc -l; fi; done
+c4_reshard/mini_000000:
+30
+c4_reshard/mini_000001:
+30
+c4_reshard/mini_000002:
+30
+c4_reshard/mini_000003:
+30
+c4_reshard/mini_000004:
+30
+c4_reshard/mini_000005:
+30
+c4_reshard/mini_000006:
+30
+c4_reshard/mini_000007:
+30
+c4_reshard/mini_000008:
+30
+c4_reshard/mini_000009:
+30
+c4_reshard/mini_000010:
+30
+c4_reshard/mini_000011:
+30
+c4_reshard/mini_000012:
+30
+c4_reshard/mini_000013:
+30
+c4_reshard/mini_000014:
+30
+c4_reshard/mini_000015:
+30
+c4_reshard/mini_000016:
+30
+c4_reshard/mini_000017:
+30
+c4_reshard/mini_000018:
+30
+c4_reshard/mini_000019:
+30
+c4_reshard/mini_000020:
+30
+c4_reshard/mini_000021:
+30
+c4_reshard/mini_000022:
+30
+c4_reshard/mini_000023:
+30
+c4_reshard/mini_000024:
+30
+c4_reshard/mini_000025:
+30
+c4_reshard/mini_000026:
+30
+c4_reshard/mini_000027:
+30
+c4_reshard/mini_000028:
+30
+c4_reshard/mini_000029:
+30
+c4_reshard/mini_000030:
+30
+c4_reshard/mini_000031:
+30
+c4_reshard/mini_000032:
+30
+c4_reshard/mini_000033:
+30
+c4_reshard/mini_000034:
+30
+c4_reshard/mini_000035:
+30
+c4_reshard/mini_000036:
+30
+c4_reshard/mini_000037:
+30
+c4_reshard/mini_000038:
+30
+c4_reshard/mini_000039:
+30
+c4_reshard/mini_000040:
+30
+c4_reshard/mini_000041:
+30
+c4_reshard/mini_000042:
+30
+c4_reshard/mini_000043:
+30
+c4_reshard/mini_000044:
+30
+c4_reshard/mini_000045:
+30
+c4_reshard/mini_000046:
+30
+c4_reshard/mini_000047:
+30
+c4_reshard/mini_000048:
+30
+c4_reshard/mini_000049:
+30
+c4_reshard/mini_000050:
+30
+c4_reshard/mini_000051:
+30
+c4_reshard/mini_000052:
+30
+c4_reshard/mini_000053:
+30
+c4_reshard/mini_000054:
+30
+c4_reshard/mini_000055:
+30
+c4_reshard/mini_000056:
+30
+c4_reshard/mini_000057:
+30
+c4_reshard/mini_000058:
+30
+c4_reshard/mini_000059:
+30
+c4_reshard/mini_000060:
+30
+c4_reshard/mini_000061:
+30
+c4_reshard/mini_000062:
+30
+c4_reshard/mini_000063:
+30
+c4_reshard/mini_000064:
+30
+c4_reshard/mini_000065:
+30
+c4_reshard/mini_000066:
+30
+c4_reshard/mini_000067:
+30
+c4_reshard/mini_000068:
+30
+c4_reshard/mini_000069:
+30
+c4_reshard/mini_000070:
+30
+c4_reshard/mini_000071:
+30
+c4_reshard/mini_000072:
+30
+c4_reshard/mini_000073:
+30
+c4_reshard/mini_000074:
+30
+c4_reshard/mini_000075:
+30
+c4_reshard/mini_000076:
+30
+c4_reshard/mini_000077:
+30
+c4_reshard/mini_000078:
+30
+c4_reshard/mini_000079:
+30
+c4_reshard/mini_000080:
+30
+c4_reshard/mini_000081:
+30
+c4_reshard/mini_000082:
+30
+c4_reshard/mini_000083:
+30
+c4_reshard/mini_000084:
+30
+c4_reshard/mini_000085:
+30
+c4_reshard/mini_000086:
+30
+c4_reshard/mini_000087:
+30
+c4_reshard/mini_000088:
+30
+c4_reshard/mini_000089:
+30
+c4_reshard/mini_000090:
+30
+c4_reshard/mini_000091:
+30
+c4_reshard/mini_000092:
+30
+c4_reshard/mini_000093:
+30
+c4_reshard/mini_000094:
+30
+c4_reshard/mini_000095:
+30
+c4_reshard/mini_000096:
+30
+c4_reshard/mini_000097:
+30
+c4_reshard/mini_000098:
+30
+c4_reshard/mini_000099:
+30
+c4_reshard/mini_000100:
+30
+c4_reshard/mini_000101:
+30
+c4_reshard/mini_000102:
+30
+c4_reshard/mini_000103:
+30
+c4_reshard/mini_000104:
+30
+c4_reshard/mini_000105:
+30
+c4_reshard/mini_000106:
+30
+c4_reshard/mini_000107:
+30
+c4_reshard/mini_000108:
+30
+c4_reshard/mini_000109:
+30
+c4_reshard/mini_000110:
+30
+c4_reshard/mini_000111:
+30
+c4_reshard/mini_000112:
+30
+c4_reshard/mini_000113:
+30
+c4_reshard/mini_000114:
+30
+c4_reshard/mini_000115:
+30
+c4_reshard/mini_000116:
+30
+c4_reshard/mini_000117:
+30
+c4_reshard/mini_000118:
+30
+c4_reshard/mini_000119:
+30
+c4_reshard/mini_000120:
+30
+c4_reshard/mini_000121:
+30
+c4_reshard/mini_000122:
+30
+c4_reshard/mini_000123:
+30
+c4_reshard/mini_000124:
+30
+c4_reshard/mini_000125:
+30
+c4_reshard/mini_000126:
+30
+c4_reshard/mini_000127:
+30
+c4_reshard/mini_000128:
+30
+c4_reshard/mini_000129:
+30
+c4_reshard/mini_000130:
+30
+c4_reshard/mini_000131:
+30
+c4_reshard/mini_000132:
+30
+c4_reshard/mini_000133:
+30
+c4_reshard/mini_000134:
+30
+c4_reshard/mini_000135:
+30
+c4_reshard/mini_000136:
+30
+c4_reshard/mini_000137:
+30
+c4_reshard/mini_000138:
+30
+c4_reshard/mini_000139:
+30
+c4_reshard/mini_000140:
+30
+c4_reshard/mini_000141:
+30
+c4_reshard/mini_000142:
+30
+c4_reshard/mini_000143:
+30
+c4_reshard/mini_000144:
+30
+c4_reshard/mini_000145:
+30
+c4_reshard/mini_000146:
+30
+c4_reshard/mini_000147:
+30
+c4_reshard/mini_000148:
+30
+c4_reshard/mini_000149:
+30
+c4_reshard/mini_000150:
+30
+c4_reshard/mini_000151:
+30
+c4_reshard/mini_000152:
+30
+c4_reshard/mini_000153:
+30
+c4_reshard/mini_000154:
+30
+c4_reshard/mini_000155:
+30
+c4_reshard/mini_000156:
+30
+c4_reshard/mini_000157:
+30
+c4_reshard/mini_000158:
+30
+c4_reshard/mini_000159:
+30
+c4_reshard/mini_000160:
+30
+c4_reshard/mini_000161:
+30
+c4_reshard/mini_000162:
+30
+c4_reshard/mini_000163:
+30
+c4_reshard/mini_000164:
+30
+c4_reshard/mini_000165:
+30
+c4_reshard/mini_000166:
+30
+c4_reshard/mini_000167:
+30
+c4_reshard/mini_000168:
+30
+c4_reshard/mini_000169:
+30
+c4_reshard/mini_000170:
+30
+c4_reshard/mini_000171:
+30
+c4_reshard/mini_000172:
+30
+c4_reshard/mini_000173:
+30
+c4_reshard/mini_000174:
+30
+c4_reshard/mini_000175:
+30
+c4_reshard/mini_000176:
+30
+c4_reshard/mini_000177:
+30
+c4_reshard/mini_000178:
+30
+c4_reshard/mini_000179:
+30
+c4_reshard/mini_000180:
+30
+c4_reshard/mini_000181:
+30
+c4_reshard/mini_000182:
+30
+c4_reshard/mini_000183:
+30
+c4_reshard/mini_000184:
+30
+c4_reshard/mini_000185:
+30
+c4_reshard/mini_000186:
+30
+c4_reshard/mini_000187:
+30
+c4_reshard/mini_000188:
+30
+c4_reshard/mini_000189:
+30
+c4_reshard/mini_000190:
+30
+c4_reshard/mini_000191:
+30
+c4_reshard/mini_000192:
+30
+c4_reshard/mini_000193:
+30
+c4_reshard/mini_000194:
+30
+c4_reshard/mini_000195:
+30
+c4_reshard/mini_000196:
+30
+c4_reshard/mini_000197:
+30
+c4_reshard/mini_000198:
+30
+c4_reshard/mini_000199:
+30
+c4_reshard/mini_000200:
+30
+c4_reshard/mini_000201:
+30
+c4_reshard/mini_000202:
+30
+c4_reshard/mini_000203:
+30
+c4_reshard/mini_000204:
+30
+c4_reshard/mini_000205:
+30
+c4_reshard/mini_000206:
+30
+c4_reshard/mini_000207:
+30
+c4_reshard/mini_000208:
+30
+c4_reshard/mini_000209:
+30
+c4_reshard/mini_000210:
+30
+c4_reshard/mini_000211:
+30
+c4_reshard/mini_000212:
+30
+c4_reshard/mini_000213:
+30
+c4_reshard/mini_000214:
+30
+c4_reshard/mini_000215:
+30
+c4_reshard/mini_000216:
+30
+c4_reshard/mini_000217:
+30
+c4_reshard/mini_000218:
+30
+c4_reshard/mini_000219:
+30
+c4_reshard/mini_000220:
+30
+c4_reshard/mini_000221:
+30
+c4_reshard/mini_000222:
+30
+c4_reshard/mini_000223:
+30
+c4_reshard/mini_000224:
+30
+c4_reshard/mini_000225:
+30
+c4_reshard/mini_000226:
+30
+c4_reshard/mini_000227:
+30
+c4_reshard/mini_000228:
+30
+c4_reshard/mini_000229:
+30
+c4_reshard/mini_000230:
+30
+c4_reshard/mini_000231:
+30
+c4_reshard/mini_000232:
+30
+c4_reshard/mini_000233:
+30
+c4_reshard/mini_000234:
+30
+c4_reshard/mini_000235:
+30
+c4_reshard/mini_000236:
+30
+c4_reshard/mini_000237:
+30
+c4_reshard/mini_000238:
+30
+c4_reshard/mini_000239:
+30
+c4_reshard/mini_000240:
+30
+c4_reshard/mini_000241:
+30
+c4_reshard/mini_000242:
+30
+c4_reshard/mini_000243:
+30
+c4_reshard/mini_000244:
+30
+c4_reshard/mini_000245:
+30
+c4_reshard/mini_000246:
+30
+c4_reshard/mini_000247:
+30
+c4_reshard/mini_000248:
+30
+c4_reshard/mini_000249:
+30
+c4_reshard/mini_000250:
+30
+c4_reshard/mini_000251:
+30
+c4_reshard/mini_000252:
+30
+c4_reshard/mini_000253:
+30
+c4_reshard/mini_000254:
+30
+c4_reshard/mini_000255:
+30
+c4_reshard/mini_000256:
+for d in c4_reshard/*; do if [ -d "$d" ]; then echo "$d:"; find "$d" -type f -size +15M | wc -l; fi; done
+30
+c4_reshard/mini_000257:
+30
+c4_reshard/mini_000258:
+30
+c4_reshard/mini_000259:
+30
+c4_reshard/mini_000260:
+30
+c4_reshard/mini_000261:
+30
+c4_reshard/mini_000262:
+30
+c4_reshard/mini_000263:
+30
+c4_reshard/mini_000264:
+30
+c4_reshard/mini_000265:
+30
+c4_reshard/mini_000266:
+30
+c4_reshard/mini_000267:
+30
+c4_reshard/mini_000268:
+30
+c4_reshard/mini_000269:
+30
+c4_reshard/mini_000270:
+30
+c4_reshard/mini_000271:
+30
+c4_reshard/mini_000272:
+30
+c4_reshard/mini_000273:
+30
+c4_reshard/mini_000274:
+30
+c4_reshard/mini_000275:
+30
+c4_reshard/mini_000276:
+30
+c4_reshard/mini_000277:
+30
+c4_reshard/mini_000278:
+30
+c4_reshard/mini_000279:
+30
+c4_reshard/mini_000280:
+30
+c4_reshard/mini_000281:
+30
+c4_reshard/mini_000282:
+30
+c4_reshard/mini_000283:
+30
+c4_reshard/mini_000284:
+30
+c4_reshard/mini_000285:
+30
+c4_reshard/mini_000286:
+30
+c4_reshard/mini_000287:
+30
+c4_reshard/mini_000288:
+30
+c4_reshard/mini_000289:
+30
+c4_reshard/mini_000290:
+30
+c4_reshard/mini_000291:
+30
+c4_reshard/mini_000292:
+30
+c4_reshard/mini_000293:
+30
+c4_reshard/mini_000294:
+30
+c4_reshard/mini_000295:
+30
+c4_reshard/mini_000296:
+30
+c4_reshard/mini_000297:
+30
+c4_reshard/mini_000298:
+30
+c4_reshard/mini_000299:
+30
+c4_reshard/mini_000300:
+30
+c4_reshard/mini_000301:
+30
+c4_reshard/mini_000302:
+30
+c4_reshard/mini_000303:
+30
+c4_reshard/mini_000304:
+30
+c4_reshard/mini_000305:
+30
+c4_reshard/mini_000306:
+30
+c4_reshard/mini_000307:
+30
+c4_reshard/mini_000308:
+30
+c4_reshard/mini_000309:
+30
+c4_reshard/mini_000310:
+30
+c4_reshard/mini_000311:
+30
+c4_reshard/mini_000312:
+30
+c4_reshard/mini_000313:
+30
+c4_reshard/mini_000314:
+30
+c4_reshard/mini_000315:
+30
+c4_reshard/mini_000316:
+30
+c4_reshard/mini_000317:
+30
+c4_reshard/mini_000318:
+30
+c4_reshard/mini_000319:
+30
+c4_reshard/mini_000320:
+30
+c4_reshard/mini_000321:
+30
+c4_reshard/mini_000322:
+30
+c4_reshard/mini_000323:
+30
+c4_reshard/mini_000324:
+30
+c4_reshard/mini_000325:
+30
+c4_reshard/mini_000326:
+30
+c4_reshard/mini_000327:
+30
+c4_reshard/mini_000328:
+30
+c4_reshard/mini_000329:
+28
+root@803cbca0d5fb:/app# for d in c4_reshard/*; do if [ -d "$d" ]; then echo "$d:"; find "$d" -type f -size +15M | wc -l; fi; done
+c4_reshard/mini_000000:
+0
+c4_reshard/mini_000001:
+0
+c4_reshard/mini_000002:
+0
+c4_reshard/mini_000003:
+0
+c4_reshard/mini_000004:
+0
+c4_reshard/mini_000005:
+0
+c4_reshard/mini_000006:
+0
+c4_reshard/mini_000007:
+0
+c4_reshard/mini_000008:
+0
+c4_reshard/mini_000009:
+0
+c4_reshard/mini_000010:
+0
+c4_reshard/mini_000011:
+0
+c4_reshard/mini_000012:
+0
+c4_reshard/mini_000013:
+0
+c4_reshard/mini_000014:
+0
+c4_reshard/mini_000015:
+0
+c4_reshard/mini_000016:
+0
+c4_reshard/mini_000017:
+0
+c4_reshard/mini_000018:
+0
+c4_reshard/mini_000019:
+0
+c4_reshard/mini_000020:
+0
+c4_reshard/mini_000021:
+0
+c4_reshard/mini_000022:
+0
+c4_reshard/mini_000023:
+0
+c4_reshard/mini_000024:
+0
+c4_reshard/mini_000025:
+0
+c4_reshard/mini_000026:
+0
+c4_reshard/mini_000027:
+0
+c4_reshard/mini_000028:
+0
+c4_reshard/mini_000029:
+0
+c4_reshard/mini_000030:
+0
+c4_reshard/mini_000031:
+0
+c4_reshard/mini_000032:
+0
+c4_reshard/mini_000033:
+0
+c4_reshard/mini_000034:
+0
+c4_reshard/mini_000035:
+0
+c4_reshard/mini_000036:
+0
+c4_reshard/mini_000037:
+0
+c4_reshard/mini_000038:
+0
+c4_reshard/mini_000039:
+0
+c4_reshard/mini_000040:
+0
+c4_reshard/mini_000041:
+0
+c4_reshard/mini_000042:
+0
+c4_reshard/mini_000043:
+0
+c4_reshard/mini_000044:
+0
+c4_reshard/mini_000045:
+0
+c4_reshard/mini_000046:
+0
+c4_reshard/mini_000047:
+0
+c4_reshard/mini_000048:
+0
+c4_reshard/mini_000049:
+0
+c4_reshard/mini_000050:
+0
+c4_reshard/mini_000051:
+0
+c4_reshard/mini_000052:
+0
+c4_reshard/mini_000053:
+0
+c4_reshard/mini_000054:
+0
+c4_reshard/mini_000055:
+0
+c4_reshard/mini_000056:
+0
+c4_reshard/mini_000057:
+0
+c4_reshard/mini_000058:
+0
+c4_reshard/mini_000059:
+0
+c4_reshard/mini_000060:
+0
+c4_reshard/mini_000061:
+0
+c4_reshard/mini_000062:
+0
+c4_reshard/mini_000063:
+0
+c4_reshard/mini_000064:
+0
+c4_reshard/mini_000065:
+0
+c4_reshard/mini_000066:
+0
+c4_reshard/mini_000067:
+0
+c4_reshard/mini_000068:
+0
+c4_reshard/mini_000069:
+0
+c4_reshard/mini_000070:
+0
+c4_reshard/mini_000071:
+0
+c4_reshard/mini_000072:
+0
+c4_reshard/mini_000073:
+0
+c4_reshard/mini_000074:
+0
+c4_reshard/mini_000075:
+0
+c4_reshard/mini_000076:
+0
+c4_reshard/mini_000077:
+0
+c4_reshard/mini_000078:
+0
+c4_reshard/mini_000079:
+0
+c4_reshard/mini_000080:
+0
+c4_reshard/mini_000081:
+0
+c4_reshard/mini_000082:
+0
+c4_reshard/mini_000083:
+0
+c4_reshard/mini_000084:
+0
+c4_reshard/mini_000085:
+0
+c4_reshard/mini_000086:
+0
+c4_reshard/mini_000087:
+0
+c4_reshard/mini_000088:
+0
+c4_reshard/mini_000089:
+0
+c4_reshard/mini_000090:
+0
+c4_reshard/mini_000091:
+0
+c4_reshard/mini_000092:
+0
+c4_reshard/mini_000093:
+0
+c4_reshard/mini_000094:
+0
+c4_reshard/mini_000095:
+0
+c4_reshard/mini_000096:
+0
+c4_reshard/mini_000097:
+0
+c4_reshard/mini_000098:
+0
+c4_reshard/mini_000099:
+0
+c4_reshard/mini_000100:
+0
+c4_reshard/mini_000101:
+0
+c4_reshard/mini_000102:
+0
+c4_reshard/mini_000103:
+0
+c4_reshard/mini_000104:
+0
+c4_reshard/mini_000105:
+0
+c4_reshard/mini_000106:
+0
+c4_reshard/mini_000107:
+0
+c4_reshard/mini_000108:
+0
+c4_reshard/mini_000109:
+ls -l revert.py
+0
+c4_reshard/mini_000110:
+0
+c4_reshard/mini_000111:
+0
+c4_reshard/mini_000112:
+0
+c4_reshard/mini_000113:
+0
+c4_reshard/mini_000114:
+0
+c4_reshard/mini_000115:
+0
+c4_reshard/mini_000116:
+0
+c4_reshard/mini_000117:
+0
+c4_reshard/mini_000118:
+0
+c4_reshard/mini_000119:
+0
+c4_reshard/mini_000120:
+0
+c4_reshard/mini_000121:
+0
+c4_reshard/mini_000122:
+0
+c4_reshard/mini_000123:
+0
+c4_reshard/mini_000124:
+0
+c4_reshard/mini_000125:
+0
+c4_reshard/mini_000126:
+0
+c4_reshard/mini_000127:
+0
+c4_reshard/mini_000128:
+0
+c4_reshard/mini_000129:
+0
+c4_reshard/mini_000130:
+0
+c4_reshard/mini_000131:
+0
+c4_reshard/mini_000132:
+0
+c4_reshard/mini_000133:
+0
+c4_reshard/mini_000134:
+0
+c4_reshard/mini_000135:
+0
+c4_reshard/mini_000136:
+0
+c4_reshard/mini_000137:
+0
+c4_reshard/mini_000138:
+0
+c4_reshard/mini_000139:
+0
+c4_reshard/mini_000140:
+0
+c4_reshard/mini_000141:
+0
+c4_reshard/mini_000142:
+0
+c4_reshard/mini_000143:
+0
+c4_reshard/mini_000144:
+head -20 revert.py
+0
+c4_reshard/mini_000145:
+0
+c4_reshard/mini_000146:
+0
+c4_reshard/mini_000147:
+0
+c4_reshard/mini_000148:
+0
+c4_reshard/mini_000149:
+0
+c4_reshard/mini_000150:
+0
+c4_reshard/mini_000151:
+0
+c4_reshard/mini_000152:
+0
+c4_reshard/mini_000153:
+0
+c4_reshard/mini_000154:
+0
+c4_reshard/mini_000155:
+0
+c4_reshard/mini_000156:
+0
+c4_reshard/mini_000157:
+0
+c4_reshard/mini_000158:
+0
+c4_reshard/mini_000159:
+0
+c4_reshard/mini_000160:
+0
+c4_reshard/mini_000161:
+0
+c4_reshard/mini_000162:
+0
+c4_reshard/mini_000163:
+0
+c4_reshard/mini_000164:
+0
+c4_reshard/mini_000165:
+0
+c4_reshard/mini_000166:
+0
+c4_reshard/mini_000167:
+0
+c4_reshard/mini_000168:
+0
+c4_reshard/mini_000169:
+0
+c4_reshard/mini_000170:
+0
+c4_reshard/mini_000171:
+0
+c4_reshard/mini_000172:
+0
+c4_reshard/mini_000173:
+0
+c4_reshard/mini_000174:
+0
+c4_reshard/mini_000175:
+0
+c4_reshard/mini_000176:
+0
+c4_reshard/mini_000177:
+0
+c4_reshard/mini_000178:
+0
+c4_reshard/mini_000179:
+0
+c4_reshard/mini_000180:
+0
+c4_reshard/mini_000181:
+0
+c4_reshard/mini_000182:
+0
+c4_reshard/mini_000183:
+echo 'Task verification complete.'
+0
+c4_reshard/mini_000184:
+0
+c4_reshard/mini_000185:
+0
+c4_reshard/mini_000186:
+0
+c4_reshard/mini_000187:
+0
+c4_reshard/mini_000188:
+0
+c4_reshard/mini_000189:
+0
+c4_reshard/mini_000190:
+0
+c4_reshard/mini_000191:
+0
+c4_reshard/mini_000192:
+0
+c4_reshard/mini_000193:
+0
+c4_reshard/mini_000194:
+0
+c4_reshard/mini_000195:
+0
+c4_reshard/mini_000196:
+0
+c4_reshard/mini_000197:
+0
+c4_reshard/mini_000198:
+0
+c4_reshard/mini_000199:
+0
+c4_reshard/mini_000200:
+0
+c4_reshard/mini_000201:
+0
+c4_reshard/mini_000202:
+0
+c4_reshard/mini_000203:
+0
+c4_reshard/mini_000204:
+0
+c4_reshard/mini_000205:
+0
+c4_reshard/mini_000206:
+0
+c4_reshard/mini_000207:
+0
+c4_reshard/mini_000208:
+0
+c4_reshard/mini_000209:
+0
+c4_reshard/mini_000210:
+0
+c4_reshard/mini_000211:
+0
+c4_reshard/mini_000212:
+0
+c4_reshard/mini_000213:
+0
+c4_reshard/mini_000214:
+0
+c4_reshard/mini_000215:
+0
+c4_reshard/mini_000216:
+0
+c4_reshard/mini_000217:
+0
+c4_reshard/mini_000218:
+0
+c4_reshard/mini_000219:
+0
+c4_reshard/mini_000220:
+0
+c4_reshard/mini_000221:
+0
+c4_reshard/mini_000222:
+0
+c4_reshard/mini_000223:
+0
+c4_reshard/mini_000224:
+0
+c4_reshard/mini_000225:
+0
+c4_reshard/mini_000226:
+0
+c4_reshard/mini_000227:
+0
+c4_reshard/mini_000228:
+0
+c4_reshard/mini_000229:
+0
+c4_reshard/mini_000230:
+0
+c4_reshard/mini_000231:
+0
+c4_reshard/mini_000232:
+0
+c4_reshard/mini_000233:
+0
+c4_reshard/mini_000234:
+0
+c4_reshard/mini_000235:
+0
+c4_reshard/mini_000236:
+0
+c4_reshard/mini_000237:
+0
+c4_reshard/mini_000238:
+0
+c4_reshard/mini_000239:
+0
+c4_reshard/mini_000240:
+0
+c4_reshard/mini_000241:
+0
+c4_reshard/mini_000242:
+0
+c4_reshard/mini_000243:
+0
+c4_reshard/mini_000244:
+0
+c4_reshard/mini_000245:
+0
+c4_reshard/mini_000246:
+0
+c4_reshard/mini_000247:
+0
+c4_reshard/mini_000248:
+0
+c4_reshard/mini_000249:
+0
+c4_reshard/mini_000250:
+0
+c4_reshard/mini_000251:
+0
+c4_reshard/mini_000252:
+0
+c4_reshard/mini_000253:
+0
+c4_reshard/mini_000254:
+0
+c4_reshard/mini_000255:
+0
+c4_reshard/mini_000256:
+0
+c4_reshard/mini_000257:
+0
+c4_reshard/mini_000258:
+0
+c4_reshard/mini_000259:
+0
+c4_reshard/mini_000260:
+0
+c4_reshard/mini_000261:
+0
+c4_reshard/mini_000262:
+0
+c4_reshard/mini_000263:
+0
+c4_reshard/mini_000264:
+0
+c4_reshard/mini_000265:
+0
+c4_reshard/mini_000266:
+0
+c4_reshard/mini_000267:
+0
+c4_reshard/mini_000268:
+0
+c4_reshard/mini_000269:
+0
+c4_reshard/mini_000270:
+0
+c4_reshard/mini_000271:
+0
+c4_reshard/mini_000272:
+0
+c4_reshard/mini_000273:
+0
+c4_reshard/mini_000274:
+0
+c4_reshard/mini_000275:
+0
+c4_reshard/mini_000276:
+0
+c4_reshard/mini_000277:
+0
+c4_reshard/mini_000278:
+0
+c4_reshard/mini_000279:
+0
+c4_reshard/mini_000280:
+0
+c4_reshard/mini_000281:
+0
+c4_reshard/mini_000282:
+0
+c4_reshard/mini_000283:
+0
+c4_reshard/mini_000284:
+0
+c4_reshard/mini_000285:
+0
+c4_reshard/mini_000286:
+0
+c4_reshard/mini_000287:
+0
+c4_reshard/mini_000288:
+0
+c4_reshard/mini_000289:
+0
+c4_reshard/mini_000290:
+0
+c4_reshard/mini_000291:
+0
+c4_reshard/mini_000292:
+0
+c4_reshard/mini_000293:
+0
+c4_reshard/mini_000294:
+0
+c4_reshard/mini_000295:
+0
+c4_reshard/mini_000296:
+0
+c4_reshard/mini_000297:
+0
+c4_reshard/mini_000298:
+0
+c4_reshard/mini_000299:
+0
+c4_reshard/mini_000300:
+0
+c4_reshard/mini_000301:
+0
+c4_reshard/mini_000302:
+0
+c4_reshard/mini_000303:
+0
+c4_reshard/mini_000304:
+0
+c4_reshard/mini_000305:
+0
+c4_reshard/mini_000306:
+0
+c4_reshard/mini_000307:
+0
+c4_reshard/mini_000308:
+0
+c4_reshard/mini_000309:
+0
+c4_reshard/mini_000310:
+0
+c4_reshard/mini_000311:
+0
+c4_reshard/mini_000312:
+0
+c4_reshard/mini_000313:
+0
+c4_reshard/mini_000314:
+0
+c4_reshard/mini_000315:
+0
+c4_reshard/mini_000316:
+0
+c4_reshard/mini_000317:
+0
+c4_reshard/mini_000318:
+0
+c4_reshard/mini_000319:
+0
+c4_reshard/mini_000320:
+0
+c4_reshard/mini_000321:
+0
+c4_reshard/mini_000322:
+0
+c4_reshard/mini_000323:
+0
+c4_reshard/mini_000324:
+0
+c4_reshard/mini_000325:
+0
+c4_reshard/mini_000326:
+0
+c4_reshard/mini_000327:
+0
+c4_reshard/mini_000328:
+0
+c4_reshard/mini_000329:
+0
+root@803cbca0d5fb:/app# ls -l revert.py
+-rwxr-xr-x 1 root root 2808 Jul  7 15:35 revert.py
+root@803cbca0d5fb:/app# head -20 revert.py
+#!/usr/bin/env python3
+import os
+import shutil
+
+c4_sample_dir = 'c4_sample'
+c4_reshard_dir = 'c4_reshard'
+
+# Find all files in c4_reshard
+reshard_files = []
+for root, dirs, filenames in os.walk(c4_reshard_dir):
+    for f in filenames:
+        reshard_files.append(os.path.join(root, f))
+
+# Get original files
+original_files = []
+for root, dirs, filenames in os.walk(c4_sample_dir):
+    for f in filenames:
+        original_files.append(os.path.join(root, f))
+
+print(f'Found {len(reshard_files)} files in c4_reshard, {len(original_files)} files in c4_sample')
+root@803cbca0d5fb:/app# echo 'Task verification complete.'
+Task verification complete.
+root@803cbca0d5fb:/app# cd /app
+root@803cbca0d5fb:/app# find c4_reshard -type f -size +15M 2>/dev/null | wc -l
+0
+root@803cbca0d5fb:/app# find c4_reshard -type f -size +15M 2>/dev/null | head -5
+root@803cbca0d5fb:/app# ls -l revert.py
+-rwxr-xr-x 1 root root 2808 Jul  7 15:35 revert.py
+root@803cbca0d5fb:/app# head -5 revert.py
+#!/usr/bin/env python3
+import os
+import shutil
+
+c4_sample_dir = 'c4_sample'
+root@803cbca0d5fb:/app# echo 'Verification complete.'
+Verification complete.
+root@803cbca0d5fb:/app#

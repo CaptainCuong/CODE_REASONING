@@ -1,0 +1,123 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+Press CTRL+C to quit
+which bitcoind
+which bitcoin
+pip3 list | grep -i bitcoin
+python3 -c "import jsonrpclib; print(jsonrpclib.__version__)"
+cat > /app/bitcoin_service.py << 'EOF'
+#!/usr/bin/env python3
+import json
+import sys
+import jsonrpclib
+import time
+from flask import Flask, request, Response
+from typing import Dict, Any, List
+
+def main():
+    app = Flask(__name__)
+    # Configuration
+    BITCOIN_RPC_HOST = 'localhost'
+    BITCOIN_RPC_PORT = 8332  # JSON-RPC port
+
+    # Try to connect to a node
+    def get_node_connection():
+        try:
+            conn = jsonrpclib.RPCHost(host=BITCOIN_RPC_HOST, port=BITCOIN_RPC_PORT)
+            return conn
+        except Exception as e:
+            print(f"Failed to connect to node: {e}", file=sys.stderr)
+            return None
+
+    node_conn = None
+    def check_connection():
+        nonlocal node_conn
+        node_conn = get_node_connection()
+
+    # Status endpoint
+    @app.route('/status', methods=['GET'])
+    def status():
+        if node_conn is None:
+            return {"status": "error"}, 503
+        return {"status": "online"}, 200
+
+    # Helper to get block details
+    def get_block_details(block_hash: str):
+        try:
+            result = node_conn.getblock(block_hash)
+            # Convert to required schema
+            block = {
+                "hash": block_hash,
+                "height": result['height'],
+                "merkleroot": result['merkleroot'],
+                "time": result['time'],
+                "nonce": result['nonce'],
+                "tx": [tx['txid'] for tx in result['tx']]
+            }
+            return block
+        except Exception as e:
+            return None
+
+    # Helper to get transaction details
+    def get_transaction_details(txid: str):
+        try:
+            result = node_conn.getrawtransaction(txid, 1)  # 1 for verbose
+            # Build schema
+            vout = []
+            for vout_entry in result['vout']:
+                script = vout_entry['scriptPubKey']
+                vout.append({
+                    "value": vout_entry['value'],
+                    "n": vout_entry['n'],
+                    "scriptPubKey": {
+                        "asm": script['asm'],
+                        "hex": script['hex'],
+                        "type": script['type']
+                    }
+                })
+            vin = []
+            for vin_entry in result['vin']:
+                vin.append({
+                    " coinbase": vin_entry[' coinbase'],
+                    "sequence": vin_entry['sequence']
+                })
+            tx = {
+                "txid": txid,
+                "blockhash": result['blockhash'],
+                "vin": vin,
+                "vout": vout
+            }
+            return tx
+        except Exception as e:
+            return None
+
+    # Block endpoint
+    @app.route('/block/<block_hash>', methods=['GET'])
+    def block_endpoint(block_hash):
+        block = get_block_details(block_hash)
+        if block is None:
+            return {"error": "Block not found"}, 404
+        return block, 200
+
+    # Transaction endpoint
+    @app.route('/transaction/<txid>', methods=['GET'])
+    def transaction_endpoint(txid):
+        tx = get_transaction_details(txid)
+        if tx is None:
+            return {"error": "Transaction not found"}, 404
+        return tx, 200
+
+    # Check that we have a connection before starting
+    check_connection()
+
+    # Start server
+    app.run(host='0.0.0.0', port=5000)
+
+if __name__ == '__main__':
+    main()
+EOF
+python3 /app/bitcoin_service.py
+

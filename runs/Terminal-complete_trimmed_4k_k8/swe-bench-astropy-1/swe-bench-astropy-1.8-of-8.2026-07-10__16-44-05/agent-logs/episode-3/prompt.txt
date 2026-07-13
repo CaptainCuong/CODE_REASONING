@@ -1,0 +1,125 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@7116ad56f6dd:/app# cd /app
+root@7116ad56f6dd:/app# find . -name '*separable*' -type f -executable -o -name '*separable*' -type d 2>/dev/null
+root@7116ad56f6dd:/app# grep -n 'separability_matrix' . | head -20
+grep: .: Is a directory
+root@7116ad56f6dd:/app# cat > explore.py << 'EOF'
+> import sys
+> sys.path.insert(0, '.')
+> import astropy.modeling.separable
+> import astropy.modeling
+> from astropy.modeling import models as m
+> from astropy.modeling.separable import separability_matrix
+> print('Location:', astropy.modeling.separable.__file__)
+> with open(astropy.modeling.separable.__file__, 'r') as f:
+>     lines = f.readlines()
+>     for i, line in enumerate(lines[:100]):
+>         print(f'{i}: {line.rstrip()}')
+> EOF
+root@7116ad56f6dd:/app# python3 explore.py
+Location: /usr/local/lib/python3.9/site-packages/astropy/modeling/separable.py
+0: # Licensed under a 3-clause BSD style license - see LICENSE.rst
+1:
+2: """
+3: Functions to determine if a model is separable, i.e.
+4: if the model outputs are independent.
+5:
+6: It analyzes ``n_inputs``, ``n_outputs`` and the operators
+7: in a compound model by stepping through the transforms
+8: and creating a ``coord_matrix`` of shape (``n_outputs``, ``n_inputs``).
+9:
+10:
+11: Each modeling operator is represented by a function which
+12: takes two simple models (or two ``coord_matrix`` arrays) and
+13: returns an array of shape (``n_outputs``, ``n_inputs``).
+14:
+15: """
+16:
+17: import numpy as np
+18:
+19: from .core import CompoundModel, Model, ModelDefinitionError
+20: from .mappings import Mapping
+21:
+22: __all__ = ["is_separable", "separability_matrix"]
+23:
+24:
+25: def is_separable(transform):
+26:     """
+27:     A separability test for the outputs of a transform.
+28:
+29:     Parameters
+30:     ----------
+31:     transform : `~astropy.modeling.core.Model`
+32:         A (compound) model.
+33:
+34:     Returns
+35:     -------
+36:     is_separable : ndarray
+37:         A boolean array with size ``transform.n_outputs`` where
+38:         each element indicates whether the output is independent
+39:         and the result of a separable transform.
+40:
+41:     Examples
+42:     --------
+43:     >>> from astropy.modeling.models import Shift, Scale, Rotation2D, Polynomial2D
+44:     >>> is_separable(Shift(1) & Shift(2) | Scale(1) & Scale(2))
+45:         array([ True,  True]...)
+46:     >>> is_separable(Shift(1) & Shift(2) | Rotation2D(2))
+47:         array([False, False]...)
+48:     >>> is_separable(Shift(1) & Shift(2) | Mapping([0, 1, 0, 1]) | \
+49:         Polynomial2D(1) & Polynomial2D(2))
+50:         array([False, False]...)
+51:     >>> is_separable(Shift(1) & Shift(2) | Mapping([0, 1, 0, 1]))
+52:         array([ True,  True,  True,  True]...)
+53:
+54:     """
+55:     if transform.n_inputs == 1 and transform.n_outputs > 1:
+56:         is_separable = np.array([False] * transform.n_outputs).T
+57:         return is_separable
+58:     separable_matrix = _separable(transform)
+59:     is_separable = separable_matrix.sum(1)
+60:     is_separable = np.where(is_separable != 1, False, True)
+61:     return is_separable
+62:
+63:
+64: def separability_matrix(transform):
+65:     """
+66:     Compute the correlation between outputs and inputs.
+67:
+68:     Parameters
+69:     ----------
+70:     transform : `~astropy.modeling.core.Model`
+71:         A (compound) model.
+72:
+73:     Returns
+74:     -------
+75:     separable_matrix : ndarray
+76:         A boolean correlation matrix of shape (n_outputs, n_inputs).
+77:         Indicates the dependence of outputs on inputs. For completely
+78:         independent outputs, the diagonal elements are True and
+79:         off-diagonal elements are False.
+80:
+81:     Examples
+82:     --------
+83:     >>> from astropy.modeling.models import Shift, Scale, Rotation2D, Polynomial2D
+84:     >>> separability_matrix(Shift(1) & Shift(2) | Scale(1) & Scale(2))
+85:         array([[ True, False], [False,  True]]...)
+86:     >>> separability_matrix(Shift(1) & Shift(2) | Rotation2D(2))
+87:         array([[ True,  True], [ True,  True]]...)
+88:     >>> separability_matrix(Shift(1) & Shift(2) | Mapping([0, 1, 0, 1]) | \
+89:         Polynomial2D(1) & Polynomial2D(2))
+90:         array([[ True,  True], [ True,  True]]...)
+91:     >>> separability_matrix(Shift(1) & Shift(2) | Mapping([0, 1, 0, 1]))
+92:         array([[ True, False], [False,  True], [ True, False], [False,  True]]...)
+93:
+94:     """
+95:     if transform.n_inputs == 1 and transform.n_outputs > 1:
+96:         return np.ones((transform.n_outputs, transform.n_inputs), dtype=np.bool_)
+97:     separable_matrix = _separable(transform)
+98:     separable_matrix = np.where(separable_matrix != 0, True, False)
+99:     return separable_matrix
+

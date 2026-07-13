@@ -1,0 +1,391 @@
+root@45541d8c4466:/app# ls -la
+total 8
+drwxr-xr-x 1 root root  77 Jun 24 11:01 .
+drwxr-xr-x 1 root root  57 Jul 11 17:01 ..
+-rw-rw-r-- 1 root root 121 Jun 24 11:01 daily_temp_sf_high.csv
+-rw-rw-r-- 1 root root 184 Jun 24 11:01 daily_temp_sf_low.csv
+root@45541d8c4466:/app# head -5 daily_temp_sf_high.csv
+date,temperature
+2025-04-19,64
+2025-04-20,63
+2025-04-21,70
+2025-04-22,66
+root@45541d8c4466:/app# head -5 daily_temp_sf_low.csv
+date,temperature
+04/19/2025 06:00:00,48
+04/20/2025 06:00:00,52
+04-23-2025 06:00:00,52
+04-22-2025 06:00:00,48
+root@45541d8c4466:/app# wc -l daily_temp_sf_high.csv daily_temp_sf_low.csv
+  7 daily_temp_sf_high.csv
+  7 daily_temp_sf_low.csv
+ 14 total
+root@45541d8c4466:/app# python3 --version
+Python 3.13.1
+root@45541d8c4466:/app# cat > compute_avg.py << 'EOF'
+> import csv
+> import re
+> from datetime import datetime
+>
+> def parse_date_high(row):
+>     # row is list of [date, temp]
+>     return row[0], int(row[1])
+>
+> def parse_date_low(row):
+>     # row is list of [timestamp, temp]
+>     # timestamp format: MM/DD/YYYY HH:MM:SS or DD-MM-YYYY HH:MM:SS
+>     # extract first 10 characters (YYYY-MM-DD or DD-MM-YYYY)
+>     date_str = row[0][:10]
+>     temp = int(row[1])
+>     return date_str, temp
+>
+> high = []
+> low = []
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)  # skip header
+>     for row in reader:
+>         high.append(parse_date_high(row))
+>
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)  # skip header
+>     for row in reader:
+>         low.append(parse_date_low(row))
+>
+> # Build dict by date
+> merged = {}
+> for h_date, h_temp in high:
+>     # find low with same date
+>     matching = [l for l in low if l[0] == h_date]
+>     if matching:
+>         l_temp = matching[0][1]
+>         diff = h_temp - l_temp
+>         merged[h_date] = diff
+>
+> if merged:
+>     avg = sum(merged.values()) / len(merged)
+>     print(f'{avg:.2f}')
+> EOF
+root@45541d8c4466:/app# python3 compute_avg.py
+root@45541d8c4466:/app# python3 compute_avg.py > avg_temp.txt
+root@45541d8c4466:/app# cat avg_temp.txt
+root@45541d8c4466:/app# cat daily_temp_sf_high.csv
+date,temperature
+2025-04-19,64
+2025-04-20,63
+2025-04-21,70
+2025-04-22,66
+2025-04-23,57
+2025-04-24,55
+2025-04-25,57root@45541d8c4466:/app# cat daily_temp_sf_low.csv
+date,temperature
+04/19/2025 06:00:00,48
+04/20/2025 06:00:00,52
+04-23-2025 06:00:00,52
+04-22-2025 06:00:00,48
+04-24-2025 06:00:00,52
+04-21-2025 06:00:00,48
+04-25-2025 06:00:00,52root@45541d8c4466:/app# cat > compute_avg2.py << 'EOF'
+> import csv
+> import re
+>
+> def parse_high(row):
+>     return row[0], int(row[1])
+>
+> def parse_low(row):
+>     # row[0] is timestamp like '04/19/2025 06:00:00' or '04-19-2025 06:00:00'
+>     # split by space
+>     parts = row[0].split()
+>     time = parts[1]  # HH:MM:SS
+>     date_str = parts[0]  # MM/DD/YYYY or DD-MM-YYYY
+>     # parse date
+>     month = date_str.split('/')[0]
+>     day = date_str.split('/')[1]
+>     year = date_str.split('/')[2]
+>     # recombine in YYYY-MM-DD format
+>     return f'{year}-{month:0>2}-{day:0>2}', int(row[1])
+>
+> high = []
+> low = []
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         high.append(parse_high(row))
+>
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         low.append(parse_low(row))
+>
+> # Now high and low are lists of (date_str, temp)
+> # zip them
+> merged = []
+> for h, l in zip(high, low):
+>     merged.append((h[0], h[1], l[1]))
+>
+> if merged:
+>     diffs = [h[1] - l[1] for h, _, l in merged]
+>     avg = sum(diffs) / len(diffs)
+>     print(f'{avg:.2f}')
+> EOF
+root@45541d8c4466:/app# python3 compute_avg2.py
+Traceback (most recent call last):
+  File "/app/compute_avg2.py", line 32, in <module>
+    low.append(parse_low(row))
+               ~~~~~~~~~^^^^^
+  File "/app/compute_avg2.py", line 15, in parse_low
+    day = date_str.split('/')[1]
+          ~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+root@45541d8c4466:/app# python3 compute_avg2.py > avg_temp.txt
+Traceback (most recent call last):
+  File "/app/compute_avg2.py", line 32, in <module>
+    low.append(parse_low(row))
+               ~~~~~~~~~^^^^^
+  File "/app/compute_avg2.py", line 15, in parse_low
+    day = date_str.split('/')[1]
+          ~~~~~~~~~~~~~~~~~~~^^^
+IndexError: list index out of range
+root@45541d8c4466:/app# cat avg_temp.txt
+root@45541d8c4466:/app# cat > compute_avg3.py << 'EOF'
+> import csv
+> from datetime import datetime
+>
+> def parse_high(row):
+>     # row is list of [date, temp]
+>     return row[0], int(row[1])
+>
+> def parse_low(row):
+>     # row[0] is timestamp like '04/19/2025 06:00:00' or '04-19-2025 06:00:00'
+>     date_str = row[0].split()[0]
+>     time_str = row[0].split()[1]
+>     # Try two formats
+>     formats = ['%m/%d/%Y', '%d-%m-%Y']
+>     for fmt in formats:
+>         try:
+>             dt = datetime.strptime(date_str, fmt)
+>             return dt.strftime('%Y-%m-%d'), int(row[1])
+>         except ValueError:
+>             continue
+>     raise ValueError(f'Unknown date format: {date_str}')
+>
+> high = []
+> low = []
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         high.append(parse_high(row))
+>
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         low.append(parse_low(row))
+>
+> # Now high and low are lists of (date_str, temp)
+> # zip them
+> merged = []
+> for h, l in zip(high, low):
+>     merged.append((h[0], h[1], l[1]))
+>
+> if merged:
+>     diffs = [h[1] - l[1] for h, _, l in merged]
+>     avg = sum(diffs) / len(diffs)
+>     print(f'{avg:.2f}')
+> EOF
+root@45541d8c4466:/app# python3 compute_avg3.py
+Traceback (most recent call last):
+  File "/app/compute_avg3.py", line 34, in <module>
+    low.append(parse_low(row))
+               ~~~~~~~~~^^^^^
+  File "/app/compute_avg3.py", line 20, in parse_low
+    raise ValueError(f'Unknown date format: {date_str}')
+ValueError: Unknown date format: 04-23-2025
+root@45541d8c4466:/app# python3 compute_avg3.py > avg_temp.txt
+Traceback (most recent call last):
+  File "/app/compute_avg3.py", line 34, in <module>
+    low.append(parse_low(row))
+               ~~~~~~~~~^^^^^
+  File "/app/compute_avg3.py", line 20, in parse_low
+    raise ValueError(f'Unknown date format: {date_str}')
+ValueError: Unknown date format: 04-23-2025
+root@45541d8c4466:/app# cat avg_temp.txt
+root@45541d8c4466:/app# cat > compute_avg4.py << 'EOF'
+> import csv
+> from datetime import datetime
+>
+> def parse_high(row):
+>     # row is list of [date, temp]
+>     return row[0], int(row[1])
+>
+> def parse_low(row):
+>     # row[0] is timestamp like '04/19/2025 06:00:00' or '04-23-2025 06:00:00'
+>     date_str = row[0].split()[0]
+>     time_str = row[0].split()[1]
+>     # Try three formats
+>     formats = ['%m/%d/%Y', '%m-%d-%Y', '%d-%m-%Y']
+>     for fmt in formats:
+>         try:
+>             dt = datetime.strptime(date_str, fmt)
+>             return dt.strftime('%Y-%m-%d'), int(row[1])
+>         except ValueError:
+>             continue
+>     raise ValueError(f'Unknown date format: {date_str}')
+>
+> high = []
+> low = []
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         high.append(parse_high(row))
+>
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         low.append(parse_low(row))
+>
+> # Now high and low are lists of (date_str, temp)
+> # zip them
+> merged = []
+> for h, l in zip(high, low):
+>     merged.append((h[0], h[1], l[1]))
+>
+> if merged:
+>     diffs = [h[1] - l[1] for h, _, l in merged]
+>     avg = sum(diffs) / len(diffs)
+>     print(f'{avg:.2f}')
+> EOF
+root@45541d8c4466:/app# python3 compute_avg4.py
+Traceback (most recent call last):
+  File "/app/compute_avg4.py", line 43, in <module>
+    diffs = [h[1] - l[1] for h, _, l in merged]
+                    ~^^^
+TypeError: 'int' object is not subscriptable
+root@45541d8c4466:/app# python3 compute_avg4.py > avg_temp.txt
+Traceback (most recent call last):
+  File "/app/compute_avg4.py", line 43, in <module>
+    diffs = [h[1] - l[1] for h, _, l in merged]
+                    ~^^^
+TypeError: 'int' object is not subscriptable
+root@45541d8c4466:/app# cat avg_temp.txt
+root@45541d8c4466:/app# cat > compute_avg5.py << 'EOF'
+> import csv
+> from datetime import datetime
+>
+> def parse_high(row):
+>     # row is list of [date, temp]
+>     return row[0], int(row[1])
+>
+> def parse_low(row):
+>     # row[0] is timestamp like '04/19/2025 06:00:00' or '04-23-2025 06:00:00'
+>     date_str = row[0].split()[0]
+>     time_str = row[0].split()[1]
+>     # Try three formats
+>     formats = ['%m/%d/%Y', '%m-%d-%Y', '%d-%m-%Y']
+>     for fmt in formats:
+>         try:
+>             dt = datetime.strptime(date_str, fmt)
+>             return dt.strftime('%Y-%m-%d'), int(row[1])
+>         except ValueError:
+>             continue
+>     raise ValueError(f'Unknown date format: {date_str}')
+>
+> high = []
+> low = []
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         high.append(parse_high(row))
+>
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         low.append(parse_low(row))
+>
+> # Now high and low are lists of (date_str, temp)
+> # zip them
+> merged = []
+> for h, l in zip(high, low):
+>     merged.append((h[0], h[1], l[1]))
+>
+> if merged:
+>     diffs = [h[1] - l[1] for h, _, l in merged]
+>     avg = sum(diffs) / len(diffs)
+>     print(f'{avg:.2f}')
+> EOF
+root@45541d8c4466:/app# python3 compute_avg5.py
+Traceback (most recent call last):
+  File "/app/compute_avg5.py", line 43, in <module>
+    diffs = [h[1] - l[1] for h, _, l in merged]
+                    ~^^^
+TypeError: 'int' object is not subscriptable
+root@45541d8c4466:/app# python3 compute_avg5.py > avg_temp.txt
+Traceback (most recent call last):
+  File "/app/compute_avg5.py", line 43, in <module>
+    diffs = [h[1] - l[1] for h, _, l in merged]
+                    ~^^^
+TypeError: 'int' object is not subscriptable
+root@45541d8c4466:/app# cat avg_temp.txt
+root@45541d8c4466:/app# cat > compute_avg_correct.py << 'EOF'
+> import csv
+> from datetime import datetime
+>
+> def parse_high(row):
+>     return row[0], int(row[1])
+>
+> def parse_low(row):
+>     date_str = row[0].split()[0]
+>     time_str = row[0].split()[1]
+>     formats = ['%m/%d/%Y', '%m-%d-%Y', '%d-%m-%Y']
+>     for fmt in formats:
+>         try:
+>             dt = datetime.strptime(date_str, fmt)
+>             return dt.strftime('%Y-%m-%d'), int(row[1])
+>         except ValueError:
+>             continue
+>     raise ValueError(f'Unknown date format: {date_str}')
+>
+> high = []
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         high.append(parse_high(row))
+>
+> low = []
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.reader(f)
+>     next(reader)
+>     for row in reader:
+>         low.append(parse_low(row))
+>
+> # high and low are in same order
+> if len(high) == len(low):
+>     diffs = [h[1] - l[1] for h, l in zip(high, low)]
+>     avg = sum(diffs) / len(diffs)
+>     print(f'{avg:.2f}')
+> else:
+>     print('Length mismatch')
+> EOF
+root@45541d8c4466:/app# python3 compute_avg_correct.py
+11.43
+root@45541d8c4466:/app# python3 compute_avg_correct.py > avg_temp.txt
+root@45541d8c4466:/app# cat avg_temp.txt
+11.43
+root@45541d8c4466:/app# cat -A avg_temp.txt
+11.43$
+root@45541d8c4466:/app# wc -l avg_temp.txt
+1 avg_temp.txt
+root@45541d8c4466:/app# printf '%.2f' 11.43 > avg_temp.txt
+root@45541d8c4466:/app# cat -A avg_temp.txt
+11.43root@45541d8c4466:/app# wc -c avg_temp.txt
+5 avg_temp.txt
+root@45541d8c4466:/app#

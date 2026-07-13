@@ -1,0 +1,80 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'python3 --version\n'
+"pip3 list | grep -E 'bitcoinlib|Flask|requests'\n"
+'pip3 install bitcoinlib Flask requests\n'
+'cd /app\n'
+'cat > bitcoin_service.py << \'EOF\'\n#!/usr/bin/env python3\n"""\nBitcoin Blockchain Service\n"""\n\nimport json\nimport sys\nfrom flask import Flask, request, abort\nfrom bitcoinlib import client\nfrom bitcoinlib.utils import to_bytes\nfrom typing import Dict, Any, List, Optional\n\n# Configuration\nRPC_HOST = \'localhost\'\nRPC_PORT = 8333\nAPI_PORT = 5000\n\napp = Flask(__name__)\n\n# RPC client\nrpc = client.RPCClient(RPC_HOST, RPC_PORT)\n\n# Helper function to convert hex strings to bytes for comparison\ndef hex_to_bytes(hex_str: str) -> bytes:\n    return bytes.fromhex(hex_str)\n\n# Helper function to convert bytes to hex string\ndef bytes_to_hex(b: bytes) -> str:\n    return b.hex()\n\n# Helper function to convert integer to hex string\ndef int_to_hex(i: int) -> str:\n    return format(i, \'x\')\n\n# Helper function to convert hex string to integer\ndef hex_to_int(hex_str: str) -> int:\n    return int(hex_str, 16)\n\n# Function to get block details\ndef get_block(block_hash: str) -> Dict[str, Any]:\n    """Return block details for given block hash."""\n    try:\n        block = rpc.get_block(block_hash)\n        # Convert block data to required schema\n        block_data = {\n            \'hash\': block[\'hash\'],\n            \'height\': block[\'height\'],\n            \'merkleroot\': block[\'merkleroot\'],\n            \'time\': block[\'time\'],\n            \'nonce\': block[\'nonce\'],\n            \'tx\': [tx[\'hash\'] for tx in block[\'transactions\']]\n        }\n        return block_data\n    except Exception as e:\n        raise e\n\n# Function to get transaction details\ndef get_transaction(txid: str) -> Dict[str, Any]:\n    """Return transaction details for given transaction ID."""\n    try:\n        tx = rpc.get_transaction(txid)\n        # Convert transaction data to required schema\n        vin = []\n        for input_obj in tx[\'inputs\']:\n            vin.append({\n                \'coinbase\': input_obj[\'script\'] if input_obj[\'script\'] else \'\',\n                \'sequence\': input_obj[\'sequence\']\n            })\n        vout = []\n        for output_obj in tx[\'outputs\']:\n            vout.append({\n                \'value\': output_obj[\'value\'],\n                \'n\': output_obj[\'n\'],\n                \'scriptPubKey\': {\n                    \'asm\': output_obj[\'script\'][\'asm\'],\n                    \'hex\': output_obj[\'script\'][\'hex\'],\n                    \'type\': output_obj[\'script\'][\'type\']\n                }\n            })\n        block_hash = tx[\'block_hash\']\n        tx_data = {\n            \'txid\': tx[\'txid\'],\n            \'blockhash\': block_hash,\n            \'vin\': vin,\n            \'vout\': vout\n        }\n        return tx_data\n    except Exception as e:\n        raise e\n\n# Function to get network status\ndef get_status() -> Dict[str, Any]:\n    """Return network status."""\n    try:\n        info = rpc.get_info()\n        return {\n            \'status\': \'online\'\n        }\n    except Exception as e:\n        return {\n            \'error\': str(e)\n        }\n\n# Error handling for invalid block hash\ndef block_not_found(block_hash: str):\n    return {\n        \'error\': f\'Block not found: {block_hash}\',\n        \'status\': 404\n    }\n\n# Error handling for invalid transaction ID\ndef transaction_not_found(txid: str):\n    return {\n        \'error\': f\'Transaction not found: {txid}\',\n        \'status\': 404\n    }\n\n# Error handling for connection issues\ndef connection_error():\n    return {\n        \'error\': \'Not connected to the Bitcoin network\',\n        \'status\': 503\n    }\n\n# Main route: /block/<block_hash>\n@app.route(\'/block/<block_hash>\', methods=[\'GET\'])\ndef block_endpoint(block_hash: str):\n    """Get block details."""\n    try:\n        block_data = get_block(block_hash)\n        return json.dumps(block_data), 200\n    except Exception as e:\n        error_msg = str(e)\n        if \'Block not found\' in error_msg:\n            return json.dumps({\'error\': error_msg}), 404\n        else:\n            return json.dumps({\'error\': error_msg}), 503\n\n# Main route: /transaction/<txid>\n@app.route(\'/transaction/<txid>\', methods=[\'GET\'])\ndef transaction_endpoint(txid: str):\n    """Get transaction details."""\n    try:\n        tx_data = get_transaction(txid)\n        return json.dumps(tx_data), 200\n    except Exception as e:\n        error_msg = str(e)\n        if \'Transaction not found\' in error_msg:\n            return json.dumps({\'error\': error_msg}), 404\n        else:\n            return json.dumps({\'error\': error_msg}), 503\n\n# Main route: /status\n@app.route(\'/status\', methods=[\'GET\'])\ndef status_endpoint():\n    """Get network status."""\n    status_data = get_status()\n    return json.dumps(status_data), 200\n\n# Error handler for other exceptions\n@app.errorhandler(500)\ndef handle_500(e):\n    return json.dumps({\'error\': str(e)}), 500\n\n# Start the server\nif __name__ == \'__main__\':\n    # Check if we can connect to the RPC server\n    try:\n        # Attempt to get a simple status\n        rpc.get_info()\n    except Exception as e:\n        print(f\'Error connecting to RPC server: {e}\', file=sys.stderr)\n        sys.exit(1)\n    \n    print(f\'Service started on http://localhost:{API_PORT}\')\n    app.run(host=\'localhost\', port=API_PORT, debug=False)\nEOF\n'
+'netstat -tulpn | grep :8333\n'
+'curl -s localhost:8333 -u : -c 1\n'
+'python3 -c "import bitcoinlib.client; print(dir(bitcoinlib.client.RPCClient))"\n'
+'python3 -c "import bitcoinlib.client; print(\'client imported\')"\n'
+'python3 -c "\nfrom bitcoinlib.client import RPCClient\nrpc = RPCClient(\'localhost\', 8333)\nprint(\'Methods:\', [m for m in dir(rpc) if not m.startswith(\'_\')])\n# Try get_info\ninfo = rpc.get_info()\nprint(\'Info:\', info)\n"\n'
+'python3 -c "import bitcoinlib; print([x for x in dir(bitcoinlib) if not x.startswith(\'_\')])"\n'
+'python3 -c "import bitcoinlib; print(dir(bitcoinlib))"\n'
+"pip show -f bitcoinlib | grep -A2 -B2 'client'\n"
+'python3 -c "import sys; print(sys.path)"\n'
+'python3 -c "import bitcoinlib; print(bitcoinlib.__file__)"\n'
+'python3 -c "import bitcoinlib; print(dir(bitcoinlib))"\n'
+'ls -la /usr/local/lib/python3.13/site-packages/ | grep bitcoinlib\n'
+"find /usr/local/lib/python3.13/site-packages/ -name 'bitcoinlib' -type d\n"
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib; print(bitcoinlib.__file__)"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); from bitcoinlib import client; print(\'client imported\')"\n'
+'cat /usr/local/lib/python3.13/site-packages/bitcoinlib/__init__.py\n'
+'python3 -c "import bitcoinlib.services; print(dir(bitcoinlib.services))"\n'
+'python3 -c "from bitcoinlib.services import baseclient; print(dir(baseclient))"\n'
+'python3 -c "from bitcoinlib.services.baseclient import RPCClient; print(RPCClient)"\n'
+'ls -la /usr/local/lib/python3.13/site-packages/bitcoinlib/services/\n'
+'python3 -c "from bitcoinlib.services import baseclient; print(\'baseclient imported\')"\n'
+'python3 -c "from bitcoinlib.services.baseclient import RPCClient; print(\'RPCClient imported\')"\n'
+'python3 -c "from bitcoinlib.services.baseclient import RPCClient; print(RPCClient)"\n'
+"grep -n 'RPCClient' /usr/local/lib/python3.13/site-packages/bitcoinlib/services/baseclient.py\n"
+'head -50 /usr/local/lib/python3.13/site-packages/bitcoinlib/services/baseclient.py\n'
+'python3 /app/bitcoin_service.py\n'
+'cat /usr/local/lib/python3.13/site-packages/bitcoinlib/__init__.py\n'
+"find /usr/local/lib/python3.13/site-packages/ -name '*.py' -grep -r 'RPCClient' 2>/dev/null | head -20\n"
+"find /usr/local/lib/python3.13/site-packages/ -name '*.py' -grep -r 'baseclient' 2>/dev/null | head -20\n"
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); from bitcoinlib import *; print(dir())"\n'
+"find /usr/local/lib/python3.13/site-packages -name '*.py' -grep -r 'client' 2>/dev/null | head -20\n"
+"grep -r 'RPCClient' /usr/local/lib/python3.13/site-packages/ 2>/dev/null | head -20\n"
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib; print([m for m in dir(bitcoinlib) if \'client\' in m])"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); from bitcoinlib.services import *; print(dir())"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); from bitcoinlib.services.baseclient import BaseClient; print(hasattr(BaseClient, \'RPCClient\'))"\n'
+'head -20 /app/bitcoin_service.py\n'
+'ls -la /usr/local/lib/python3.13/site-packages/bitcoinlib/services/\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); from bitcoinlib.services import BaseClient; print(dir(BaseClient))"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); from bitcoinlib.services import BaseClient; print(hasattr(BaseClient, \'rpc\'))"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); from bitcoinlib.services import BaseClient; bc = BaseClient(\'test\', \'test\', \'test\', 1); print(hasattr(bc, \'get_block\'))"\n'
+"grep -n 'from bitcoinlib import client' /app/bitcoin_service.py\n"
+"sed -n '9p' /app/bitcoin_service.py\n"
+"find /usr/local/lib/python3.13/site-packages -name 'client.py' 2>/dev/null\n"
+"find /usr/local/lib/python3.13/site-packages -name '*.py' -grep 'client' 2>/dev/null | head -5\n"
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib.services.authproxy; print(hasattr(bitcoinlib.services.authproxy, \'RPCClient\'))"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib.services.bcoin; print(hasattr(bitcoinlib.services.bcoin, \'RPCClient\'))"\n'
+'python3 /app/bitcoin_service.py\n'
+'cat /usr/local/lib/python3.13/site-packages/bitcoinlib/services/services.py\n'
+"find /usr/local/lib/python3.13/site-packages -name '*.py' -grep 'client' 2>/dev/null | head -10\n"
+"find /usr/local/lib/python3.13/site-packages -name '*.py' -grep 'RPCClient' 2>/dev/null | head -10\n"
+"grep -n 'from bitcoinlib import client' /app/bitcoin_service.py\n"
+"sed -n '9p' /app/bitcoin_service.py\n"
+"find /usr/local/lib/python3.13/site-packages -name 'client.py' 2>/dev/null\n"
+"find /usr/local/lib/python3.13/site-packages -name '*.py' -grep 'client' 2>/dev/null | head -5\n"
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib.services.authproxy; print(hasattr(bitcoinlib.services.authproxy, \'RPCClient\'))"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib.services.bcoin; print(hasattr(bitcoinlib.services.bcoin, \'RPCClient\'))"\n'
+"grep -n 'from bitcoinlib import client' /app/bitcoin_service.py\n"
+"sed -n '9p' /app/bitcoin_service.py\n"
+"find /usr/local/lib/python3.13/site-packages -name 'client.py' 2>/dev/null\n"
+"find /usr/local/lib/python3.13/site-packages -name '*.py' -grep 'client' 2>/dev/null | head -5\n"
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib.services.authproxy; print(hasattr(bitcoinlib.services.authproxy, \'RPCClient\'))"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib.services.bcoin; print(hasattr(bitcoinlib.services.bcoin, \'RPCClient\'))"\n'
+"grep -n 'from bitcoinlib import client' /app/bitcoin_service.py\n"
+"sed -n '9p' /app/bitcoin_service.py\n"
+"find /usr/local/lib/python3.13/site-packages -name 'client.py' 2>/dev/null\n"
+"find /usr/local/lib/python3.13/site-packages -name '*.py' -grep 'client' 2>/dev/null | head -5\n"
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib.services.authproxy; print(hasattr(bitcoinlib.services.authproxy, \'RPCClient\'))"\n'
+'python3 -c "import sys; sys.path.insert(0, \'/usr/local/lib/python3.13/site-packages\'); import bitcoinlib.services.bcoin; print(hasattr(bitcoinlib.services.bcoin, \'RPCClient\'))"\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

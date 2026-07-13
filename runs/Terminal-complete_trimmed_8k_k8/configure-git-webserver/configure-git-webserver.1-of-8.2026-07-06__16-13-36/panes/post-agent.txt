@@ -1,0 +1,1452 @@
+root@953bf8ae818d:/app# apt list --installed | grep -E '(git|nginx|gitolite)'
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+root@953bf8ae818d:/app# which git
+root@953bf8ae818d:/app# which nginx
+root@953bf8ae818d:/app# apt-get update && apt-get install -y git nginx gitolite
+Get:1 http://archive.ubuntu.com/ubuntu noble InRelease [256 kB]
+Get:2 http://security.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+Get:3 http://archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+Get:4 http://security.ubuntu.com/ubuntu noble-security/multiverse amd64 Packages [43.8 kB]
+Get:5 http://security.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1417 kB]
+Get:6 http://security.ubuntu.com/ubuntu noble-security/main amd64 Packages [1022 kB]
+Get:7 http://security.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1490 kB]
+Get:8 http://archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+Get:9 http://archive.ubuntu.com/ubuntu noble/restricted amd64 Packages [117 kB]
+Get:10 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages [19.3 MB]
+Get:11 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages [1808 kB]
+Get:12 http://archive.ubuntu.com/ubuntu noble/multiverse amd64 Packages [331 kB]
+Get:13 http://archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Packages [49.5 kB]
+Get:14 http://archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1490 kB]
+Get:15 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1342 kB]
+Get:16 http://archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [2111 kB]
+Get:17 http://archive.ubuntu.com/ubuntu noble-backports/multiverse amd64 Packages [671 B]
+Get:18 http://archive.ubuntu.com/ubuntu noble-backports/main amd64 Packages [48.9 kB]
+Get:19 http://archive.ubuntu.com/ubuntu noble-backports/universe amd64 Packages [35.9 kB]
+Fetched 31.3 MB in 2s (19.2 MB/s)
+Reading package lists... Done
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+E: Unable to locate package gitolite
+root@953bf8ae818d:/app# adduser git -s -c "git server"
+bash: adduser: command not found
+root@953bf8ae818d:/app# echo 'gitserver' | passwd git --stdin
+passwd: unrecognized option '--stdin'
+Usage: passwd [options] [LOGIN]
+
+Options:
+  -a, --all                     report password status on all accounts
+  -d, --delete                  delete the password for the named account
+  -e, --expire                  force expire the password for the named account
+  -h, --help                    display this help message and exit
+  -k, --keep-tokens             change password only if expired
+  -i, --inactive INACTIVE       set password inactive after expiration
+                                to INACTIVE
+  -l, --lock                    lock the password of the named account
+  -n, --mindays MIN_DAYS        set minimum number of days before password
+                                change to MIN_DAYS
+  -q, --quiet                   quiet mode
+  -r, --repository REPOSITORY   change password in REPOSITORY repository
+  -R, --root CHROOT_DIR         directory to chroot into
+  -S, --status                  report password status on the named account
+  -u, --unlock                  unlock the password of the named account
+  -w, --warndays WARN_DAYS      set expiration warning days to WARN_DAYS
+  -x, --maxdays MAX_DAYS        set maximum number of days before password
+                                change to MAX_DAYS
+
+root@953bf8ae818d:/app# mkdir -p /app/server
+root@953bf8ae818d:/app# cd /app/server && git init --bare
+bash: git: command not found
+root@953bf8ae818d:/app/server# mkdir -p /app/server/.git
+root@953bf8ae818d:/app/server# cd /app/server
+root@953bf8ae818d:/app/server# cp .git/HEAD .git/HEAD.bak
+cp: cannot stat '.git/HEAD': No such file or directory
+root@953bf8ae818d:/app/server# echo 'ref: refs/heads/webserver' > .git/HEAD
+root@953bf8ae818d:/app/server# cd /app
+root@953bf8ae818d:/app# cat > /app/server/post-receive << 'EOF'
+> #!/bin/bash
+> # This hook is called after receiving a push to the repository.
+> # It updates the web directory with the contents of the repository.
+> # We assume the repository is at /app/server and the web directory is /app/web.
+> # The branch we care about is 'webserver'.
+> # We check out the webserver branch and copy files to /app/web.
+> # Note: This hook uses the git executable from the repository.
+>
+> # Check if the branch is webserver
+> BRANCH=webserver
+> if [ "$BRANCH" = "" ]; then
+>     BRANCH=$(git rev-parse --symbolic-ref refs/heads/webserver 2>/dev/null || true)
+> fi
+> if [ -z "$BRANCH" ]; then
+>     echo "Error: branch not found" >&2
+>     exit 1
+> fi
+>
+> # Change to the repository directory
+> REPO_DIR="/app/server"
+> cd "$REPO_DIR" || exit 1
+>
+> # Check out the branch and copy files to /app/web
+> if git checkout -f "$BRANCH" >/dev/null 2>&1; then
+>     # Copy the contents of the repository to /app/web
+>     # We copy the whole repository directory (including .git) but we only want the files.
+>     # Instead, we can copy the files from the .git directory.
+>     # The files are in .git/description, .git/HEAD, .git/objects, .git/index, .git/config, .git/HEAD.
+>     # We'll copy the entire .git directory to /app/web (or a subdirectory).
+>     # But the web server should serve the files, not the git metadata.
+>     # Let's copy the files that are in the root of the repository (excluding .git).
+>     # We'll use a git archive to get the files.
+>     # Use git archive --format=tar --output=/tmp/archive.tar HEAD
+>     # Then extract to /app/web.
+>     git archive --format=tar --output=/tmp/archive.tar HEAD
+>     mkdir -p /app/web
+>     tar -xzf /tmp/archive.tar -C /app/web
+>     # Clean up
+>     rm -f /tmp/archive.tar
+>     echo "Web directory updated successfully."
+> else
+>     echo "Failed to checkout branch $BRANCH" >&2
+>     exit 1
+> fi
+> EOF
+root@953bf8ae818d:/app# chmod +x /app/server/post-receive
+root@953bf8ae818d:/app# mkdir -p /app/web
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# cat > /etc/nginx/conf.d/server.conf << 'EOF'
+> server {
+>     server_name server;  # replace with actual server name
+>     port 8080;
+>
+>     location / {
+>         root /app/web;
+>         index index.html hello.html;
+>     }
+> }
+> EOF
+bash: /etc/nginx/conf.d/server.conf: No such file or directory
+root@953bf8ae818d:/app# nginx -t
+bash: nginx: command not found
+root@953bf8ae818d:/app# nginx
+bash: nginx: command not found
+root@953bf8ae818d:/app# dpkg -l | grep -E '(git|nginx)'
+root@953bf8ae818d:/app# apt-get install -y git nginx
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+The following additional packages will be installed:
+  adduser git-man iproute2 krb5-locales less libatm1t64 libbpf1 libbrotli1 libbsd0 libcap2 libcap2-bin libcbor0.10 libcurl3t64-gnutls libedit2 libelf1t64
+  liberror-perl libfido2-1 libgdbm-compat4t64 libgdbm6t64 libgssapi-krb5-2 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libldap-common libldap2 libmnl0
+  libnghttp2-14 libpam-cap libperl5.38t64 libpsl5t64 librtmp1 libsasl2-2 libsasl2-modules libsasl2-modules-db libssh-4 libx11-6 libx11-data libxau6 libxcb1
+  libxdmcp6 libxext6 libxmuu1 libxtables12 nginx-common openssh-client patch perl perl-base perl-modules-5.38 publicsuffix xauth
+Suggested packages:
+  liblocale-gettext-perl cron quota ecryptfs-utils gettext-base git-daemon-run | git-daemon-sysvinit git-doc git-email git-gui gitk gitweb git-cvs
+  git-mediawiki git-svn iproute2-doc gdbm-l10n krb5-doc krb5-user libsasl2-modules-gssapi-mit | libsasl2-modules-gssapi-heimdal libsasl2-modules-ldap
+  libsasl2-modules-otp libsasl2-modules-sql fcgiwrap nginx-doc ssl-cert keychain libpam-ssh monkeysphere ssh-askpass ed diffutils-doc perl-doc
+  libterm-readline-gnu-perl | libterm-readline-perl-perl make libtap-harness-archive-perl
+The following NEW packages will be installed:
+  adduser git git-man iproute2 krb5-locales less libatm1t64 libbpf1 libbrotli1 libbsd0 libcap2-bin libcbor0.10 libcurl3t64-gnutls libedit2 libelf1t64
+  liberror-perl libfido2-1 libgdbm-compat4t64 libgdbm6t64 libgssapi-krb5-2 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0 libldap-common libldap2 libmnl0
+  libnghttp2-14 libpam-cap libperl5.38t64 libpsl5t64 librtmp1 libsasl2-2 libsasl2-modules libsasl2-modules-db libssh-4 libx11-6 libx11-data libxau6 libxcb1
+  libxdmcp6 libxext6 libxmuu1 libxtables12 nginx nginx-common openssh-client patch perl perl-modules-5.38 publicsuffix xauth
+The following packages will be upgraded:
+  libcap2 perl-base
+2 upgraded, 52 newly installed, 0 to remove and 49 not upgraded.
+Need to get 21.5 MB of archives.
+After this operation, 95.7 MB of additional disk space will be used.
+Get:1 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 perl-base amd64 5.38.2-3.2ubuntu0.3 [1827 kB]
+Get:2 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 perl-modules-5.38 all 5.38.2-3.2ubuntu0.3 [3110 kB]
+Get:3 http://archive.ubuntu.com/ubuntu noble/main amd64 libgdbm6t64 amd64 1.23-5.1build1 [34.4 kB]
+Get:4 http://archive.ubuntu.com/ubuntu noble/main amd64 libgdbm-compat4t64 amd64 1.23-5.1build1 [6710 B]
+Get:5 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libperl5.38t64 amd64 5.38.2-3.2ubuntu0.3 [4876 kB]
+Get:6 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 perl amd64 5.38.2-3.2ubuntu0.3 [231 kB]
+Get:7 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libcap2 amd64 1:2.66-5ubuntu2.4 [30.5 kB]
+Get:8 http://archive.ubuntu.com/ubuntu noble/main amd64 adduser all 3.137ubuntu1 [101 kB]
+Get:9 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libelf1t64 amd64 0.190-1.1ubuntu0.1 [57.8 kB]
+Get:10 http://archive.ubuntu.com/ubuntu noble/main amd64 libbpf1 amd64 1:1.3.0-2build2 [166 kB]
+Get:11 http://archive.ubuntu.com/ubuntu noble/main amd64 libmnl0 amd64 1.0.5-2build1 [12.3 kB]
+Get:12 http://archive.ubuntu.com/ubuntu noble/main amd64 libxtables12 amd64 1.8.10-3ubuntu2 [35.7 kB]
+Get:13 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libcap2-bin amd64 1:2.66-5ubuntu2.4 [34.1 kB]
+Get:14 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 iproute2 amd64 6.1.0-1ubuntu6.4 [1120 kB]
+Get:15 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 krb5-locales all 1.20.1-6ubuntu2.6 [14.8 kB]
+Get:16 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 less amd64 590-2ubuntu2.1 [142 kB]
+Get:17 http://archive.ubuntu.com/ubuntu noble/main amd64 libatm1t64 amd64 1:2.5.1-5.1build1 [22.9 kB]
+Get:18 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libbsd0 amd64 0.12.1-1build1.1 [41.2 kB]
+Get:19 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libkrb5support0 amd64 1.20.1-6ubuntu2.6 [34.4 kB]
+Get:20 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libk5crypto3 amd64 1.20.1-6ubuntu2.6 [82.0 kB]
+Get:21 http://archive.ubuntu.com/ubuntu noble/main amd64 libkeyutils1 amd64 1.6.3-3build1 [9490 B]
+Get:22 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libkrb5-3 amd64 1.20.1-6ubuntu2.6 [348 kB]
+Get:23 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libgssapi-krb5-2 amd64 1.20.1-6ubuntu2.6 [143 kB]
+Get:24 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libpam-cap amd64 1:2.66-5ubuntu2.4 [12.5 kB]
+Get:25 http://archive.ubuntu.com/ubuntu noble/main amd64 libcbor0.10 amd64 0.10.2-1.2ubuntu2 [25.8 kB]
+Get:26 http://archive.ubuntu.com/ubuntu noble/main amd64 libedit2 amd64 3.1-20230828-1build1 [97.6 kB]
+Get:27 http://archive.ubuntu.com/ubuntu noble/main amd64 libfido2-1 amd64 1.14.0-1build3 [83.5 kB]
+Get:28 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libnghttp2-14 amd64 1.59.0-1ubuntu0.4 [74.6 kB]
+Get:29 http://archive.ubuntu.com/ubuntu noble/main amd64 libpsl5t64 amd64 0.21.2-1.1build1 [57.1 kB]
+Get:30 http://archive.ubuntu.com/ubuntu noble/main amd64 libxau6 amd64 1:1.0.9-1build6 [7160 B]
+Get:31 http://archive.ubuntu.com/ubuntu noble/main amd64 libxdmcp6 amd64 1:1.1.3-0ubuntu6 [10.3 kB]
+Get:32 http://archive.ubuntu.com/ubuntu noble/main amd64 libxcb1 amd64 1.15-1ubuntu2 [47.7 kB]
+Get:33 http://archive.ubuntu.com/ubuntu noble/main amd64 libx11-data all 2:1.8.7-1build1 [115 kB]
+Get:34 http://archive.ubuntu.com/ubuntu noble/main amd64 libx11-6 amd64 2:1.8.7-1build1 [650 kB]
+Get:35 http://archive.ubuntu.com/ubuntu noble/main amd64 libxext6 amd64 2:1.3.4-1build2 [30.4 kB]
+Get:36 http://archive.ubuntu.com/ubuntu noble/main amd64 libxmuu1 amd64 2:1.1.3-3build2 [8958 B]
+Get:37 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 openssh-client amd64 1:9.6p1-3ubuntu13.16 [907 kB]
+Get:38 http://archive.ubuntu.com/ubuntu noble/main amd64 publicsuffix all 20231001.0357-0.1 [129 kB]
+Get:39 http://archive.ubuntu.com/ubuntu noble/main amd64 xauth amd64 1:1.1.2-1build1 [25.6 kB]
+Get:40 http://archive.ubuntu.com/ubuntu noble/main amd64 libbrotli1 amd64 1.1.0-2build2 [331 kB]
+Get:41 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libsasl2-modules-db amd64 2.1.28+dfsg1-5ubuntu3.1 [20.4 kB]
+Get:42 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libsasl2-2 amd64 2.1.28+dfsg1-5ubuntu3.1 [53.2 kB]
+Get:43 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libldap2 amd64 2.6.10+dfsg-0ubuntu0.24.04.1 [198 kB]
+Get:44 http://archive.ubuntu.com/ubuntu noble/main amd64 librtmp1 amd64 2.4+20151223.gitfa8646d.1-2build7 [56.3 kB]
+Get:45 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libssh-4 amd64 0.10.6-2ubuntu0.4 [190 kB]
+Get:46 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libcurl3t64-gnutls amd64 8.5.0-2ubuntu10.10 [335 kB]
+Get:47 http://archive.ubuntu.com/ubuntu noble/main amd64 liberror-perl all 0.17029-2 [25.6 kB]
+Get:48 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 git-man all 1:2.43.0-1ubuntu7.3 [1100 kB]
+Get:49 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 git amd64 1:2.43.0-1ubuntu7.3 [3680 kB]
+Get:50 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libldap-common all 2.6.10+dfsg-0ubuntu0.24.04.1 [32.9 kB]
+Get:51 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libsasl2-modules amd64 2.1.28+dfsg1-5ubuntu3.1 [69.9 kB]
+Get:52 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 nginx-common all 1.24.0-2ubuntu7.13 [44.5 kB]
+Get:53 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 nginx amd64 1.24.0-2ubuntu7.13 [524 kB]
+Get:54 http://archive.ubuntu.com/ubuntu noble/main amd64 patch amd64 2.7.6-7build3 [104 kB]
+Fetched 21.5 MB in 0s (46.9 MB/s)
+debconf: delaying package configuration, since apt-utils is not installed
+(Reading database ... 6337 files and directories currently installed.)
+Preparing to unpack .../perl-base_5.38.2-3.2ubuntu0.3_amd64.deb ...
+Unpacking perl-base (5.38.2-3.2ubuntu0.3) over (5.38.2-3.2build2.1) ...
+Setting up perl-base (5.38.2-3.2ubuntu0.3) ...
+Selecting previously unselected package perl-modules-5.38.
+(Reading database ... 6337 files and directories currently installed.)
+Preparing to unpack .../0-perl-modules-5.38_5.38.2-3.2ubuntu0.3_all.deb ...
+Unpacking perl-modules-5.38 (5.38.2-3.2ubuntu0.3) ...
+Selecting previously unselected package libgdbm6t64:amd64.
+Preparing to unpack .../1-libgdbm6t64_1.23-5.1build1_amd64.deb ...
+Unpacking libgdbm6t64:amd64 (1.23-5.1build1) ...
+Selecting previously unselected package libgdbm-compat4t64:amd64.
+Preparing to unpack .../2-libgdbm-compat4t64_1.23-5.1build1_amd64.deb ...
+Unpacking libgdbm-compat4t64:amd64 (1.23-5.1build1) ...
+Selecting previously unselected package libperl5.38t64:amd64.
+Preparing to unpack .../3-libperl5.38t64_5.38.2-3.2ubuntu0.3_amd64.deb ...
+Unpacking libperl5.38t64:amd64 (5.38.2-3.2ubuntu0.3) ...
+Selecting previously unselected package perl.
+Preparing to unpack .../4-perl_5.38.2-3.2ubuntu0.3_amd64.deb ...
+Unpacking perl (5.38.2-3.2ubuntu0.3) ...
+Preparing to unpack .../5-libcap2_1%3a2.66-5ubuntu2.4_amd64.deb ...
+Unpacking libcap2:amd64 (1:2.66-5ubuntu2.4) over (1:2.66-5ubuntu2.2) ...
+Setting up libcap2:amd64 (1:2.66-5ubuntu2.4) ...
+Selecting previously unselected package adduser.
+(Reading database ... 8349 files and directories currently installed.)
+Preparing to unpack .../adduser_3.137ubuntu1_all.deb ...
+Unpacking adduser (3.137ubuntu1) ...
+Setting up adduser (3.137ubuntu1) ...
+Selecting previously unselected package libelf1t64:amd64.
+(Reading database ... 8397 files and directories currently installed.)
+Preparing to unpack .../00-libelf1t64_0.190-1.1ubuntu0.1_amd64.deb ...
+Unpacking libelf1t64:amd64 (0.190-1.1ubuntu0.1) ...
+Selecting previously unselected package libbpf1:amd64.
+Preparing to unpack .../01-libbpf1_1%3a1.3.0-2build2_amd64.deb ...
+Unpacking libbpf1:amd64 (1:1.3.0-2build2) ...
+Selecting previously unselected package libmnl0:amd64.
+Preparing to unpack .../02-libmnl0_1.0.5-2build1_amd64.deb ...
+Unpacking libmnl0:amd64 (1.0.5-2build1) ...
+Selecting previously unselected package libxtables12:amd64.
+Preparing to unpack .../03-libxtables12_1.8.10-3ubuntu2_amd64.deb ...
+Unpacking libxtables12:amd64 (1.8.10-3ubuntu2) ...
+Selecting previously unselected package libcap2-bin.
+Preparing to unpack .../04-libcap2-bin_1%3a2.66-5ubuntu2.4_amd64.deb ...
+Unpacking libcap2-bin (1:2.66-5ubuntu2.4) ...
+Selecting previously unselected package iproute2.
+Preparing to unpack .../05-iproute2_6.1.0-1ubuntu6.4_amd64.deb ...
+Unpacking iproute2 (6.1.0-1ubuntu6.4) ...
+Selecting previously unselected package krb5-locales.
+Preparing to unpack .../06-krb5-locales_1.20.1-6ubuntu2.6_all.deb ...
+Unpacking krb5-locales (1.20.1-6ubuntu2.6) ...
+Selecting previously unselected package less.
+Preparing to unpack .../07-less_590-2ubuntu2.1_amd64.deb ...
+Unpacking less (590-2ubuntu2.1) ...
+Selecting previously unselected package libatm1t64:amd64.
+Preparing to unpack .../08-libatm1t64_1%3a2.5.1-5.1build1_amd64.deb ...
+Unpacking libatm1t64:amd64 (1:2.5.1-5.1build1) ...
+Selecting previously unselected package libbsd0:amd64.
+Preparing to unpack .../09-libbsd0_0.12.1-1build1.1_amd64.deb ...
+Unpacking libbsd0:amd64 (0.12.1-1build1.1) ...
+Selecting previously unselected package libkrb5support0:amd64.
+Preparing to unpack .../10-libkrb5support0_1.20.1-6ubuntu2.6_amd64.deb ...
+Unpacking libkrb5support0:amd64 (1.20.1-6ubuntu2.6) ...
+Selecting previously unselected package libk5crypto3:amd64.
+Preparing to unpack .../11-libk5crypto3_1.20.1-6ubuntu2.6_amd64.deb ...
+Unpacking libk5crypto3:amd64 (1.20.1-6ubuntu2.6) ...
+Selecting previously unselected package libkeyutils1:amd64.
+Preparing to unpack .../12-libkeyutils1_1.6.3-3build1_amd64.deb ...
+Unpacking libkeyutils1:amd64 (1.6.3-3build1) ...
+Selecting previously unselected package libkrb5-3:amd64.
+Preparing to unpack .../13-libkrb5-3_1.20.1-6ubuntu2.6_amd64.deb ...
+Unpacking libkrb5-3:amd64 (1.20.1-6ubuntu2.6) ...
+Selecting previously unselected package libgssapi-krb5-2:amd64.
+Preparing to unpack .../14-libgssapi-krb5-2_1.20.1-6ubuntu2.6_amd64.deb ...
+Unpacking libgssapi-krb5-2:amd64 (1.20.1-6ubuntu2.6) ...
+Selecting previously unselected package libpam-cap:amd64.
+Preparing to unpack .../15-libpam-cap_1%3a2.66-5ubuntu2.4_amd64.deb ...
+Unpacking libpam-cap:amd64 (1:2.66-5ubuntu2.4) ...
+Selecting previously unselected package libcbor0.10:amd64.
+Preparing to unpack .../16-libcbor0.10_0.10.2-1.2ubuntu2_amd64.deb ...
+Unpacking libcbor0.10:amd64 (0.10.2-1.2ubuntu2) ...
+Selecting previously unselected package libedit2:amd64.
+Preparing to unpack .../17-libedit2_3.1-20230828-1build1_amd64.deb ...
+Unpacking libedit2:amd64 (3.1-20230828-1build1) ...
+Selecting previously unselected package libfido2-1:amd64.
+Preparing to unpack .../18-libfido2-1_1.14.0-1build3_amd64.deb ...
+Unpacking libfido2-1:amd64 (1.14.0-1build3) ...
+Selecting previously unselected package libnghttp2-14:amd64.
+Preparing to unpack .../19-libnghttp2-14_1.59.0-1ubuntu0.4_amd64.deb ...
+Unpacking libnghttp2-14:amd64 (1.59.0-1ubuntu0.4) ...
+Selecting previously unselected package libpsl5t64:amd64.
+Preparing to unpack .../20-libpsl5t64_0.21.2-1.1build1_amd64.deb ...
+Unpacking libpsl5t64:amd64 (0.21.2-1.1build1) ...
+Selecting previously unselected package libxau6:amd64.
+Preparing to unpack .../21-libxau6_1%3a1.0.9-1build6_amd64.deb ...
+Unpacking libxau6:amd64 (1:1.0.9-1build6) ...
+Selecting previously unselected package libxdmcp6:amd64.
+Preparing to unpack .../22-libxdmcp6_1%3a1.1.3-0ubuntu6_amd64.deb ...
+Unpacking libxdmcp6:amd64 (1:1.1.3-0ubuntu6) ...
+Selecting previously unselected package libxcb1:amd64.
+Preparing to unpack .../23-libxcb1_1.15-1ubuntu2_amd64.deb ...
+Unpacking libxcb1:amd64 (1.15-1ubuntu2) ...
+Selecting previously unselected package libx11-data.
+Preparing to unpack .../24-libx11-data_2%3a1.8.7-1build1_all.deb ...
+Unpacking libx11-data (2:1.8.7-1build1) ...
+Selecting previously unselected package libx11-6:amd64.
+Preparing to unpack .../25-libx11-6_2%3a1.8.7-1build1_amd64.deb ...
+Unpacking libx11-6:amd64 (2:1.8.7-1build1) ...
+Selecting previously unselected package libxext6:amd64.
+Preparing to unpack .../26-libxext6_2%3a1.3.4-1build2_amd64.deb ...
+Unpacking libxext6:amd64 (2:1.3.4-1build2) ...
+Selecting previously unselected package libxmuu1:amd64.
+Preparing to unpack .../27-libxmuu1_2%3a1.1.3-3build2_amd64.deb ...
+Unpacking libxmuu1:amd64 (2:1.1.3-3build2) ...
+Selecting previously unselected package openssh-client.
+Preparing to unpack .../28-openssh-client_1%3a9.6p1-3ubuntu13.16_amd64.deb ...
+Unpacking openssh-client (1:9.6p1-3ubuntu13.16) ...
+Selecting previously unselected package publicsuffix.
+Preparing to unpack .../29-publicsuffix_20231001.0357-0.1_all.deb ...
+Unpacking publicsuffix (20231001.0357-0.1) ...
+Selecting previously unselected package xauth.
+Preparing to unpack .../30-xauth_1%3a1.1.2-1build1_amd64.deb ...
+Unpacking xauth (1:1.1.2-1build1) ...
+Selecting previously unselected package libbrotli1:amd64.
+Preparing to unpack .../31-libbrotli1_1.1.0-2build2_amd64.deb ...
+Unpacking libbrotli1:amd64 (1.1.0-2build2) ...
+Selecting previously unselected package libsasl2-modules-db:amd64.
+Preparing to unpack .../32-libsasl2-modules-db_2.1.28+dfsg1-5ubuntu3.1_amd64.deb ...
+Unpacking libsasl2-modules-db:amd64 (2.1.28+dfsg1-5ubuntu3.1) ...
+Selecting previously unselected package libsasl2-2:amd64.
+Preparing to unpack .../33-libsasl2-2_2.1.28+dfsg1-5ubuntu3.1_amd64.deb ...
+Unpacking libsasl2-2:amd64 (2.1.28+dfsg1-5ubuntu3.1) ...
+Selecting previously unselected package libldap2:amd64.
+Preparing to unpack .../34-libldap2_2.6.10+dfsg-0ubuntu0.24.04.1_amd64.deb ...
+Unpacking libldap2:amd64 (2.6.10+dfsg-0ubuntu0.24.04.1) ...
+Selecting previously unselected package librtmp1:amd64.
+Preparing to unpack .../35-librtmp1_2.4+20151223.gitfa8646d.1-2build7_amd64.deb ...
+Unpacking librtmp1:amd64 (2.4+20151223.gitfa8646d.1-2build7) ...
+Selecting previously unselected package libssh-4:amd64.
+Preparing to unpack .../36-libssh-4_0.10.6-2ubuntu0.4_amd64.deb ...
+Unpacking libssh-4:amd64 (0.10.6-2ubuntu0.4) ...
+Selecting previously unselected package libcurl3t64-gnutls:amd64.
+Preparing to unpack .../37-libcurl3t64-gnutls_8.5.0-2ubuntu10.10_amd64.deb ...
+Unpacking libcurl3t64-gnutls:amd64 (8.5.0-2ubuntu10.10) ...
+Selecting previously unselected package liberror-perl.
+Preparing to unpack .../38-liberror-perl_0.17029-2_all.deb ...
+Unpacking liberror-perl (0.17029-2) ...
+Selecting previously unselected package git-man.
+Preparing to unpack .../39-git-man_1%3a2.43.0-1ubuntu7.3_all.deb ...
+Unpacking git-man (1:2.43.0-1ubuntu7.3) ...
+Selecting previously unselected package git.
+Preparing to unpack .../40-git_1%3a2.43.0-1ubuntu7.3_amd64.deb ...
+Unpacking git (1:2.43.0-1ubuntu7.3) ...
+Selecting previously unselected package libldap-common.
+Preparing to unpack .../41-libldap-common_2.6.10+dfsg-0ubuntu0.24.04.1_all.deb ...
+Unpacking libldap-common (2.6.10+dfsg-0ubuntu0.24.04.1) ...
+Selecting previously unselected package libsasl2-modules:amd64.
+Preparing to unpack .../42-libsasl2-modules_2.1.28+dfsg1-5ubuntu3.1_amd64.deb ...
+Unpacking libsasl2-modules:amd64 (2.1.28+dfsg1-5ubuntu3.1) ...
+Selecting previously unselected package nginx-common.
+Preparing to unpack .../43-nginx-common_1.24.0-2ubuntu7.13_all.deb ...
+Unpacking nginx-common (1.24.0-2ubuntu7.13) ...
+Selecting previously unselected package nginx.
+Preparing to unpack .../44-nginx_1.24.0-2ubuntu7.13_amd64.deb ...
+Unpacking nginx (1.24.0-2ubuntu7.13) ...
+Selecting previously unselected package patch.
+Preparing to unpack .../45-patch_2.7.6-7build3_amd64.deb ...
+Unpacking patch (2.7.6-7build3) ...
+Setting up libxau6:amd64 (1:1.0.9-1build6) ...
+Setting up libkeyutils1:amd64 (1.6.3-3build1) ...
+Setting up libatm1t64:amd64 (1:2.5.1-5.1build1) ...
+Setting up libgdbm6t64:amd64 (1.23-5.1build1) ...
+Setting up libgdbm-compat4t64:amd64 (1.23-5.1build1) ...
+Setting up libcbor0.10:amd64 (0.10.2-1.2ubuntu2) ...
+Setting up libbrotli1:amd64 (1.1.0-2build2) ...
+Setting up libsasl2-modules:amd64 (2.1.28+dfsg1-5ubuntu3.1) ...
+Setting up libpsl5t64:amd64 (0.21.2-1.1build1) ...
+Setting up libnghttp2-14:amd64 (1.59.0-1ubuntu0.4) ...
+Setting up less (590-2ubuntu2.1) ...
+Setting up nginx-common (1.24.0-2ubuntu7.13) ...
+debconf: unable to initialize frontend: Dialog
+debconf: (No usable dialog-like program is installed, so the dialog based frontend cannot be used. at /usr/share/perl5/Debconf/FrontEnd/Dialog.pm line 79.)
+debconf: falling back to frontend: Readline
+Setting up krb5-locales (1.20.1-6ubuntu2.6) ...
+Setting up libldap-common (2.6.10+dfsg-0ubuntu0.24.04.1) ...
+Setting up libelf1t64:amd64 (0.190-1.1ubuntu0.1) ...
+Setting up libkrb5support0:amd64 (1.20.1-6ubuntu2.6) ...
+Setting up libsasl2-modules-db:amd64 (2.1.28+dfsg1-5ubuntu3.1) ...
+Setting up libcap2-bin (1:2.66-5ubuntu2.4) ...
+Setting up libx11-data (2:1.8.7-1build1) ...
+Setting up librtmp1:amd64 (2.4+20151223.gitfa8646d.1-2build7) ...
+Setting up perl-modules-5.38 (5.38.2-3.2ubuntu0.3) ...
+Setting up libmnl0:amd64 (1.0.5-2build1) ...
+Setting up patch (2.7.6-7build3) ...
+Setting up libk5crypto3:amd64 (1.20.1-6ubuntu2.6) ...
+Setting up libxtables12:amd64 (1.8.10-3ubuntu2) ...
+Setting up libsasl2-2:amd64 (2.1.28+dfsg1-5ubuntu3.1) ...
+Setting up git-man (1:2.43.0-1ubuntu7.3) ...
+Setting up libkrb5-3:amd64 (1.20.1-6ubuntu2.6) ...
+Setting up libperl5.38t64:amd64 (5.38.2-3.2ubuntu0.3) ...
+Setting up libfido2-1:amd64 (1.14.0-1build3) ...
+Setting up libbsd0:amd64 (0.12.1-1build1.1) ...
+Setting up libpam-cap:amd64 (1:2.66-5ubuntu2.4) ...
+debconf: unable to initialize frontend: Dialog
+debconf: (No usable dialog-like program is installed, so the dialog based frontend cannot be used. at /usr/share/perl5/Debconf/FrontEnd/Dialog.pm line 79.)
+debconf: falling back to frontend: Readline
+Setting up publicsuffix (20231001.0357-0.1) ...
+Setting up libldap2:amd64 (2.6.10+dfsg-0ubuntu0.24.04.1) ...
+Setting up libbpf1:amd64 (1:1.3.0-2build2) ...
+Setting up libxdmcp6:amd64 (1:1.1.3-0ubuntu6) ...
+Setting up libxcb1:amd64 (1.15-1ubuntu2) ...
+Setting up iproute2 (6.1.0-1ubuntu6.4) ...
+debconf: unable to initialize frontend: Dialog
+debconf: (No usable dialog-like program is installed, so the dialog based frontend cannot be used. at /usr/share/perl5/Debconf/FrontEnd/Dialog.pm line 79.)
+debconf: falling back to frontend: Readline
+Setting up libedit2:amd64 (3.1-20230828-1build1) ...
+Setting up perl (5.38.2-3.2ubuntu0.3) ...
+Setting up libgssapi-krb5-2:amd64 (1.20.1-6ubuntu2.6) ...
+Setting up libssh-4:amd64 (0.10.6-2ubuntu0.4) ...
+Setting up libx11-6:amd64 (2:1.8.7-1build1) ...
+Setting up libxmuu1:amd64 (2:1.1.3-3build2) ...
+Setting up nginx (1.24.0-2ubuntu7.13) ...
+invoke-rc.d: could not determine current runlevel
+invoke-rc.d: policy-rc.d denied execution of start.
+Setting up openssh-client (1:9.6p1-3ubuntu13.16) ...
+Setting up libcurl3t64-gnutls:amd64 (8.5.0-2ubuntu10.10) ...
+Setting up libxext6:amd64 (2:1.3.4-1build2) ...
+Setting up liberror-perl (0.17029-2) ...
+Setting up git (1:2.43.0-1ubuntu7.3) ...
+Setting up xauth (1:1.1.2-1build1) ...
+Processing triggers for libc-bin (2.39-0ubuntu8.4) ...
+root@953bf8ae818d:/app# useradd -s /bin/bash git
+root@953bf8ae818d:/app# echo 'gitserver' | passwd git --stdin 2>/dev/null || echo 'gitserver' | passwd git
+New password: Retype new password: Password change has been aborted.
+passwd: Authentication token manipulation error
+passwd: password unchanged
+root@953bf8ae818d:/app# mkdir -p /app/server
+root@953bf8ae818d:/app# cd /app/server && git init --bare
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint:   git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint:   git branch -m <name>
+Initialized empty Git repository in /app/server/
+root@953bf8ae818d:/app/server# cd /app/server
+root@953bf8ae818d:/app/server# cp .git/HEAD .git/HEAD.bak 2>/dev/null || echo 'ref: refs/heads/webserver' > .git/HEAD
+root@953bf8ae818d:/app/server# cat > /app/server/post-receive << 'EOF'
+> #!/bin/bash
+> # This hook is called after receiving a push to the repository.
+> # It updates the web directory with the contents of the repository.
+> # We assume the repository is at /app/server and the web directory is /app/web.
+> # The branch we care about is 'webserver'.
+> # We check out the webserver branch and copy files to /app/web.
+> # Note: This hook uses the git executable from the repository.
+>
+> # Check if the branch is webserver
+> BRANCH=webserver
+> if [ "$BRANCH" = "" ]; then
+>     BRANCH=$(git rev-parse --symbolic-ref refs/heads/webserver 2>/dev/null || true)
+> fi
+> if [ -z "$BRANCH" ]; then
+>     echo "Error: branch not found" >&2
+>     exit 1
+> fi
+>
+> # Change to the repository directory
+> REPO_DIR="/app/server"
+> cd "$REPO_DIR" || exit 1
+>
+> # Check out the branch and copy files to /app/web
+> if git checkout -f "$BRANCH" >/dev/null 2>&1; then
+>     # Copy the contents of the repository to /app/web
+>     # Use git archive to get the files
+>     git archive --format=tar --output=/tmp/archive.tar HEAD
+>     mkdir -p /app/web
+>     tar -xzf /tmp/archive.tar -C /app/web
+>     # Clean up
+>     rm -f /tmp/archive.tar
+>     echo "Web directory updated successfully."
+> else
+>     echo "Failed to checkout branch $BRANCH" >&2
+>     exit 1
+> fi
+> EOF
+root@953bf8ae818d:/app/server# chmod +x /app/server/post-receive
+root@953bf8ae818d:/app/server# mkdir -p /app/web
+root@953bf8ae818d:/app/server# mkdir -p /etc/nginx/conf.d
+root@953bf8ae818d:/app/server# cat > /etc/nginx/conf.d/server.conf << 'EOF'
+> server {
+>     server_name server;  # replace with actual server name
+>     port 8080;
+>
+>     location / {
+>         root /app/web;
+>         index index.html hello.html;
+>     }
+> }
+> EOF
+root@953bf8ae818d:/app/server# nginx -t
+2026/07/07 12:55:03 [emerg] 1181#1181: unknown directive "port" in /etc/nginx/conf.d/server.conf:3
+nginx: configuration file /etc/nginx/nginx.conf test failed
+root@953bf8ae818d:/app/server# nginx
+2026/07/07 12:55:04 [emerg] 1189#1189: unknown directive "port" in /etc/nginx/conf.d/server.conf:3
+root@953bf8ae818d:/app/server# echo 'git:gitserver' | chpasswd
+root@953bf8ae818d:/app/server# cat /etc/nginx/nginx.conf
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+        worker_connections 768;
+        # multi_accept on;
+}
+
+http {
+
+        ##
+        # Basic Settings
+        ##
+
+        sendfile on;
+        tcp_nopush on;
+        types_hash_max_size 2048;
+        # server_tokens off;
+
+        # server_names_hash_bucket_size 64;
+        # server_name_in_redirect off;
+
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        ##
+        # SSL Settings
+        ##
+
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+        ssl_prefer_server_ciphers on;
+
+        ##
+        # Logging Settings
+        ##
+
+        access_log /var/log/nginx/access.log;
+
+        ##
+        # Gzip Settings
+        ##
+
+        gzip on;
+
+        # gzip_vary on;
+        # gzip_proxied any;
+        # gzip_comp_level 6;
+        # gzip_buffers 16 8k;
+        # gzip_http_version 1.1;
+        # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+        ##
+        # Virtual Host Configs
+        ##
+
+        include /etc/nginx/conf.d/*.conf;
+        include /etc/nginx/sites-enabled/*;
+}
+
+
+#mail {
+#       # See sample authentication script at:
+#       # http://wiki.nginx.org/ImapAuthenticateWithApachePhpScript
+#
+#       # auth_http localhost/auth.php;
+#       # pop3_capabilities "TOP" "USER";
+#       # imap_capabilities "IMAP4rev1" "UIDPLUS";
+#
+#       server {
+#               listen     localhost:110;
+#               protocol   pop3;
+#               proxy      on;
+#       }
+#
+#       server {
+#               listen     localhost:143;
+#               protocol   imap;
+#               proxy      on;
+#       }
+#}
+root@953bf8ae818d:/app/server# cd /app/server
+root@953bf8ae818d:/app/server# git config user.email "git@example.com"
+root@953bf8ae818d:/app/server# git config user.name "git"
+root@953bf8ae818d:/app/server# mkdir -p webserver
+root@953bf8ae818d:/app/server# echo 'ref: refs/heads/webserver' > .git/HEAD
+root@953bf8ae818d:/app/server# echo 'webserver branch' > webserver/index.html
+root@953bf8ae818d:/app/server# echo 'hello world' > webserver/hello.html
+root@953bf8ae818d:/app/server# git add webserver
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server# git commit -m "initial commit"
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server# git checkout -b webserver
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app/server# cd /app
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+bash: curl: command not found
+root@953bf8ae818d:/app# apt-get install -y curl
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+The following additional packages will be installed:
+  libcurl4t64
+The following NEW packages will be installed:
+  curl libcurl4t64
+0 upgraded, 2 newly installed, 0 to remove and 49 not upgraded.
+Need to get 569 kB of archives.
+After this operation, 1483 kB of additional disk space will be used.
+Get:1 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libcurl4t64 amd64 8.5.0-2ubuntu10.10 [343 kB]
+Get:2 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 curl amd64 8.5.0-2ubuntu10.10 [227 kB]
+Fetched 569 kB in 0s (10.0 MB/s)
+debconf: delaying package configuration, since apt-utils is not installed
+Selecting previously unselected package libcurl4t64:amd64.
+(Reading database ... 10307 files and directories currently installed.)
+Preparing to unpack .../libcurl4t64_8.5.0-2ubuntu10.10_amd64.deb ...
+Unpacking libcurl4t64:amd64 (8.5.0-2ubuntu10.10) ...
+Selecting previously unselected package curl.
+Preparing to unpack .../curl_8.5.0-2ubuntu10.10_amd64.deb ...
+Unpacking curl (8.5.0-2ubuntu10.10) ...
+Setting up libcurl4t64:amd64 (8.5.0-2ubuntu10.10) ...
+Setting up curl (8.5.0-2ubuntu10.10) ...
+Processing triggers for libc-bin (2.39-0ubuntu8.4) ...
+root@953bf8ae818d:/app# cat /etc/nginx/conf.d/server.conf
+server {
+    server_name server;  # replace with actual server name
+    port 8080;
+
+    location / {
+        root /app/web;
+        index index.html hello.html;
+    }
+}
+root@953bf8ae818d:/app# cd /app/server
+root@953bf8ae818d:/app/server# mkdir -p working
+root@953bf8ae818d:/app/server# cd working
+root@953bf8ae818d:/app/server/working# git clone /app/server
+Cloning into 'server'...
+warning: You appear to have cloned an empty repository.
+done.
+root@953bf8ae818d:/app/server/working# git config user.email "git@example.com"
+root@953bf8ae818d:/app/server/working# git config user.name "git"
+root@953bf8ae818d:/app/server/working# mkdir -p webserver
+root@953bf8ae818d:/app/server/working# echo 'webserver branch' > webserver/index.html
+root@953bf8ae818d:/app/server/working# echo 'hello world' > webserver/hello.html
+root@953bf8ae818d:/app/server/working# git add webserver
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server/working# git commit -m "initial commit"
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server/working# git checkout -b webserver
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server/working# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app/server/working# cd /app
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak
+root@953bf8ae818d:/app# sed -i '/# Virtual Host Configs/,/\/\#/d' /etc/nginx/nginx.conf
+root@953bf8ae818d:/app# sed -i '/# Virtual Host Configs/{n;s/^/http {/;n;s/^$/};/' /etc/nginx/nginx.conf
+sed: -e expression #1, char 0: unmatched `{'
+root@953bf8ae818d:/app# cat /etc/nginx/nginx.conf
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+        worker_connections 768;
+        # multi_accept on;
+}
+
+http {
+
+        ##
+        # Basic Settings
+        ##
+
+        sendfile on;
+        tcp_nopush on;
+        types_hash_max_size 2048;
+        # server_tokens off;
+
+        # server_names_hash_bucket_size 64;
+        # server_name_in_redirect off;
+
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        ##
+        # SSL Settings
+        ##
+
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+        ssl_prefer_server_ciphers on;
+
+        ##
+        # Logging Settings
+        ##
+
+        access_log /var/log/nginx/access.log;
+
+        ##
+        # Gzip Settings
+        ##
+
+        gzip on;
+
+        # gzip_vary on;
+        # gzip_proxied any;
+        # gzip_comp_level 6;
+        # gzip_buffers 16 8k;
+        # gzip_http_version 1.1;
+        # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+        ##
+root@953bf8ae818d:/app# cd /app/server/working
+root@953bf8ae818d:/app/server/working# git config user.email "git@example.com"
+root@953bf8ae818d:/app/server/working# git config user.name "git"
+root@953bf8ae818d:/app/server/working# mkdir -p webserver
+root@953bf8ae818d:/app/server/working# echo 'webserver branch' > webserver/index.html
+root@953bf8ae818d:/app/server/working# echo 'hello world' > webserver/hello.html
+root@953bf8ae818d:/app/server/working# git add webserver
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server/working# git commit -m "initial commit"
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server/working# git checkout -b webserver
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app/server/working# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app/server/working# cd /app
+root@953bf8ae818d:/app# nginx
+2026/07/07 12:56:06 [emerg] 1657#1657: unexpected end of file, expecting "}" in /etc/nginx/nginx.conf:56
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# nginx -t
+2026/07/07 12:56:29 [emerg] 1716#1716: unexpected end of file, expecting "}" in /etc/nginx/nginx.conf:56
+nginx: configuration file /etc/nginx/nginx.conf test failed
+root@953bf8ae818d:/app# nginx
+2026/07/07 12:56:30 [emerg] 1723#1723: unexpected end of file, expecting "}" in /etc/nginx/nginx.conf:56
+root@953bf8ae818d:/app# ls -la /app/web
+total 0
+drwxr-xr-x 2 root root 10 Jul  7 12:54 .
+drwxr-xr-x 1 root root 43 Jul  7 12:54 ..
+root@953bf8ae818d:/app# cat /app/web/hello.html
+cat: /app/web/hello.html: No such file or directory
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server
+root@953bf8ae818d:/app# cd /app/server/working
+root@953bf8ae818d:/app/server/working# git branch webserver
+fatal: not a valid object name: 'master'
+root@953bf8ae818d:/app/server/working# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app/server/working# cd /app
+root@953bf8ae818d:/app# echo "Testing git clone and push..."
+Testing git clone and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# git clone user@server:/git/server 2>&1 | head -20
+fatal: destination path 'server' already exists and is not an empty directory.
+root@953bf8ae818d:/app# echo "Testing add index.html and push..."
+Testing add index.html and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "hello world" > hello.html
+root@953bf8ae818d:/app# git add index.html
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git commit -m "add index"
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git push origin webserver
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# cat > /etc/nginx/nginx.conf << 'EOF'
+> user www-data;
+> worker_processes auto;
+> pid /run/nginx.pid;
+> error_log /var/log/nginx/error.log;
+> include /etc/nginx/modules-enabled/*.conf;
+>
+> events {
+>         worker_connections 768;
+>         # multi_accept on;
+> }
+>
+> http {
+>         ##
+>         # Basic Settings
+>         ##
+>
+>         sendfile on;
+>         tcp_nopush on;
+>         types_hash_max_size 2048;
+>         # server_tokens off;
+>
+>         # server_names_hash_bucket_size 64;
+>         # server_name_in_redirect off;
+>
+>         include /etc/nginx/mime.types;
+>         default_type application/octet-stream;
+>
+>         ##
+>         # SSL Settings
+>         ##
+>
+>         ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+>         ssl_prefer_server_ciphers on;
+>
+>         ##
+>         # Logging Settings
+>         ##
+>
+>         access_log /var/log/nginx/access.log;
+>
+>         ##
+>         # Gzip Settings
+>         ##
+>
+>         gzip on;
+>
+>         # gzip_vary on;
+>         # gzip_proxied any;
+>         # gzip_comp_level 6;
+>         # gzip_buffers 16 8k;
+>         # gzip_http_version 1.1;
+>         # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+>
+>         ##
+>         # Virtual Host Configs
+>         ##
+>
+>         include /etc/nginx/conf.d/*.conf;
+>         include /etc/nginx/sites-enabled/*;
+>
+>         server {
+>                 server_name server;
+>                 port 8080;
+>
+>                 location / {
+>                         root /app/web;
+>                         index index.html hello.html;
+>                 }
+>         }
+> }
+> EOF
+root@953bf8ae818d:/app# cd /app/server
+root@953bf8ae818d:/app/server# git branch webserver
+fatal: not a valid object name: 'master'
+root@953bf8ae818d:/app/server# cd /app/server/working
+root@953bf8ae818d:/app/server/working# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app/server/working# cd /app
+root@953bf8ae818d:/app# nginx -t
+2026/07/07 12:56:52 [emerg] 1903#1903: unknown directive "port" in /etc/nginx/conf.d/server.conf:3
+nginx: configuration file /etc/nginx/nginx.conf test failed
+root@953bf8ae818d:/app# nginx
+2026/07/07 12:56:53 [emerg] 1910#1910: unknown directive "port" in /etc/nginx/conf.d/server.conf:3
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "Testing git clone and push..."
+Testing git clone and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# rm -rf server
+root@953bf8ae818d:/app# git clone user@server:/git/server 2>&1 | head -20
+Cloning into 'server'...
+ssh: Could not resolve hostname server: Temporary failure in name resolution
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+root@953bf8ae818d:/app# echo "Testing add index.html and push..."
+Testing add index.html and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "hello world" > hello.html
+root@953bf8ae818d:/app# git add index.html
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git commit -m "add index"
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git push origin webserver
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# cat > /etc/nginx/nginx.conf << 'EOF'
+> user www-data;
+> worker_processes auto;
+> pid /run/nginx.pid;
+> error_log /var/log/nginx/error.log;
+> include /etc/nginx/modules-enabled/*.conf;
+>
+> events {
+>         worker_connections 768;
+>         # multi_accept on;
+> }
+>
+> http {
+>         ##
+>         # Basic Settings
+>         ##
+>
+>         sendfile on;
+>         tcp_nopush on;
+>         types_hash_max_size 2048;
+>         # server_tokens off;
+>
+>         # server_names_hash_bucket_size 64;
+>         # server_name_in_redirect off;
+>
+>         include /etc/nginx/mime.types;
+>         default_type application/octet-stream;
+>
+>         ##
+>         # SSL Settings
+>         ##
+>
+>         ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+>         ssl_prefer_server_ciphers on;
+>
+>         ##
+>         # Logging Settings
+>         ##
+>
+>         access_log /var/log/nginx/access.log;
+>
+>         ##
+>         # Gzip Settings
+>         ##
+>
+>         gzip on;
+>
+>         # gzip_vary on;
+>         # gzip_proxied any;
+>         # gzip_comp_level 6;
+>         # gzip_buffers 16 8k;
+>         # gzip_http_version 1.1;
+>         # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+>
+>         ##
+>         # Virtual Host Configs
+>         ##
+>
+>         include /etc/nginx/conf.d/*.conf;
+>         include /etc/nginx/sites-enabled/*;
+>
+>         server {
+>                 server_name server;
+>                 port 8080;
+>
+>                 location / {
+>                         root /app/web;
+>                         index index.html hello.html;
+>                 }
+>         }
+> }
+> EOF
+root@953bf8ae818d:/app# cd /app/server/working
+bash: cd: /app/server/working: No such file or directory
+root@953bf8ae818d:/app# mkdir -p webserver
+root@953bf8ae818d:/app# echo 'webserver branch' > webserver/index.html
+root@953bf8ae818d:/app# echo 'hello world' > webserver/hello.html
+root@953bf8ae818d:/app# git add webserver
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git commit -m "initial commit"
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git push origin webserver
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# nginx -t
+2026/07/07 12:57:14 [emerg] 2084#2084: unknown directive "port" in /etc/nginx/conf.d/server.conf:3
+nginx: configuration file /etc/nginx/nginx.conf test failed
+root@953bf8ae818d:/app# nginx
+2026/07/07 12:57:14 [emerg] 2091#2091: unknown directive "port" in /etc/nginx/conf.d/server.conf:3
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "Testing git clone and push..."
+Testing git clone and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# rm -rf server
+root@953bf8ae818d:/app# git clone user@server:/git/server 2>&1 | head -20
+Cloning into 'server'...
+ssh: Could not resolve hostname server: Temporary failure in name resolution
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+root@953bf8ae818d:/app# echo "Testing add index.html and push..."
+Testing add index.html and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "hello world" > hello.html
+root@953bf8ae818d:/app# git add index.html
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git commit -m "add index"
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git push origin webserver
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# rm -f /etc/nginx/conf.d/server.conf
+root@953bf8ae818d:/app# cat /etc/nginx/nginx.conf | head -30
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+        worker_connections 768;
+        # multi_accept on;
+}
+
+http {
+        ##
+        # Basic Settings
+        ##
+
+        sendfile on;
+        tcp_nopush on;
+        types_hash_max_size 2048;
+        # server_tokens off;
+
+        # server_names_hash_bucket_size 64;
+        # server_name_in_redirect off;
+
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        ##
+        # SSL Settings
+        ##
+root@953bf8ae818d:/app# nginx -t
+2026/07/07 12:57:32 [emerg] 2222#2222: unknown directive "port" in /etc/nginx/nginx.conf:63
+nginx: configuration file /etc/nginx/nginx.conf test failed
+root@953bf8ae818d:/app# cd /app/server
+bash: cd: /app/server: No such file or directory
+root@953bf8ae818d:/app# mkdir -p working
+root@953bf8ae818d:/app# cd working
+root@953bf8ae818d:/app/working# git clone /app/server
+fatal: repository '/app/server' does not exist
+root@953bf8ae818d:/app/working# mkdir -p webserver
+root@953bf8ae818d:/app/working# echo 'webserver branch' > webserver/index.html
+root@953bf8ae818d:/app/working# echo 'hello world' > webserver/hello.html
+root@953bf8ae818d:/app/working# git add webserver
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app/working# git commit -m "initial commit"
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app/working# git push origin webserver
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app/working# cd /app
+root@953bf8ae818d:/app# nginx
+2026/07/07 12:57:37 [emerg] 2301#2301: unknown directive "port" in /etc/nginx/nginx.conf:63
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "Testing git clone and push..."
+Testing git clone and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# rm -rf server
+root@953bf8ae818d:/app# git clone user@server:/git/server 2>&1 | head -20
+Cloning into 'server'...
+ssh: Could not resolve hostname server: Temporary failure in name resolution
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+root@953bf8ae818d:/app# echo "Testing add index.html and push..."
+Testing add index.html and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "hello world" > hello.html
+root@953bf8ae818d:/app# git add index.html
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git commit -m "add index"
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# git push origin webserver
+fatal: not a git repository (or any of the parent directories): .git
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# sed -n '63p' /etc/nginx/nginx.conf
+                port 8080;
+root@953bf8ae818d:/app# sed -n '60,70p' /etc/nginx/nginx.conf
+
+        server {
+                server_name server;
+                port 8080;
+
+                location / {
+                        root /app/web;
+                        index index.html hello.html;
+                }
+        }
+}
+root@953bf8ae818d:/app# cat > /etc/nginx/nginx.conf << 'EOF'
+> user www-data;
+> worker_processes auto;
+> pid /run/nginx.pid;
+> error_log /var/log/nginx/error.log;
+> include /etc/nginx/modules-enabled/*.conf;
+>
+> events {
+>         worker_connections 768;
+>         # multi_accept on;
+> }
+>
+> http {
+>         ##
+>         # Basic Settings
+>         ##
+>
+>         sendfile on;
+>         tcp_nopush on;
+>         types_hash_max_size 2048;
+>         # server_tokens off;
+>
+>         # server_names_hash_bucket_size 64;
+>         # server_name_in_redirect off;
+>
+>         include /etc/nginx/mime.types;
+>         default_type application/octet-stream;
+>
+>         ##
+>         # SSL Settings
+>         ##
+>
+>         ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+>         ssl_prefer_server_ciphers on;
+>
+>         ##
+>         # Logging Settings
+>         ##
+>
+>         access_log /var/log/nginx/access.log;
+>
+>         ##
+>         # Gzip Settings
+>         ##
+>
+>         gzip on;
+>
+>         # gzip_vary on;
+>         # gzip_proxied any;
+>         # gzip_comp_level 6;
+>         # gzip_buffers 16 8k;
+>         # gzip_http_version 1.1;
+>         # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+>
+>         ##
+>         # Virtual Host Configs
+>         ##
+>
+>         include /etc/nginx/conf.d/*.conf;
+>         include /etc/nginx/sites-enabled/*;
+>
+>         server {
+>                 server_name server;
+>                 port 8080;
+>
+>                 location / {
+>                         root /app/web;
+>                         index index.html hello.html;
+>                 }
+>         }
+> }
+> EOF
+root@953bf8ae818d:/app# cd /app/server
+bash: cd: /app/server: No such file or directory
+root@953bf8ae818d:/app# git init --bare
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint:   git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint:   git branch -m <name>
+Initialized empty Git repository in /app/
+root@953bf8ae818d:/app# cd /app/server/working
+bash: cd: /app/server/working: No such file or directory
+root@953bf8ae818d:/app# git clone /app/server
+fatal: repository '/app/server' does not exist
+root@953bf8ae818d:/app# mkdir -p webserver
+root@953bf8ae818d:/app# echo 'webserver branch' > webserver/index.html
+root@953bf8ae818d:/app# echo 'hello world' > webserver/hello.html
+root@953bf8ae818d:/app# git add webserver
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app# git commit -m "initial commit"
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# nginx -t
+2026/07/07 12:58:02 [emerg] 2509#2509: unknown directive "port" in /etc/nginx/nginx.conf:63
+nginx: configuration file /etc/nginx/nginx.conf test failed
+root@953bf8ae818d:/app# nginx
+2026/07/07 12:58:02 [emerg] 2516#2516: unknown directive "port" in /etc/nginx/nginx.conf:63
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "Testing git clone and push..."
+Testing git clone and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# rm -rf server
+root@953bf8ae818d:/app# git clone user@server:/git/server 2>&1 | head -20
+Cloning into 'server'...
+ssh: Could not resolve hostname server: Temporary failure in name resolution
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+root@953bf8ae818d:/app# echo "Testing add index.html and push..."
+Testing add index.html and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "hello world" > hello.html
+root@953bf8ae818d:/app# git add index.html
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app# git commit -m "add index"
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# head -70 /etc/nginx/nginx.conf
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+        worker_connections 768;
+        # multi_accept on;
+}
+
+http {
+        ##
+        # Basic Settings
+        ##
+
+        sendfile on;
+        tcp_nopush on;
+        types_hash_max_size 2048;
+        # server_tokens off;
+
+        # server_names_hash_bucket_size 64;
+        # server_name_in_redirect off;
+
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        ##
+        # SSL Settings
+        ##
+
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+        ssl_prefer_server_ciphers on;
+
+        ##
+        # Logging Settings
+        ##
+
+        access_log /var/log/nginx/access.log;
+
+        ##
+        # Gzip Settings
+        ##
+
+        gzip on;
+
+        # gzip_vary on;
+        # gzip_proxied any;
+        # gzip_comp_level 6;
+        # gzip_buffers 16 8k;
+        # gzip_http_version 1.1;
+        # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+        ##
+        # Virtual Host Configs
+        ##
+
+        include /etc/nginx/conf.d/*.conf;
+        include /etc/nginx/sites-enabled/*;
+
+        server {
+                server_name server;
+                port 8080;
+
+                location / {
+                        root /app/web;
+                        index index.html hello.html;
+                }
+        }
+}
+root@953bf8ae818d:/app# sed -i '/^\s*port 8080;/d' /etc/nginx/nginx.conf
+root@953bf8ae818d:/app# head -70 /etc/nginx/nginx.conf
+user www-data;
+worker_processes auto;
+pid /run/nginx.pid;
+error_log /var/log/nginx/error.log;
+include /etc/nginx/modules-enabled/*.conf;
+
+events {
+        worker_connections 768;
+        # multi_accept on;
+}
+
+http {
+        ##
+        # Basic Settings
+        ##
+
+        sendfile on;
+        tcp_nopush on;
+        types_hash_max_size 2048;
+        # server_tokens off;
+
+        # server_names_hash_bucket_size 64;
+        # server_name_in_redirect off;
+
+        include /etc/nginx/mime.types;
+        default_type application/octet-stream;
+
+        ##
+        # SSL Settings
+        ##
+
+        ssl_protocols TLSv1 TLSv1.1 TLSv1.2 TLSv1.3; # Dropping SSLv3, ref: POODLE
+        ssl_prefer_server_ciphers on;
+
+        ##
+        # Logging Settings
+        ##
+
+        access_log /var/log/nginx/access.log;
+
+        ##
+        # Gzip Settings
+        ##
+
+        gzip on;
+
+        # gzip_vary on;
+        # gzip_proxied any;
+        # gzip_comp_level 6;
+        # gzip_buffers 16 8k;
+        # gzip_http_version 1.1;
+        # gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+
+        ##
+        # Virtual Host Configs
+        ##
+
+        include /etc/nginx/conf.d/*.conf;
+        include /etc/nginx/sites-enabled/*;
+
+        server {
+                server_name server;
+
+                location / {
+                        root /app/web;
+                        index index.html hello.html;
+                }
+        }
+}
+root@953bf8ae818d:/app# nginx -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# git init --bare server
+hint: Using 'master' as the name for the initial branch. This default branch name
+hint: is subject to change. To configure the initial branch name to use in all
+hint: of your new repositories, which will suppress this warning, call:
+hint:
+hint:   git config --global init.defaultBranch <name>
+hint:
+hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint:   git branch -m <name>
+Initialized empty Git repository in /app/server/
+root@953bf8ae818d:/app# cd /app/server/working
+bash: cd: /app/server/working: No such file or directory
+root@953bf8ae818d:/app# git clone /app/server
+fatal: destination path 'server' already exists and is not an empty directory.
+root@953bf8ae818d:/app# mkdir -p webserver
+root@953bf8ae818d:/app# echo 'webserver branch' > webserver/index.html
+root@953bf8ae818d:/app# echo 'hello world' > webserver/hello.html
+root@953bf8ae818d:/app# git add webserver
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app# git commit -m "initial commit"
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# nginx -t
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+root@953bf8ae818d:/app# nginx
+root@953bf8ae818d:/app# curl https://localhost:8080/hello.html
+curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "Testing git clone and push..."
+Testing git clone and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# rm -rf server
+root@953bf8ae818d:/app# git clone user@server:/git/server 2>&1 | head -20
+Cloning into 'server'...
+ssh: Could not resolve hostname server: Temporary failure in name resolution
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+root@953bf8ae818d:/app# echo "Testing add index.html and push..."
+Testing add index.html and push...
+root@953bf8ae818d:/app# cd /app
+root@953bf8ae818d:/app# echo "hello world" > hello.html
+root@953bf8ae818d:/app# git add index.html
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app# git commit -m "add index"
+fatal: this operation must be run in a work tree
+root@953bf8ae818d:/app# git push origin webserver
+error: src refspec webserver does not match any
+error: failed to push some refs to 'origin'
+root@953bf8ae818d:/app#

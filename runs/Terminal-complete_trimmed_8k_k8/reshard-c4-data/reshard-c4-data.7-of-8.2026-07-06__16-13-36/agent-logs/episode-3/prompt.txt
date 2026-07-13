@@ -1,0 +1,87 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@31d6913da544:/app# cd /app
+root@31d6913da544:/app# cat > split.py << 'EOF'
+> #!/usr/bin/env python3
+> import os
+> import hashlib
+> from collections import defaultdict
+>
+> sample_dir = 'c4_sample'
+> reshard_dir = 'c4_reshard'
+>
+> # Ensure reshard directory exists
+> os.makedirs(reshard_dir, exist_ok=True)
+>
+> # Dictionary to map chunk file path to original line index and chunk content
+> # We'll store in a temporary dict for later revert
+> # We'll also store mapping from chunk file to its original file and line number
+> # But for now, we'll just split and place.
+>
+> # We'll create a mapping from chunk file to original line index
+> chunk_to_original = {}
+>
+> # We'll also keep track of which subdirectory each chunk goes into
+> dir_to_chunk = defaultdict(list)  # dir_path -> list of chunk file paths
+>
+> # Hash function to get subdirectory number
+> hash_func = lambda data: hashlib.sha1(data.encode('utf-8')).hexdigest()
+>
+> def get_subdir_number(data):
+>     return int(hash_func(data)[:8], 16) % 1000  # 1000 subdirectories
+>
+> # Process each file in sample_dir
+> for filename in os.listdir(sample_dir):
+>     if not os.path.isfile(os.path.join(sample_dir, filename)):
+>         continue
+>     filepath = os.path.join(sample_dir, filename)
+>     line_count = 0
+>     with open(filepath, 'r', encoding='utf-8') as f:
+>         for line in f:
+>             line_count += 1
+>     # Split into chunks of up to 30 lines
+>     chunks = []
+>     with open(filepath, 'r', encoding='utf-8') as f:
+>         chunk_lines = []
+>         for line in f:
+>             chunk_lines.append(line)
+>             if len(chunk_lines) == 30:
+>                 chunks.append(chunk_lines)
+>                 chunk_lines = []
+>         if chunk_lines:
+>             chunks.append(chunk_lines)
+>     # For each chunk, create a new file
+>     for i, chunk in enumerate(chunks):
+>         # Create a temporary file name
+>         chunk_name = f'{filename}_chunk_{i:03d}.jsonl'
+>         chunk_path = os.path.join(reshard_dir, chunk_name)
+>         # Write the chunk (preserve newline? chunk_lines already have newlines)
+>         with open(chunk_path, 'w', encoding='utf-8') as f:
+>             f.writelines(chunk)
+>         # Store mapping
+>         chunk_to_original[chunk_path] = {
+>             'original_file': filename,
+>             'line_start': (i-1)*30 + 1,
+>             'line_end': i*30
+>         }
+>         # Determine subdirectory
+>         subdir_num = get_subdir_number(chunk[0] if chunk else '')
+>         subdir_path = os.path.join(reshard_dir, f'subdir_{subdir_num:03d}')
+>         os.makedirs(subdir_path, exist_ok=True)
+>         dir_to_chunk[subdir_path].append(chunk_path)
+>         # Also store chunk location in subdir
+>         os.rename(chunk_path, os.path.join(subdir_path, chunk_name))
+>
+> # Write mapping for revert
+> import json
+> with open(os.path.join(reshard_dir, 'mapping.json'), 'w') as f:
+>     json.dump({'chunk_to_original': chunk_to_original, 'dir_to_chunk': dir_to_chunk}, f)
+>
+> print('Done')
+> EOF
+root@31d6913da544:/app# chmod +x split.py
+root@31d6913da544:/app# python3 split.py
+

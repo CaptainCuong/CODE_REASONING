@@ -1,0 +1,65 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@eb98d694c309:/app# cd /app
+root@eb98d694c309:/app# cat > create_reshard.py << 'EOF'
+> import os
+> import json
+> import hashlib
+>
+> sample_dir = 'c4_sample'
+> reshard_dir = 'c4_reshard'
+>
+> # Ensure reshard_dir exists
+> os.makedirs(reshard_dir, exist_ok=True)
+>
+> # Dictionary to store mapping: original file -> list of resharded files
+> mapping = {}
+>
+> # For each original file
+> for root, dirs, files in os.walk(sample_dir):
+>     for f in files:
+>         original_path = os.path.join(root, f)
+>         # Compute a key for sharding: we'll split by line number modulo 30
+>         # We'll read the file and split into up to 30 lines per file
+>         with open(original_path, 'r') as fp:
+>             lines = fp.readlines()
+>         # Each line block is a file of up to 30 lines
+>         for i in range(0, len(lines), 30):
+>             block = lines[i:i+30]
+>             # Create a filename: original basename + block index
+>             basename = f'{f}_{i//30:02d}'
+>             # Compute a unique identifier for this block
+>             content = ''.join(block)
+>             # Hash content to avoid collisions
+>             block_hash = hashlib.md5(content.encode()).hexdigest()
+>             # Create subdirectory based on block_hash modulo 30
+>             subdir = block_hash[:2]  # use first two chars
+>             subdirectory = os.path.join(reshard_dir, subdir)
+>             os.makedirs(subdirectory, exist_ok=True)
+>             resharded_path = os.path.join(subdirectory, basename)
+>             # Write the block to the new file
+>             with open(resharded_path, 'w') as fp:
+>                 fp.writelines(block)
+>             # Record mapping
+>             mapping.setdefault(original_path, []).append({
+>                 'resharded_path': resharded_path,
+>                 'subdirectory': subdir,
+>                 'basename': basename,
+>                 'block_hash': block_hash
+>             })
+>
+> # Write mapping to a file
+> with open('reshard_mapping.json', 'w') as fp:
+>     json.dump(mapping, fp, indent=2)
+>
+> print(f'Created {reshard_dir} with mapping saved to reshard_mapping.json')
+> EOF
+root@eb98d694c309:/app# python3 create_reshard.py
+ls -la c4_reshard/
+ls -la c4_reshard/* | wc -l
+find c4_reshard -type f | wc -l
+du -sh c4_reshard
+

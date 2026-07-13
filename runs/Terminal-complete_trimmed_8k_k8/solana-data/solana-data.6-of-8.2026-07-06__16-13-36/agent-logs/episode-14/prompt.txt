@@ -1,0 +1,111 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+.     '01b3795ccfaac3eee838bb05c3b8284122c18acedcd645c914fe8e178c3b62640d8616d061cc818b26cab8ecf3855ecc'
+            ...     '72fa113f731ecbd0215e88edc0309d6f0a010001031398f62c6d1a457c51ba6a4b5f3dbd2f69fca93216218dc8997e41'
+            ...     '6bd17d93ca68ab4677ffb1f2894dd0a6153c231d45ec436ae53ae60149dbe15f32e4b8703f0000000000000000000000'
+            ...     '000000000000000000000000000000000000000000839618f701ba7e9ba27ae59825dd6d6bb66d14f6d5d0eae215161d7'
+            ...     '1851a106901020200010c0200000040420f0000000000'
+            ... )
+            >>> tx = VersionedTransaction.from_bytes(bytes.fromhex(full_signed_tx_hex))
+            >>> (await solana_client.simulate_transaction(tx)).value.logs  # doctest: +SKIP
+            ['BPF program 83astBRguLMdt2h5U1Tpdq5tjFoJ6noeGwaY3mDLVcri success']
+        """
+        body = self._simulate_transaction_body(
+            txn,
+            sig_verify,
+            commitment,
+            replace_recent_blockhash,
+            min_context_slot,
+            inner_instructions,
+            accounts_addresses,
+            accounts_encoding,
+        )
+        return await self._provider.make_request(body, SimulateTransactionResp)
+
+    async def validator_exit(self) -> ValidatorExitResp:
+        """Request to have the validator exit.
+
+        Validator must have booted with RPC exit enabled (`--enable-rpc-exit` parameter).
+
+        Example:
+            >>> solana_client = AsyncClient("http://localhost:8899")
+            >>> (await solana_client.validator_exit()).value # doctest: +SKIP
+            True
+        """
+        return await self._provider.make_request(self._validator_exit, ValidatorExitResp)  # type: ignore
+
+    async def __post_send_with_confirm(
+        self,
+        resp: SendTransactionResp,
+        conf_comm: Commitment,
+        last_valid_block_height: int | None,
+    ) -> SendTransactionResp:
+        resp = self._post_send(resp)
+        sig = resp.value
+        self._provider.logger.info("Transaction sent to %s. Signature %s: ", self._provider.endpoint_uri, sig)
+        await self.confirm_transaction(sig, conf_comm, last_valid_block_height=last_valid_block_height)
+        return resp
+
+    async def confirm_transaction(
+        self,
+        tx_sig: Signature,
+        commitment: Commitment | None = None,
+        sleep_seconds: float = 0.5,
+        last_valid_block_height: int | None = None,
+    ) -> GetSignatureStatusesResp:
+        """Confirm the transaction identified by the specified signature.
+
+        Args:
+            tx_sig: the transaction signature to confirm.
+            commitment: Bank state to query. It can be either "finalized", "confirmed" or "processed".
+            sleep_seconds: The number of seconds to sleep when polling the signature status.
+            last_valid_block_height: The block height by which the transaction would become invalid.
+        """
+        commitment_to_use = _COMMITMENT_TO_SOLDERS[commitment or self._commitment]
+        commitment_rank = int(commitment_to_use)
+        if last_valid_block_height:  # pylint: disable=no-else-return
+            current_blockheight = (await self.get_block_height(commitment)).value
+            while current_blockheight <= last_valid_block_height:
+                resp = await self.get_signature_statuses([tx_sig])
+                resp_value = resp.value[0]
+                if resp_value is not None:
+                    confirmation_status = resp_value.confirmation_status
+                    if confirmation_status is not None:
+                        confirmation_rank = int(confirmation_status)
+                        if confirmation_rank >= commitment_rank:
+                            break
+                current_blockheight = (await self.get_block_height(commitment)).value
+                await asyncio.sleep(sleep_seconds)
+            else:
+                raise TransactionExpiredBlockheightExceededError(f"{tx_sig} has expired: block height exceeded")
+            return resp
+        else:
+            timeout = time() + 90
+            while time() < timeout:
+                resp = await self.get_signature_statuses([tx_sig])
+                resp_value = resp.value[0]
+                if resp_value is not None:
+                    confirmation_status = resp_value.confirmation_status
+                    if confirmation_status is not None:
+                        confirmation_rank = int(confirmation_status)
+                        if confirmation_rank >= commitment_rank:
+                            break
+                await asyncio.sleep(sleep_seconds)
+            else:
+                raise UnconfirmedTxError(f"Unable to confirm transaction {tx_sig}")
+            return resp
+root@53e84d0a57d4:/app# python3 -c "import solana.rpc.AsyncClient; print(dir(solana.rpc.AsyncClient))" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import solana.rpc.AsyncClient; print(dir(solana.rpc.AsyncClient))
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'solana.rpc.AsyncClient'
+root@53e84d0a57d4:/app# python3 -c "import solana.rpc.AsyncClient; print([x for x in dir(solana.rpc.AsyncClient) if 'get' in x.lower()])" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import solana.rpc.AsyncClient; print([x for x in dir(solana.rpc.AsyncClient) if 'get' in x.lower()])
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'solana.rpc.AsyncClient'
+root@53e84d0a57d4:/app#

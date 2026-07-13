@@ -1,0 +1,109 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+}root@93304f73d159:/app# cat > /app/fit6.py << 'EOF'
+> import numpy as np
+> import scipy
+> from scipy import optimize
+>
+> def load_data(filename):
+>     with open(filename) as f:
+>         lines = f.readlines()
+>     numbers = []
+>     for line in lines[1:]:
+>         parts = line.strip().split(',')
+>         for part in parts:
+>             nums = part.split()
+>             if nums:
+>                 numbers.append(float(nums[0]))
+>                 if len(nums) > 1:
+>                     numbers.append(float(nums[1]))
+>     if len(numbers) % 2 != 0:
+>         numbers = numbers[:-1]
+>     x = numbers[::2]
+>     y = numbers[1::2]
+>     return x, y
+>
+> def fit_single_gaussian(x, y):
+>     # Find the index of the maximum y
+>     idx = np.argmax(y)
+>     x0 = x[idx]
+>     # Initial guess for gamma: let's compute the full width at half height
+>     # We'll use scipy.curvefit with a single function.
+>     def model(x, x0, gamma, offset, amp):
+>         return amp * np.exp(-((x - x0)/gamma)**2) + offset
+>     # Initial guess: gamma = 20, offset = min_y, amp = max_y - min_y
+>     min_y = np.min(y)
+>     max_y = np.max(y)
+>     amp = max_y - min_y
+>     gamma = 20
+>     offset = min_y
+>     # Use curvefit
+>     popt, pcov = optimize.curvefit(model, x, y, p0=[x0, gamma, offset, amp])
+>     return popt[0], popt[1], popt[2], popt[3]
+>
+> def main():
+>     x, y = load_data('/app/graphene.dat')
+>     # First find the peak indices using findpeaks
+>     import scipy.signal
+>     peak_indices, _ = scipy.signal.findpeaks(y)
+>     print('Peak indices:', peak_indices)
+>     print('Peak heights:', [y[i] for i in peak_indices])
+>     # Fit each peak
+>     params = []
+>     for idx in peak_indices:
+>         x0, gamma, offset, amp = fit_single_gaussian(x[idx-1:idx+1], y[idx-1:idx+1])
+>         params.append([x0, gamma, offset, amp])
+>     print('Params:', params)
+>     # Combine offset and amplitudes
+>     # We'll assume the offset is the same for both (the background).
+>     offset = params[0][2]
+>     amplitudes = [p[3] for p in params]
+>     # Write results
+>     results = {}
+>     results['G'] = {
+>         'x0': float(params[0][0]),
+>         'gamma': float(params[0][1]),
+>         'amplitude': float(amplitudes[0]),
+>         'offset': float(offset)
+>     }
+>     results['2D'] = {
+>         'x0': float(params[1][0]),
+>         'gamma': float(params[1][1]),
+>         'amplitude': float(amplitudes[1]),
+>         'offset': float(offset)
+>     }
+>     with open('/app/results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to /app/results.json')
+>
+> if __name__ == '__main__':
+>     import json
+>     main()
+> EOF
+root@93304f73d159:/app# python3 /app/fit6.py
+Traceback (most recent call last):
+  File "/app/fit6.py", line 78, in <module>
+    main()
+    ~~~~^^
+  File "/app/fit6.py", line 45, in main
+    peak_indices, _ = scipy.signal.findpeaks(y)
+                      ^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: module 'scipy.signal' has no attribute 'findpeaks'. Did you mean: 'find_peaks'?
+root@93304f73d159:/app# cat /app/results.json
+{
+  "G": {
+    "x0": 1575.579515221978,
+    "gamma": -2.999506412943998,
+    "amplitude": 402489.09291152516,
+    "offset": 500564.30302738043
+  },
+  "2D": {
+    "x0": 2671.4583246327916,
+    "gamma": -1052125.6096916678,
+    "amplitude": 0.4688422260095376,
+    "offset": 500564.30302738043
+  }
+}root@93304f73d159:/app#

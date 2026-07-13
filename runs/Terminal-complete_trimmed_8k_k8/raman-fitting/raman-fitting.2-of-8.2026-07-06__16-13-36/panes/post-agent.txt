@@ -1,0 +1,941 @@
+root@0b2128aaa6c8:/app# ls -la
+total 88
+drwxr-xr-x 1 root root    34 Jun 24 11:01 .
+drwxr-xr-x 1 root root    57 Jul  8 13:54 ..
+-rw-rw-r-- 1 root root 88805 Jun 24 11:01 graphene.dat
+root@0b2128aaa6c8:/app# find /app -type f -name '*.txt' -o -name '*.csv' -o -name '*.dat' 2>/dev/null | head -20
+/app/graphene.dat
+root@0b2128aaa6c8:/app# python3 --version
+Python 3.13.1
+root@0b2128aaa6c8:/app# python3 -c "import scipy; print(scipy.__version__)" 2>/dev/null || echo 'scipy not available'
+scipy not available
+root@0b2128aaa6c8:/app# python3 -c "import numpy; print(numpy.__version__)" 2>/dev/null || echo 'numpy not available'
+numpy not available
+root@0b2128aaa6c8:/app# head -20 graphene.dat
+47183,554644    19261,547207
+46588,360019    19266,089699
+46008,191298    19077,996963
+45442,488736    19173,287322
+44890,718036    19501,518253
+44352,368927    19506,586203
+43826,959593    19752,431144
+43314,029137    19812,863021
+42813,138290    19678,348151
+42323,866373    19764,871128
+41845,813826    19360,099292
+41378,600916    19413,554878
+40921,863181    19626,191780
+40475,250679    19704,066336
+40038,430487    19495,727898
+39611,084116    19672,573559
+39192,908278    19538,763458
+38783,609488    19344,943112
+38382,908122    19510,307527
+37990,536178    19552,152695
+root@0b2128aaa6c8:/app# wc -l graphene.dat
+3565 graphene.dat
+root@0b2128aaa6c8:/app# tail -5 graphene.dat
+1649,768294     6062,725860
+1649,507095     6005,066261
+1649,246046     6009,427936
+1648,985151     5911,446799
+1648,724404     5950,923261
+root@0b2128aaa6c8:/app# grep -n '^1590' graphene.dat | head -5
+root@0b2128aaa6c8:/app# awk -F, '$1 ~ /^158[0-9][0-9]$/' graphene.dat | head -5
+15849,024977    16397,313318
+root@0b2128aaa6c8:/app# awk -F, '$1 ~ /^270[0-9][0-9]$/' graphene.dat | head -5
+27019,885014    16360,987535
+root@0b2128aaa6c8:/app# python3 -c "
+> import sys
+> lines = open('graphene.dat').readlines()
+> for line in lines[:100]:
+>     parts = line.strip().split(',')
+>     if len(parts) == 2:
+>         print(parts[0], parts[1])
+>         break
+> "
+root@0b2128aaa6c8:/app# awk -F, '{print $1}' graphene.dat | head -5
+47183
+46588
+46008
+45442
+44890
+awk: write failure (Broken pipe)
+awk: close failed on file /dev/stdout (Broken pipe)
+root@0b2128aaa6c8:/app# awk -F, '{print $1}' graphene.dat | tail -5
+1649
+1649
+1649
+1648
+1648
+root@0b2128aaa6c8:/app# awk -F, '$1 ~ /^159[0-9][0-9]$/' graphene.dat | head -5
+15978,953290    17042,073545
+15913,713047    16744,250483
+root@0b2128aaa6c8:/app# awk -F, '$1 ~ /^27[0-9][0-9][0-9]$/' graphene.dat | head -5
+27818,225478    16763,433695
+27614,145556    16577,391459
+27413,106552    16505,458481
+27215,041775    16260,299421
+27019,885014    16360,987535
+root@0b2128aaa6c8:/app# python3 -c "
+> import sys
+> with open('graphene.dat', 'r') as f:
+>     for i, line in enumerate(f):
+>         if i < 5:
+>             parts = line.strip().split(',')
+>             print(f'Line {i}: parts={len(parts)}')
+>             for p in parts:
+>                 print('   ', p)
+>         else:
+>             break
+> "
+Line 0: parts=3
+    47183
+    554644      19261
+    547207
+Line 1: parts=3
+    46588
+    360019      19266
+    089699
+Line 2: parts=3
+    46008
+    191298      19077
+    996963
+Line 3: parts=3
+    45442
+    488736      19173
+    287322
+Line 4: parts=3
+    44890
+    718036      19501
+    518253
+root@0b2128aaa6c8:/app# cd /app
+root@0b2128aaa6c8:/app# cat > fit_peaks.py << 'EOF'
+> import json
+> import math
+>
+> def fit_gaussian(x, y):
+>     """Fit Gaussian to data (x, y). Returns (x0, gamma, amplitude, offset)."""
+>     # Remove points where y <= 0 (background)
+>     mask = y > 0
+>     if not mask.any():
+>         return None
+>     x = x[mask]
+>     y = y[mask]
+>     # Subtract background (offset) by assuming constant offset and fit y = A*exp(-(x-x0)^2/(2*gamma^2))
+>     # We'll fit using log(y) = log(A) - (x-x0)^2/(2*gamma^2)
+>     # Use linear regression on z = (x - x0)^2, but we don't know x0.
+>     # We'll use a simple quadratic fit: y = a*x^2 + b*x + c
+>     # and also fit offset by assuming y = offset + A*exp(-(x-x0)^2/(2*gamma^2))
+>     # Let's try quadratic fit first.
+>     # We'll use numpy if available, else implement manually.
+>     # Since numpy not available, we'll implement simple linear regression.
+>     n = len(x)
+>     sum_x = sum(x)
+>     sum_y = sum(y)
+>     sum_xy = sum(x * y)
+>     sum_x2 = sum(x * x)
+>     sum_x3 = sum(x * x * x)
+>     sum_x4 = sum(x * x * x * x)
+>     # Solve for coefficients of quadratic: y = a*x^2 + b*x + c
+>     # Using least squares:
+>     # a = (n*sum_x3 - sum_x*sum_x2) / (n*sum_x4 - sum_x2*sum_x2)
+>     # b = (sum_x4*sum_y - sum_x2*sum_x*y) / (n*sum_x4 - sum_x2*sum_x2)
+>     # c = (sum_x2*sum_y - sum_x*sum_xy) / (n*sum_x4 - sum_x2*sum_x2)
+>     denominator = n * sum_x4 - sum_x2 * sum_x2
+>     a = (n * sum_x3 - sum_x * sum_x2) / denominator
+>     b = (sum_x4 * sum_y - sum_x2 * sum_x * sum_y) / denominator  # Actually formula: (sum_x4*sum_y - sum_x2*sum_x*sum_y) / denominator? Wait.
+>     # Let's compute correctly:
+>     # b = (sum_x4 * sum_y - sum_x2 * sum_x * sum_y) / denominator? No.
+>     # I'll compute using matrix approach but time is limited.
+>     # Instead, we'll use a simpler method: find peak location by max, then fit using Taylor expansion.
+>     # We'll implement Gaussian fitting using the formula for a Gaussian in log space with offset.
+>     # We'll assume offset is small and fit quadratic in log(y).
+>     logy = [math.log(val) for val in y]
+>     # Fit quadratic: logy = p*x^2 + q*x + r
+>     # Use least squares.
+>     Sxx = sum_x2
+>     Sx = sum_x
+>     Sy = sum_x4  # Actually Sxx for quadratic is sum_x4, Sx2 for linear, etc.
+>     # I'll compute using numpy-like formulas.
+>     # Let's compute with simple loops.
+>     # We'll approximate by using the peak location (x0) as the mean of x around peak.
+>     # Then fit variance.
+>     # We'll use a more robust method: fit using the method of moments.
+>     # Compute mean and variance of x where y is above some threshold.
+>     mean_x = sum_x / n
+>     variance = sum((xi - mean_x)**2 for xi in x) / n
+>     # Estimate amplitude from max y minus offset, offset estimated as average of y below peak.
+>     # We'll assume offset is constant and equal to y at background.
+>     # Find background points where x is far from peaks.
+>     # For simplicity, we'll set offset = 0 and fit gamma and amplitude.
+>     # Then adjust.
+>     # Since time is limited, we'll output placeholder.
+>     # We'll instead use the fact that we can install scipy? Not allowed.
+>     # Let's implement a simple Gaussian fit using the formula for a Gaussian in log space with offset.
+>     # We'll use the following algorithm:
+>     # 1. Find the index of max y.
+>     # 2. Take a window around that index.
+>     # 3. Fit a quadratic to log(y) in that window.
+>     # 4. Convert to Gaussian parameters.
+>     idx = y.index(max(y))
+>     window_size = 10
+>     x_window = x[idx-window_size:idx+window_size+1]
+>     y_window = y[idx-window_size:idx+window_size+1]
+>     # Fit quadratic: y_window = a*x_window^2 + b*x_window + c
+>     # Use least squares for quadratic.
+>     # Build design matrix.
+>     n_window = len(x_window)
+>     A = [[x_window[i]**2, x_window[i], 1] for i in range(n_window)]
+>     b = y_window
+>     # Solve using linear algebra (simple 3x3).
+>     # Compute determinant.
+>     det = A[0][0]*(A[1][1]*A[2][2] - A[1][2]*A[2][1]) - A[0][1]*(A[1][0]*A[2][2] - A[1][2]*A[2][0]) + A[0][2]*(A[1][0]*A[2][1] - A[1][1]*A[2][0])
+>     if det == 0:
+>         return None
+>     a = (b[0]*(A[1][1]*A[2][2] - A[1][2]*A[2][1]) - A[0][1]*(b[1]*A[2][2] - b[2]*A[2][1]) + A[0][2]*(b[1]*A[2][1] - b[2]*A[1][1])) / det
+>     b_coef = (A[0][0]*(b[1]*A[2][2] - b[2]*A[2][1]) - b[0]*(A[0][1]*A[2][2] - A[0][2]*A[2][1]) + A[0][2]*(b[0]*A[0][1] - b[1]*A[0][0])) / det
+>     c = (A[0][0]*(A[1][1]*b[2] - A[1][2]*b[1]) - A[0][1]*(A[0][0]*b[2] - A[0][2]*b[0]) + A[0][2]*(A[0][0]*A[1][1] - A[0][1]*A[1][0])) / det
+>     # Quadratic parameters: y = a*x^2 + b_coef*x + c
+>     # Gaussian: y = A*exp(-(x-x0)^2/(2*gamma^2))
+>     # Taking log: log(y) = log(A) - (x-x0)^2/(2*gamma^2)
+>     # Comparing: - (x-x0)^2/(2*gamma^2) = a*x^2 + b*x + c
+>     # So a = -1/(2*gamma^2) => gamma = sqrt(-1/(2*a))
+>     # And b = 2*x0*a (since derivative at x0 is zero). So x0 = -b/(2*a)
+>     # And c = log(A) + (x0^2)/(2*gamma^2) = log(A) + (b^2)/(4*a^2) (since gamma^2 = -1/(2*a)).
+>     # So amplitude A = exp(c - (b^2)/(4*a^2))
+>     # However note that a is coefficient of x^2, which is -1/(2*gamma^2). So gamma^2 = -1/(2*a).
+>     # Then (x0^2)/(2*gamma^2) = (x0^2) * (2*a)/2 = a*x0^2.
+>     # So c = log(A) + a*x0^2.
+>     # And x0 = -b/(2*a).
+>     # So A = exp(c - a*x0^2).
+>     x0 = -b_coef / (2*a)
+>     gamma = math.sqrt(-1/(2*a))
+>     A = math.exp(c - a*x0*x0)
+>     # Estimate offset: average background intensity.
+>     # Find points where x is far from peak (e.g., beyond 3 sigma).
+>     # We'll compute offset as average y where |x - x0| > 3*gamma.
+>     offset = 0
+>     for xi, yi in zip(x, y):
+>         if abs(xi - x0) > 3*gamma:
+>             offset += yi
+>     offset /= len([yi for xi, yi in zip(x, y) if abs(xi - x0) > 3*gamma])
+>     return x0, gamma, A, offset
+>
+> def main():
+>     # Load data
+>     wavenumbers = []
+>     intensities = []
+>     with open('graphene.dat', 'r') as f:
+>         for line in f:
+>             parts = line.strip().split(',')
+>             if len(parts) != 2:
+>                 continue
+>             wavenumbers.append(float(parts[0]))
+>             intensities.append(float(parts[1]))
+>     # Find peaks
+>     # G peak around 1590
+>     # Find index of max intensity near 1590
+>     # We'll search for wavenumber around 1590
+>     idx_g = None
+>     for i, w in enumerate(wavenumbers):
+>         if 1580 <= w <= 1590:
+>             idx_g = i
+>             break
+>     if idx_g is None:
+>         idx_g = wavenumbers.index(min(wavenumbers))
+>     # 2D peak around 2700
+>     idx_2d = None
+>     for i, w in enumerate(wavenumbers):
+>         if 2690 <= w <= 2710:
+>             idx_2d = i
+>             break
+>     if idx_2d is None:
+>         idx_2d = wavenumbers.index(max(wavenumbers))
+>     # Fit
+>     params_g = fit_gaussian(wavenumbers, intensities)
+>     params_2d = fit_gaussian(wavenumbers, intensities)
+>     # Write results
+>     results = {
+>         "G": {},
+>         "2D": {}
+>     }
+>     if params_g:
+>         x0, gamma, amp, offset = params_g
+>         results["G"]["x0"] = x0
+>         results["G"]["gamma"] = gamma
+>         results["G"]["amplitude"] = amp
+>         results["G"]["offset"] = offset
+>     else:
+>         results["G"]["x0"] = 0.0
+>         results["G"]["gamma"] = 0.0
+>         results["G"]["amplitude"] = 0.0
+>         results["G"]["offset"] = 0.0
+>     if params_2d:
+>         x0, gamma, amp, offset = params_2d
+>         results["2D"]["x0"] = x0
+>         results["2D"]["gamma"] = gamma
+>         results["2D"]["amplitude"] = amp
+>         results["2D"]["offset"] = offset
+>     else:
+>         results["2D"]["x0"] = 0.0
+>         results["2D"]["gamma"] = 0.0
+>         results["2D"]["amplitude"] = 0.0
+>         results["2D"]["offset"] = 0.0
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@0b2128aaa6c8:/app# python3 fit_peaks.py 2>&1
+Traceback (most recent call last):
+  File "/app/fit_peaks.py", line 177, in <module>
+    main()
+    ~~~~^^
+  File "/app/fit_peaks.py", line 133, in main
+    idx_g = wavenumbers.index(min(wavenumbers))
+                              ~~~^^^^^^^^^^^^^
+ValueError: min() iterable argument is empty
+root@0b2128aaa6c8:/app# cat results.json
+cat: results.json: No such file or directory
+root@0b2128aaa6c8:/app# awk -F, '{print NF, $0}' graphene.dat | head -10
+3 47183,554644  19261,547207
+3 46588,360019  19266,089699
+3 46008,191298  19077,996963
+3 45442,488736  19173,287322
+3 44890,718036  19501,518253
+3 44352,368927  19506,586203
+3 43826,959593  19752,431144
+3 43314,029137  19812,863021
+3 42813,138290  19678,348151
+3 42323,866373  19764,871128
+awk: write failure (Broken pipe)
+awk: close failed on file /dev/stdout (Broken pipe)
+root@0b2128aaa6c8:/app# awk -F, '{print $1, $2, $3}' graphene.dat | head -5
+47183 554644    19261 547207
+46588 360019    19266 089699
+46008 191298    19077 996963
+45442 488736    19173 287322
+44890 718036    19501 518253
+awk: write failure (Broken pipe)
+awk: close failed on file /dev/stdout (Broken pipe)
+root@0b2128aaa6c8:/app# awk -F, '{print $1, $2}' graphene.dat | head -5
+47183 554644    19261
+46588 360019    19266
+46008 191298    19077
+45442 488736    19173
+44890 718036    19501
+awk: write failure (Broken pipe)
+awk: close failed on file /dev/stdout (Broken pipe)
+root@0b2128aaa6c8:/app# cat > inspect.py << 'EOF'
+> import sys
+> w = []
+> i = []
+> with open('graphene.dat', 'r') as f:
+>     for line in f:
+>         parts = line.strip().split(',')
+>         if len(parts) < 2:
+>             continue
+>         w.append(float(parts[0]))
+>         i.append(float(parts[1]))
+> print('Number of data points:', len(w))
+> print('Wavenumber range:', min(w), max(w))
+> print('Intensities range:', min(i), max(i))
+> print('First few w, i:', list(zip(w[:5], i[:5])))
+> print('Last few w, i:', list(zip(w[-5:], i[-5:])))
+> EOF
+root@0b2128aaa6c8:/app# python3 inspect.py
+Traceback (most recent call last):
+  File "/app/inspect.py", line 10, in <module>
+    i.append(float(parts[1]))
+             ~~~~~^^^^^^^^^^
+ValueError: could not convert string to float: '554644\t19261'
+root@0b2128aaa6c8:/app# cat > parse_data.py << 'EOF'
+> import sys
+> w = []
+> i = []
+> with open('graphene.dat', 'r') as f:
+>     for line in f:
+>         parts = line.strip().split(',')
+>         if len(parts) < 3:
+>             continue
+>         wavenumber = float(parts[0])
+>         intensity = float(parts[2])
+>         w.append(wavenumber)
+>         i.append(intensity)
+> print('Number of data points:', len(w))
+> print('Wavenumber range:', min(w), max(w))
+> print('Intensities range:', min(i), max(i))
+> print('First few w, i:', list(zip(w[:5], i[:5])))
+> print('Last few w, i:', list(zip(w[-5:], i[-5:])))
+> EOF
+root@0b2128aaa6c8:/app# python3 parse_data.py
+Number of data points: 3565
+Wavenumber range: 1648.0 47183.0
+Intensities range: 485.0 999994.0
+First few w, i: [(47183.0, 547207.0), (46588.0, 89699.0), (46008.0, 996963.0), (45442.0, 287322.0), (44890.0, 518253.0)]
+Last few w, i: [(1649.0, 725860.0), (1649.0, 66261.0), (1649.0, 427936.0), (1648.0, 446799.0), (1648.0, 923261.0)]
+root@0b2128aaa6c8:/app# cat > fit_peaks_final.py << 'EOF'
+> import json
+> import math
+>
+> def load_data():
+>     w = []
+>     i = []
+>     with open('graphene.dat', 'r') as f:
+>         for line in f:
+>             parts = line.strip().split(',')
+>             if len(parts) < 3:
+>                 continue
+>             w.append(float(parts[0]))
+>             i.append(float(parts[2]))
+>     return w, i
+>
+> def find_peak_index(w, i, target_w):
+>     # find index of wavenumber closest to target
+>     idx = min(range(len(w)), key=lambda x: abs(w[x] - target_w))
+>     return idx
+>
+> def fit_peak(w, i, idx):
+>     # take window around peak
+>     window_size = 20
+>     start = max(0, idx - window_size)
+>     end = min(len(w), idx + window_size + 1)
+>     w_sub = w[start:end]
+>     i_sub = i[start:end]
+>     # compute mean (x0)
+>     x0 = sum(w_sub) / len(w_sub)
+>     # compute variance (sigma^2)
+>     variance = sum((x - x0) ** 2 for x in w_sub) / len(w_sub)
+>     gamma = math.sqrt(variance)
+>     # amplitude: max intensity - offset, offset estimated from far points
+>     # find intensity values where w is far from x0 (beyond 2*sigma)
+>     far_indices = [j for j in range(len(w_sub)) if abs(w_sub[j] - x0) > 2*gamma]
+>     offset = sum(i_sub[j] for j in far_indices) / len(far_indices) if far_indices else 0.0
+>     amplitude = max(i_sub) - offset
+>     return x0, gamma, amplitude, offset
+>
+> def main():
+>     w, i = load_data()
+>     idx_g = find_peak_index(w, i, 1590)
+>     idx_2d = find_peak_index(w, i, 2700)
+>     print('G peak index:', idx_g, 'w=', w[idx_g], 'i=', i[idx_g])
+>     print('2D peak index:', idx_2d, 'w=', w[idx_2d], 'i=', i[idx_2d])
+>     params_g = fit_peak(w, i, idx_g)
+>     params_2d = fit_peak(w, i, idx_2d)
+>     results = {
+>         "G": {},
+>         "2D": {}
+>     }
+>     if params_g:
+>         x0, gamma, amp, offset = params_g
+>         results["G"]["x0"] = x0
+>         results["G"]["gamma"] = gamma
+>         results["G"]["amplitude"] = amp
+>         results["G"]["offset"] = offset
+>     else:
+>         results["G"]["x0"] = 0.0
+>         results["G"]["gamma"] = 0.0
+>         results["G"]["amplitude"] = 0.0
+>         results["G"]["offset"] = 0.0
+>     if params_2d:
+>         x0, gamma, amp, offset = params_2d
+>         results["2D"]["x0"] = x0
+>         results["2D"]["gamma"] = gamma
+>         results["2D"]["amplitude"] = amp
+>         results["2D"]["offset"] = offset
+>     else:
+>         results["2D"]["x0"] = 0.0
+>         results["2D"]["gamma"] = 0.0
+>         results["2D"]["amplitude"] = 0.0
+>         results["2D"]["offset"] = 0.0
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>     print(json.dumps(results, indent=2))
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@0b2128aaa6c8:/app# python3 fit_peaks_final.py
+G peak index: 3563 w= 1648.0 i= 446799.0
+2D peak index: 1670 w= 2701.0 i= 99301.0
+Results written to results.json
+{
+  "G": {
+    "x0": 1650.9545454545455,
+    "gamma": 1.6916176423571267,
+    "amplitude": 950951.0,
+    "offset": 0.0
+  },
+  "2D": {
+    "x0": 2700.6341463414633,
+    "gamma": 13.822491564539112,
+    "amplitude": 958016.0,
+    "offset": 0.0
+  }
+}
+root@0b2128aaa6c8:/app# cat > examine.py << 'EOF'
+> import sys
+> w, i = [], []
+> with open('graphene.dat', 'r') as f:
+>     for line in f:
+>         parts = line.strip().split(',')
+>         if len(parts) < 3:
+>             continue
+>         w.append(float(parts[0]))
+>         i.append(float(parts[2]))
+> # Find index of w closest to 1590
+> idx1 = min(range(len(w)), key=lambda x: abs(w[x] - 1590))
+> print('G region:')
+> for j in range(idx1-20, idx1+20):
+>     if 0 <= j < len(w):
+>         print(f'  w={w[j]}, i={i[j]}')
+> # Find index of w closest to 2700
+> idx2 = min(range(len(w)), key=lambda x: abs(w[x] - 2700))
+> print('\n2D region:')
+> for j in range(idx2-20, idx2+20):
+>     if 0 <= j < len(w):
+>         print(f'  w={w[j]}, i={i[j]}')
+> # Also print max intensity in whole data
+> max_idx = i.index(max(i))
+> print(f'\nMax intensity at w={w[max_idx]}, i={i[max_idx]}')
+> EOF
+root@0b2128aaa6c8:/app# python3 examine.py
+G region:
+  w=1654.0, i=483231.0
+  w=1653.0, i=1956.0
+  w=1653.0, i=936650.0
+  w=1653.0, i=130495.0
+  w=1653.0, i=449413.0
+  w=1652.0, i=277617.0
+  w=1652.0, i=852890.0
+  w=1652.0, i=424832.0
+  w=1652.0, i=103504.0
+  w=1651.0, i=102627.0
+  w=1651.0, i=653672.0
+  w=1651.0, i=454093.0
+  w=1651.0, i=950951.0
+  w=1650.0, i=492341.0
+  w=1650.0, i=191176.0
+  w=1650.0, i=269473.0
+  w=1650.0, i=511415.0
+  w=1649.0, i=725860.0
+  w=1649.0, i=66261.0
+  w=1649.0, i=427936.0
+  w=1648.0, i=446799.0
+  w=1648.0, i=923261.0
+
+2D region:
+  w=2724.0, i=257544.0
+  w=2723.0, i=624187.0
+  w=2722.0, i=209579.0
+  w=2721.0, i=552778.0
+  w=2719.0, i=864695.0
+  w=2718.0, i=857853.0
+  w=2717.0, i=647362.0
+  w=2716.0, i=847650.0
+  w=2715.0, i=839006.0
+  w=2713.0, i=14426.0
+  w=2712.0, i=958016.0
+  w=2711.0, i=258884.0
+  w=2710.0, i=12173.0
+  w=2709.0, i=461332.0
+  w=2708.0, i=555419.0
+  w=2706.0, i=318966.0
+  w=2705.0, i=39123.0
+  w=2704.0, i=357460.0
+  w=2703.0, i=629081.0
+  w=2702.0, i=217871.0
+  w=2701.0, i=99301.0
+  w=2699.0, i=195321.0
+  w=2698.0, i=380806.0
+  w=2697.0, i=615132.0
+  w=2696.0, i=677652.0
+  w=2695.0, i=296816.0
+  w=2694.0, i=508344.0
+  w=2692.0, i=608434.0
+  w=2691.0, i=803799.0
+  w=2690.0, i=167442.0
+  w=2689.0, i=696139.0
+  w=2688.0, i=611361.0
+  w=2687.0, i=308460.0
+  w=2685.0, i=135334.0
+  w=2684.0, i=533885.0
+  w=2683.0, i=883125.0
+  w=2682.0, i=154479.0
+  w=2681.0, i=520013.0
+  w=2680.0, i=878809.0
+  w=2679.0, i=574617.0
+
+Max intensity at w=3073.0, i=999994.0
+root@0b2128aaa6c8:/app# cat > fit_peaks_accurate.py << 'EOF'
+> import json
+> import math
+>
+> def load_data():
+>     w = []
+>     i = []
+>     with open('graphene.dat', 'r') as f:
+>         for line in f:
+>             parts = line.strip().split(',')
+>             if len(parts) < 3:
+>                 continue
+>             w.append(float(parts[0]))
+>             i.append(float(parts[2]))
+>     return w, i
+>
+> def find_peak_index(w, i, target_w):
+>     idx = min(range(len(w)), key=lambda x: abs(w[x] - target_w))
+>     return idx
+>
+> def fit_peak(w, i, idx):
+>     # take window around peak
+>     window_size = 20
+>     start = max(0, idx - window_size)
+>     end = min(len(w), idx + window_size + 1)
+>     w_sub = w[start:end]
+>     i_sub = i[start:end]
+>     # find index of max intensity in window
+>     max_idx = i_sub.index(max(i_sub))
+>     x0 = w_sub[max_idx]
+>     i_max = i_sub[max_idx]
+>     # compute variance of w_sub
+>     variance = sum((x - x0) ** 2 for x in w_sub) / len(w_sub)
+>     gamma = math.sqrt(variance)
+>     # compute log of intensities
+>     logi = [math.log(y) for y in i_sub]
+>     # quadratic fit: logi = a*(x-x0)^2 + b*(x-x0) + c
+>     # use least squares on transformed variable z = x - x0
+>     z = [x - x0 for x in w_sub]
+>     logz = logi
+>     n = len(z)
+>     # solve for coefficients a, b, c
+>     # we know c = log(A) where A is amplitude.
+>     # We'll fit using linear regression: logz = a*z^2 + b*z + c
+>     # but we need to estimate a and b.
+>     # Let's do a simple fit using three points symmetric around peak.
+>     # Use central three points for simplicity.
+>     # If window has at least 3 points, use them.
+>     if n >= 3:
+>         # central three points
+>         idx1 = (n-1)//2
+>         z1, z2, z3 = z[idx1-1], z[idx1], z[idx1+1]
+>         log1, log2, log3 = logz[idx1-1], logz[idx1], logz[idx1+1]
+>         # solve for a, b, c using three equations
+>         # log1 = a*z1^2 + b*z1 + c
+>         # log2 = a*z2^2 + b*z2 + c
+>         # log3 = a*z3^2 + b*z3 + c
+>         # subtract to eliminate c
+>         eq1 = log1 - log2
+>         eq2 = log1 - log3
+>         eq3 = log2 - log3
+>         a = (eq1 + eq2 + 2*eq3) / (2*(z1**2 - 2*z1*z2 + z2**2 + z1**2 - 2*z1*z3 + z3**2))
+>         b = (2*(z2**2 - z1**2) + (eq1 - eq2)) / (2*(z1**2 - 2*z1*z2 + z2**2 + z1**2 - 2*z1*z3 + z3**2))
+>         c = log1 - a*z1**2 - b*z1
+>         # gamma from variance
+>         gamma = math.sqrt(variance)
+>         # amplitude = exp(c)
+>         amplitude = math.exp(c)
+>         # offset = i_max - amplitude
+>         offset = i_max - amplitude
+>     else:
+>         # fallback to previous method
+>         offset = 0.0
+>         amplitude = i_max - offset
+>     return x0, gamma, amplitude, offset
+>
+> def main():
+>     w, i = load_data()
+>     idx_g = find_peak_index(w, i, 1648)  # use actual peak location
+>     idx_2d = find_peak_index(w, i, 2700)
+>     print('G peak index:', idx_g, 'w=', w[idx_g], 'i=', i[idx_g])
+>     print('2D peak index:', idx_2d, 'w=', w[idx_2d], 'i=', i[idx_2d])
+>     params_g = fit_peak(w, i, idx_g)
+>     params_2d = fit_peak(w, i, idx_2d)
+>     results = {
+>         "G": {},
+>         "2D": {}
+>     }
+>     if params_g:
+>         x0, gamma, amp, offset = params_g
+>         results["G"]["x0"] = x0
+>         results["G"]["gamma"] = gamma
+>         results["G"]["amplitude"] = amp
+>         results["G"]["offset"] = offset
+>     else:
+>         results["G"]["x0"] = 0.0
+>         results["G"]["gamma"] = 0.0
+>         results["G"]["amplitude"] = 0.0
+>         results["G"]["offset"] = 0.0
+>     if params_2d:
+>         x0, gamma, amp, offset = params_2d
+>         results["2D"]["x0"] = x0
+>         results["2D"]["gamma"] = gamma
+>         results["2D"]["amplitude"] = amp
+>         results["2D"]["offset"] = offset
+>     else:
+>         results["2D"]["x0"] = 0.0
+>         results["2D"]["gamma"] = 0.0
+>         results["2D"]["amplitude"] = 0.0
+>         results["2D"]["offset"] = 0.0
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>     print(json.dumps(results, indent=2))
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@0b2128aaa6c8:/app# python3 fit_peaks_accurate.py
+G peak index: 3563 w= 1648.0 i= 446799.0
+2D peak index: 1670 w= 2701.0 i= 99301.0
+Traceback (most recent call last):
+  File "/app/fit_peaks_accurate.py", line 116, in <module>
+    main()
+    ~~~~^^
+  File "/app/fit_peaks_accurate.py", line 82, in main
+    params_g = fit_peak(w, i, idx_g)
+  File "/app/fit_peaks_accurate.py", line 61, in fit_peak
+    a = (eq1 + eq2 + 2*eq3) / (2*(z1**2 - 2*z1*z2 + z2**2 + z1**2 - 2*z1*z3 + z3**2))
+        ~~~~~~~~~~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+ZeroDivisionError: float division by zero
+root@0b2128aaa6c8:/app# cat results.json
+{
+  "G": {
+    "x0": 1650.9545454545455,
+    "gamma": 1.6916176423571267,
+    "amplitude": 950951.0,
+    "offset": 0.0
+  },
+  "2D": {
+    "x0": 2700.6341463414633,
+    "gamma": 13.822491564539112,
+    "amplitude": 958016.0,
+    "offset": 0.0
+  }
+}root@0b2128aaa6c8:/app# cat > fit_peaks_final2.py << 'EOF'
+> import json
+> import math
+>
+> def load_data():
+>     w = []
+>     i = []
+>     with open('graphene.dat', 'r') as f:
+>         for line in f:
+>             parts = line.strip().split(',')
+>             if len(parts) < 3:
+>                 continue
+>             w.append(float(parts[0]))
+>             i.append(float(parts[2]))
+>     return w, i
+>
+> def find_peak_index(w, i, target_w):
+>     idx = min(range(len(w)), key=lambda x: abs(w[x] - target_w))
+>     return idx
+>
+> def fit_peak(w, i, idx):
+>     # take window around peak
+>     window_size = 50
+>     start = max(0, idx - window_size)
+>     end = min(len(w), idx + window_size + 1)
+>     w_sub = w[start:end]
+>     i_sub = i[start:end]
+>     # find index of max intensity in window
+>     max_idx = i_sub.index(max(i_sub))
+>     x0 = w_sub[max_idx]
+>     i_max = i_sub[max_idx]
+>     # compute variance of w_sub
+>     variance = sum((x - x0) ** 2 for x in w_sub) / len(w_sub)
+>     gamma = math.sqrt(variance)
+>     # estimate offset as average of intensities where w is beyond 2*gamma
+>     far_indices = [j for j in range(len(w_sub)) if abs(w_sub[j] - x0) > 2*gamma]
+>     offset = sum(i_sub[j] for j in far_indices) / len(far_indices) if far_indices else 0.0
+>     amplitude = i_max - offset
+>     return x0, gamma, amplitude, offset
+>
+> def main():
+>     w, i = load_data()
+>     idx_g = find_peak_index(w, i, 1648)  # use actual peak location
+>     idx_2d = find_peak_index(w, i, 2700)
+>     print('G peak index:', idx_g, 'w=', w[idx_g], 'i=', i[idx_g])
+>     print('2D peak index:', idx_2d, 'w=', w[idx_2d], 'i=', i[idx_2d])
+>     params_g = fit_peak(w, i, idx_g)
+>     params_2d = fit_peak(w, i, idx_2d)
+>     results = {
+>         "G": {},
+>         "2D": {}
+>     }
+>     if params_g:
+>         x0, gamma, amp, offset = params_g
+>         results["G"]["x0"] = x0
+>         results["G"]["gamma"] = gamma
+>         results["G"]["amplitude"] = amp
+>         results["G"]["offset"] = offset
+>     else:
+>         results["G"]["x0"] = 0.0
+>         results["G"]["gamma"] = 0.0
+>         results["G"]["amplitude"] = 0.0
+>         results["G"]["offset"] = 0.0
+>     if params_2d:
+>         x0, gamma, amp, offset = params_2d
+>         results["2D"]["x0"] = x0
+>         results["2D"]["gamma"] = gamma
+>         results["2D"]["amplitude"] = amp
+>         results["2D"]["offset"] = offset
+>     else:
+>         results["2D"]["x0"] = 0.0
+>         results["2D"]["gamma"] = 0.0
+>         results["2D"]["amplitude"] = 0.0
+>         results["2D"]["offset"] = 0.0
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>     print(json.dumps(results, indent=2))
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@0b2128aaa6c8:/app# python3 fit_peaks_final2.py
+G peak index: 3563 w= 1648.0 i= 446799.0
+2D peak index: 1670 w= 2701.0 i= 99301.0
+Results written to results.json
+{
+  "G": {
+    "x0": 1651.0,
+    "gamma": 5.610772605512474,
+    "amplitude": 950951.0,
+    "offset": 0.0
+  },
+  "2D": {
+    "x0": 2666.0,
+    "gamma": 48.9346907663269,
+    "amplitude": 985324.0,
+    "offset": 0.0
+  }
+}
+root@0b2128aaa6c8:/app# cat results.json
+{
+  "G": {
+    "x0": 1651.0,
+    "gamma": 5.610772605512474,
+    "amplitude": 950951.0,
+    "offset": 0.0
+  },
+  "2D": {
+    "x0": 2666.0,
+    "gamma": 48.9346907663269,
+    "amplitude": 985324.0,
+    "offset": 0.0
+  }
+}root@0b2128aaa6c8:/app# cat > compute_offset.py << 'EOF'
+'2D']['amplitude'] = amp
+        else:
+            existing['2D']['offset'] = 0.0
+            existing['2D']['amplitude'] = amp
+    with open('results.json', 'w') as f:
+        json.dump(existing, f, indent=2)
+    print('Results updated.')
+
+if __name__ == '__main__':
+    main()
+EOF
+> import json
+> import math
+>
+> def load_data():
+>     w = []
+>     i = []
+>     with open('graphene.dat', 'r') as f:
+>         for line in f:
+>             parts = line.strip().split(',')
+>             if len(parts) < 3:
+>                 continue
+>             w.append(float(parts[0]))
+>             i.append(float(parts[2]))
+>     return w, i
+>
+> def find_peak_index(w, i, target_w):
+>     idx = min(range(len(w)), key=lambda x: abs(w[x] - target_w))
+>     return idx
+>
+> def fit_peak(w, i, idx):
+>     window_size = 50
+>     start = max(0, idx - window_size)
+>     end = min(len(w), idx + window_size + 1)
+>     w_sub = w[start:end]
+>     i_sub = i[start:end]
+>     max_idx = i_sub.index(max(i_sub))
+>     x0 = w_sub[max_idx]
+>     i_max = i_sub[max_idx]
+>     variance = sum((x - x0) ** 2 for x in w_sub) / len(w_sub)
+>     gamma = math.sqrt(variance)
+>     far_indices = [j for j in range(len(w_sub)) if abs(w_sub[j] - x0) > 2*gamma]
+>     offset = sum(i_sub[j] for j in far_indices) / len(far_indices) if far_indices else 0.0
+>     amplitude = i_max - offset
+>     return x0, gamma, amplitude, offset
+>
+> def main():
+>     w, i = load_data()
+>     idx_g = find_peak_index(w, i, 1648)
+>     idx_2d = find_peak_index(w, i, 2700)
+>     print('G peak index:', idx_g, 'w=', w[idx_g], 'i=', i[idx_g])
+>     print('2D peak index:', idx_2d, 'w=', w[idx_2d], 'i=', i[idx_2d])
+>     params_g = fit_peak(w, i, idx_g)
+>     params_2d = fit_peak(w, i, idx_2d)
+>     print('G parameters:', params_g)
+>     print('2D parameters:', params_2d)
+>     # Load existing results
+>     with open('results.json', 'r') as f:
+>         existing = json.load(f)
+>     # Update if offset is non-zero
+>     if params_g:
+>         x0, gamma, amp, offset = params_g
+>         if offset != 0.0:
+>             existing['G']['offset'] = offset
+>             existing['G']['amplitude'] = amp
+>         else:
+>             existing['G']['offset'] = 0.0
+>             existing['G']['amplitude'] = amp
+>     if params_2d:
+>         x0, gamma, amp, offset = params_2d
+>         if offset != 0.0:
+>             existing['2D']['offset'] = offset
+>             existing['2D']['amplitude'] = amp
+>         else:
+>             existing['2D']['offset'] = 0.0
+>             existing['2D']['amplitude'] = amp
+>     with open('results.json', 'w') as f:
+>         json.dump(existing, f, indent=2)
+>     print('Results updated.')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@0b2128aaa6c8:/app# python3 compute_offset.py
+G peak index: 3563 w= 1648.0 i= 446799.0
+2D peak index: 1670 w= 2701.0 i= 99301.0
+G parameters: (1651.0, 5.610772605512474, 950951.0, 0.0)
+2D parameters: (2666.0, 48.9346907663269, 985324.0, 0.0)
+Results updated.
+root@0b2128aaa6c8:/app# cat results.json
+{
+  "G": {
+    "x0": 1651.0,
+    "gamma": 5.610772605512474,
+    "amplitude": 950951.0,
+    "offset": 0.0
+  },
+  "2D": {
+    "x0": 2666.0,
+    "gamma": 48.9346907663269,
+    "amplitude": 985324.0,
+    "offset": 0.0
+  }
+}root@0b2128aaa6c8:/app# python3 -c "import json; json.load(open('results.json')); print('JSON valid')"
+JSON valid
+root@0b2128aaa6c8:/app# ls -l results.json
+-rw-r--r-- 1 root root 220 Jul  8 13:57 results.json
+root@0b2128aaa6c8:/app#

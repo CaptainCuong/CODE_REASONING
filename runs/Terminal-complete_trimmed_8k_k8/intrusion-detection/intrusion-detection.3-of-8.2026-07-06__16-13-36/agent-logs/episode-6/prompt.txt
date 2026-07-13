@@ -1,0 +1,71 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@9c19dc05eb46:/app# ls -la /app/reports/
+total 0
+drwxr-xr-x 2 root root 10 Jul  7 18:33 .
+drwxr-xr-x 1 root root 43 Jul  7 18:40 ..
+root@9c19dc05eb46:/app# cd /app
+root@9c19dc05eb46:/app# cat /app/intrusion_detector.sh | head -50
+#!/bin/bash
+set -e
+
+LOG_DIR="/app/logs"
+RULES_FILE="/app/rules/detection_rules.json"
+OUTPUT_DIR="/app/reports"
+
+# Ensure output directory exists
+mkdir -p "$OUTPUT_DIR"
+
+# Read JSON rules
+RULES=$(jq -r '.rules[] | "\(.id):\(.pattern):\(.threshold):\(.severity)"' "$RULES_FILE")
+
+# Initialize arrays
+ALERTS=()
+REPORT_EVENTS=()
+STATS=()
+
+# Timestamp function
+timestamp() {
+    date -u +'%Y-%m-%dT%H:%M:%SZ'
+}
+
+# Process each rule
+while IFS=: read -r rule_id pattern threshold severity; do
+    # Count matches in auth.log
+    AUTH_COUNT=$(grep -c "$pattern" "$LOG_DIR/auth.log")
+    # Count matches in http.log
+    HTTP_COUNT=$(grep -c "$pattern" "$LOG_DIR/http.log")
+    total_matches=$((AUTH_COUNT + HTTP_COUNT))
+
+    # Collect matching IPs from both logs
+    AUTH_IPS=$(grep "$pattern" "$LOG_DIR/auth.log" | grep -oEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u)
+    HTTP_IPS=$(grep "$pattern" "$LOG_DIR/http.log" | grep -oEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u)
+    # Combine unique IPs
+    ALL_IPS=$(echo "$AUTH_IPS $HTTP_IPS" | tr ' ' '\n' | sort -u)
+
+    # Store for statistics
+    STATS+=("$rule_id:$total_matches")
+
+    # If matches >= threshold, add to alerts
+    if [ $total_matches -ge $threshold ]; then
+        ALERTS+=("$rule_id:$severity:$total_matches:$ALL_IPS")
+    fi
+
+    # Always add to report events
+    REPORT_EVENTS+=("$rule_id:$severity:$total_matches:$ALL_IPS")
+
+done <<< "$RULES"
+
+root@9c19dc05eb46:/app# jq -r '.rules[] | "\(.id):\(.pattern):\(.threshold):\(.severity)"' /app/rules/detection_rules.json
+SSH-BRUTE-FORCE:Failed password for:5:high
+WEB-SCAN:GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php:3:medium
+INVALID-USER:invalid user:2:low
+SUDO-COMMAND:sudo:.*COMMAND=:1:info
+root@9c19dc05eb46:/app# grep -c "Failed password for" /app/logs/auth.log
+8
+root@9c19dc05eb46:/app# grep -c "GET /admin" /app/logs/http.log
+1
+root@9c19dc05eb46:/app#

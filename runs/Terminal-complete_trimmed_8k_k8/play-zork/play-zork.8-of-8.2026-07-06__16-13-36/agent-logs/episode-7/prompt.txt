@@ -1,0 +1,343 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@e2c6ec882a40:/app/frotz# cat src/curses/ux_init.c
+/*
+ * ux_init.c - Unix interface, initialisation
+ *
+ * This file is part of Frotz.
+ *
+ * Frotz is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Frotz is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ * Or visit http://www.fsf.org/
+ */
+
+#define __UNIX_PORT_FILE
+
+/* For the MACOS port, get the _DARWIN_C_SOURCE define */
+#include "../common/defs.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <time.h>
+
+#include <unistd.h>
+#include <ctype.h>
+#include <libgen.h>
+
+#include "ux_defines.h"
+
+#ifdef USE_NCURSES_H
+#include <ncurses.h>
+#else
+#include <curses.h>
+#endif
+
+#ifndef WIN32
+#include <termios.h>
+#endif
+
+#include "ux_frotz.h"
+#include "ux_blorb.h"
+
+#ifdef USE_UTF8
+#include <locale.h>
+#endif
+
+extern f_setup_t f_setup;
+extern z_header_t z_header;
+
+volatile sig_atomic_t terminal_resized = 0;
+
+static void sigwinch_handler(int);
+static void parse_options(int argc, char **argv);
+
+#define INFORMATION "\
+An interpreter for all Infocom and other Z-Machine games.\n\
+\n\
+Syntax: frotz [options] story-file [blorb file]\n\
+  -a   watch attribute setting    \t -o   watch object movement\n\
+  -A   watch attribute testing    \t -O   watch object locating\n\
+  -b <colorname> background color \t -p   plain ASCII output only\n\
+  -c # context lines              \t -P   alter piracy opcode\n\
+  -d   disable color              \t -q   quiet (disable sound effects)\n\
+  -e   enable sound               \t -r # right margin\n\
+  -E <style> emphasis style       \t -R <path> restricted read/write\n\
+  -f <colorname> foreground color \t -s # random number seed value\n\
+  -F   Force color mode           \t -S # transcript width\n\
+  -h # text height                \t -t   set Tandy bit\n\
+  -i   ignore fatal errors        \t -u # slots for multiple undo\n\
+  -I # interpreter number         \t -v   show version information\n\
+  -l # left margin                \t -w # text width\n\
+  -L <file> load this save file   \t -x   expand abbreviations g/x/z\n\
+  -m   enable mouse support       \t -Z # error checking (see below)\n"
+
+#define INFO2 "\
+Error checking: 0 none, 1 first only (default), 2 all, 3 exit after any error.\n\
+For more options and explanations, please read the manual page.\n"
+
+
+/*
+char stripped_story_name[FILENAME_MAX+1];
+char semi_stripped_story_name[FILENAME_MAX+1];
+*/
+
+extern u_setup_t u_setup;
+
+/* static void sigwinch_handler(int); */
+static void sigint_handler(int);
+/* static void redraw(void); */
+
+static void     usage(void);
+static void     print_version(void);
+static int      getconfig(char *);
+static int      getbool(char *);
+static int      getemph(char *);
+static int      getcolor(char *);
+static int      geterrmode(char *);
+static FILE     *pathopen(const char *, const char *, const char *);
+
+
+static void print_c_string (const char *s)
+{
+        zchar c;
+
+        while ((c = *s++) != 0)
+                os_display_char (c);
+} /* print_c_string */
+
+
+/*
+ * os_warn
+ *
+ * Display a warning message and continue with the game.
+ *
+ */
+void os_warn (const char *s, ...)
+{
+        if (u_setup.curses_active) {
+                /* Solaris 2.6's cc complains if the below cast is missing */
+                print_c_string("\n\n");
+                os_beep(BEEP_HIGH);
+                os_set_text_style(BOLDFACE_STYLE);
+                print_c_string("Warning: ");
+                os_set_text_style(0);
+                print_c_string(s);
+                print_c_string("\n");
+                new_line();
+        }
+} /* os_warn */
+
+
+/*
+ * os_fatal
+ *
+ * Display error message and exit program.
+ *
+ */
+void os_fatal (const char *s, ...)
+{
+        if (u_setup.curses_active) {
+                /* Solaris 2.6's cc complains if the below cast is missing */
+                print_c_string("\n\n");
+                os_beep(BEEP_HIGH);
+                os_set_text_style(BOLDFACE_STYLE);
+                print_c_string("Fatal error: ");
+                os_set_text_style(0);
+                print_c_string(s);
+                print_c_string("\n");
+                new_line();
+                if (f_setup.ignore_errors) {
+                        print_c_string("Continuing anyway...");
+                        new_line();
+                        scrollok(stdscr, TRUE);
+                        scroll(stdscr);
+                        flush_buffer();
+                        refresh();
+       
+[... output limited to 10000 bytes; 71 interior bytes omitted ...]
+             return CYAN_COLOUR;
+        if (strcmp(value, "white") == 0)
+                return WHITE_COLOUR;
+        if (strcmp(value, "yellow") == 0)
+                return YELLOW_COLOUR;
+
+        if (strcmp(value, "purple") == 0)
+                return MAGENTA_COLOUR;
+        if (strcmp(value, "violet") == 0)
+                return MAGENTA_COLOUR;
+        if (strcmp(value, "aqua") == 0)
+                return CYAN_COLOUR;
+
+        /* If we can't tell what that string means,
+         * we tell caller to use the default.
+         */
+
+        return -1;
+
+} /* getcolor */
+
+
+/*
+ * geterrmode
+ *
+ * Parse for "never", "once", "always", or "fatal" and return a macro
+ * defined in ux_frotz.h related to the error reporting mode.
+ *
+ */
+static int geterrmode(char *value)
+{
+        int num;
+
+        /* Be case-insensitive */
+        for (num = 0; value[num] !=0; num++)
+                value[num] = tolower((int) value[num]);
+
+        if (strcmp(value, "never") == 0)
+                return ERR_REPORT_NEVER;
+        if (strcmp(value, "once") == 0)
+                return ERR_REPORT_ONCE;
+        if (strcmp(value, "always") == 0)
+                return ERR_REPORT_ALWAYS;
+        if (strcmp(value, "fatal") == 0)
+                return ERR_REPORT_FATAL;
+
+        return ERR_DEFAULT_REPORT_MODE;
+} /* geterrmode() */
+
+
+/*
+ * sigwinch_handler
+ *
+ * Called whenever Frotz receives a SIGWINCH signal to make curses
+ * cleanly resize the window.  To be safe, just set a flag here.
+ * It is checked and cleared in unix_read_char.
+ *
+ */
+static void sigwinch_handler(int UNUSED(sig))
+{
+        terminal_resized = 1;
+        signal(SIGWINCH, sigwinch_handler);
+}
+
+
+/*
+ * sigint_handler
+ * Sometimes the screen will be left in a weird state if the following
+ * is not done.
+ *
+ */
+static void sigint_handler(int UNUSED(dummy))
+{
+        signal(SIGINT, sigint_handler);
+
+} /* sigint_handler */
+
+
+void os_init_setup(void)
+{
+        f_setup.interpreter_number = INTERP_DEC_20;
+
+        u_setup.disable_color = 0;
+        u_setup.force_color = 0;
+        u_setup.foreground_color = -1;
+        u_setup.background_color = -1;
+        u_setup.emphasis_mode = EMPHASIS_DEFAULT;
+        u_setup.screen_width = -1;
+        u_setup.screen_height = -1;
+        u_setup.random_seed = -1;
+        u_setup.random_seed = -1;
+        u_setup.tandy_bit = 0;
+        u_setup.current_text_style = 0;
+                        /* Since I can't use attr_get, which
+                        would make things easier, I need
+                        to use the same hack the MS-DOS port
+                        does...keep the current style in a
+                        global variable. */
+        u_setup.plain_ascii = 0; /* true if user wants to disable Latin-1 */
+        u_setup.curses_active = 0;      /* true if os_init_screen has run */
+        /* u_setup.interpreter = INTERP_DEFAULT; */
+        u_setup.current_color = 0;
+        u_setup.color_enabled = FALSE;
+        u_setup.mouse_enabled = FALSE;
+} /* os_init_setup */
+
+
+#ifdef NO_STRRCHR
+/*
+ * This is for operating systems that lack strrchr(3).
+ *
+ */
+char *my_strrchr(const char *s, int c)
+{
+        const char *save;
+
+        if (c == 0) return (char *)s + strlen(s);
+                save = 0;
+        while (*s) {
+                if (*s == c)
+                        save = s;
+                s++;
+        }
+        return (char *)save;
+} /* my_strrchr */
+#endif  /* NO_STRRCHR */
+
+static void usage(void)
+{
+        printf("FROTZ V%s - Curses interface.  ", VERSION);
+#ifndef NO_SOUND
+                printf("Audio output enabled.\n");
+#else
+                printf("Audio output disabled.\n");
+#endif
+        puts(INFORMATION);
+        puts(INFO2);
+        return;
+}
+
+static void print_version(void)
+{
+        printf("FROTZ V%s     Curses interface.  ", VERSION);
+#ifndef NO_SOUND
+        printf("Audio output enabled.");
+#else
+        printf("Audio output disabled.");
+#endif
+        printf("\nCommit date:    %s\n", GIT_DATE);
+        printf("Git commit:     %s\n", GIT_HASH);
+        printf("Notes:          %s\n", RELEASE_NOTES);
+        printf("  Frotz was originally written by Stefan Jokisch.\n");
+        printf("  It complies with standard 1.0 of Graham Nelson's specification.\n");
+        printf("  It was ported to Unix by Galen Hazelwood.\n");
+        printf("  It is distributed under the GNU General Public License version 2 or\n");
+        printf("    (at your option) any later version.\n");
+        printf("  This software is offered as-is with no warranty or liability.\n");
+        printf("  The core and Unix port are maintained by David Griffith.\n");
+        printf("  Frotz's homepage is https://661.org/proj/if/frotz/\n\n");
+        return;
+} /* print_version */
+root@e2c6ec882a40:/app/frotz# cd /app
+root@e2c6ec882a40:/app# export USER=user
+root@e2c6ec882a40:/app# ./frotz/frotz zork1.z5 > /app/answer.txt 2>&1
+root@e2c6ec882a40:/app# cat /app/answer.txt
+
+Fatal error: Cannot open story file
+
+I won't run as root!
+root@e2c6ec882a40:/app#

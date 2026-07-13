@@ -1,0 +1,95 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@c9fbe85160b8:/app# od -c /app/trunc.db | head -30
+0000000  \r  \0  \0  \0  \n 017   I  \0 017 360 017 337 017 316 017 275
+0000020 017 254 017 233 017 212 017   y 017   a 017   I  \0  \0  \0  \0
+0000040  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0
+*
+0007500  \0  \0  \0  \0  \0  \0  \0  \0  \0 026  \n 004  \0   !  \a   t
+0007520   e   s   t   w   o   r   d   0   9   ? 340  \0  \0  \0  \0  \0
+0007540  \0 026  \t 004  \0   !  \a   t   e   s   t   w   o   r   d   0
+0007560   8   @   X 377   \   ( 365 302 217 017  \b 004  \0   ! 001   t
+0007600   e   s   t   w   o   r   d   0   7   c 017  \a 004  \0   ! 001
+0007620   t   e   s   t   w   o   r   d   0   6   K 017 006 004  \0   !
+0007640 001   t   e   s   t   w   o   r   d   0   5   2 017 005 004  \0
+0007660   ! 001   t   e   s   t   w   o   r   d   0   4   * 017 004 004
+0007700  \0   ! 001   t   e   s   t   w   o   r   d   0   3 031 017 003
+0007720 004  \0   ! 001   t   e   s   t   w   o   r   d   0   2  \n 017
+0007740 002 004  \0   ! 001   t   e   s   t   w   o   r   d   0   1 002
+0007760 016 001 004  \0   !  \t   t   e   s   t   w   o   r   d   0   0
+0010000
+root@c9fbe85160b8:/app# cat > /app/recover3.py << 'EOF'
+> import json
+> import re
+>
+> with open('/app/trunc.db', 'rb') as f:
+>     data = f.read()
+>
+> # Split by newline
+> lines = data.split(b'\n')
+> rows = []
+> seen = set()
+>
+> for line_num, line in enumerate(lines, 1):
+>     line = line.decode('ascii', errors='ignore')
+>     if not line:
+>         continue
+>     print(f'Line {line_num}: {line}')
+>     # Try to find rows by splitting by whitespace
+>     parts = line.split()
+>     if len(parts) >= 2:
+>         word = parts[0]
+>         value = ' '.join(parts[1:])
+>         rows.append({'word': word, 'value': value})
+>         key = (word, value)
+>         if key not in seen:
+>             seen.add(key)
+>     # Try to find rows by pattern !testword...\d+
+>     # We'll use regex to find all matches and then capture the value after each match
+>     pattern = re.compile(r'!testword\d+\s*(\S+)')
+>     matches = pattern.findall(line)
+>     for match in matches:
+>         word, value = match
+>         rows.append({'word': word, 'value': value})
+>         key = (word, value)
+>         if key not in seen:
+>             seen.add(key)
+>
+> # Also, try to find rows by pattern !testword...\d+ and then capture the value until a space or end of line
+> # We'll use regex to capture the whole row
+> row_pattern = re.compile(r'!testword\d+\s*(\S+)')
+> for match in row_pattern.findall(data.decode('ascii', errors='ignore')):
+>     word, value = match
+>     rows.append({'word': word, 'value': value})
+>     key = (word, value)
+>     if key not in seen:
+>         seen.add(key)
+>
+> # Now, we have rows. We'll deduplicate by converting to set of tuples
+> unique_rows = []
+> for r in rows:
+>     key = (r['word'], r['value'])
+>     if key not in seen:
+>         seen.add(key)
+>         unique_rows.append(r)
+>
+> # Sort by word
+> unique_rows.sort(key=lambda x: x['word'])
+>
+> print('Unique rows:', len(unique_rows))
+> for r in unique_rows:
+>     print(r)
+>
+> with open('/app/recover.json', 'w') as out:
+>     json.dump(unique_rows, out, indent=2)
+> EOF
+root@c9fbe85160b8:/app# python3 /app/recover3.py
+Line 1:
+Line 2: IyaI
+Line 3: !testword09?    !testword08@X\!testword07c!testword06K!testword052!testword04*!testword03!testword02
+Line 4: !testword01!    testword00
+Unique rows: 0
+root@c9fbe85160b8:/app#

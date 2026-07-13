@@ -1,0 +1,99 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@a85ef5acc74a:/app# cd /app/ssl
+root@a85ef5acc74a:/app/ssl# echo 'Subject:' > verification.txt
+root@a85ef5acc74a:/app/ssl# openssl x509 -in server.crt -text | grep 'Subject:' | sed 's/.*Subject://' | sed 's/^ //' >> verification.txt
+root@a85ef5acc74a:/app/ssl# echo '' >> verification.txt
+root@a85ef5acc74a:/app/ssl# echo 'Validity dates:' >> verification.txt
+root@a85ef5acc74a:/app/ssl# openssl x509 -in server.crt -date 2>&1 | grep -E 'Not Before:|Not After:' | sed 's/.*://' | sed 's/^[^ ]* //' | sed 's/T.*//' >> ver
+ification.txt
+root@a85ef5acc74a:/app/ssl# echo '' >> verification.txt
+root@a85ef5acc74a:/app/ssl# echo 'SHA-256 fingerprint:' >> verification.txt
+root@a85ef5acc74a:/app/ssl# openssl x509 -in server.crt -sha256 -fingerprint | cut -d= -f2- >> verification.txt
+root@a85ef5acc74a:/app/ssl# cat verification.txt
+Subject:
+C = US, ST = CA, O = DevOps Team, CN = dev-internal.company.local
+
+Validity dates:
+
+SHA-256 fingerprint:
+61:6D:E4:4C:EA:F7:65:F8:12:43:EC:31:1C:6B:A9:59:6B:52:E8:C3:76:33:A1:E5:D6:9F:C2:95:68:CC:10:16
+-----BEGIN CERTIFICATE-----
+MIIDHjCCAgYCAQEwDQYJKoZIhvcNAQELBQAwVTELMAkGA1UEBhMCVVMxCzAJBgNV
+BAgMAkNBMRQwEgYDVQQKDAtEZXZPcHMgVGVhbTEjMCEGA1UEAwwaZGV2LWludGVy
+bmFsLmNvbXBhbnkubG9jYWwwHhcNMjYwNzA3MTcyMjAzWhcNMjcwNzA3MTcyMjAz
+WjBVMQswCQYDVQQGEwJVUzELMAkGA1UECAwCQ0ExFDASBgNVBAoMC0Rldk9wcyBU
+ZWFtMSMwIQYDVQQDDBpkZXYtaW50ZXJuYWwuY29tcGFueS5sb2NhbDCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBALE1By2t1CX9y6DcVAeieASTQ/uWoufY
+YB4xDP1hA1d5B6tnEnafYQ47WGkYpDnLOis3+TH2NbMip15H+jwcENoRI4vYMCZn
+XRoPwnC6auAbI/ot/uc72hbfy1fGInWpuadk4GtXWMM2Q4O0X6MBgSAdBIAJqeHr
+/0S+pJgFnz7SujQZ9/AHvsbXfBT1KBLTURTlg4GI1WdtX/rqRTXqI37OGTKM7lfy
+LOZ67hG9yjeS+m/3kB/Ej9v0/8AW/lXEVpv/CU0DeC0hWxolOkzvL64vxMZRFt3L
+jBVwWfv9J37IeEc5AOMri/YTwu+DfO1gMfE0v16W/lwde73x2YX5pK0CAwEAATAN
+BgkqhkiG9w0BAQsFAAOCAQEAoSUoa19r0OOX0lO8biA1FadO6UB+QTsR+TFVvNEG
+aXN4z46bwdaKWctvYDtUkNMlVvCMPoktkz2L3cqjJz/jW/TFc1owMAeT2OWGbcse
+h9m3H8Y9LEZk2iJ9//AaVlBz78y5DgRqOnjrRBVE9uzqFqXugviIqIN4QneyZdPE
+ujncGMktrNu20/rR1yaVgtVivknVhJ397cOWjMWhgr9AEERS3BzFJA3Qw15TYdT7
+1I6Z/0V95J3B/K8b0PPGCE9hdBaBS6ct4Z7mnLsnLSd/I3akbvKlbs4svrUCiXUc
+=
+-----END CERTIFICATE-----
+root@a85ef5acc74a:/app/ssl# cd /app
+root@a85ef5acc74a:/app# cat > check_cert.py << 'EOF'
+> import subprocess
+> import sys
+> import os
+>
+> def get_certificate_details(pem_path):
+>     # Get subject
+>     subject_proc = subprocess.run(['openssl', 'x509', '-in', pem_path, '-text'], capture_output=True, text=True)
+>     subject_lines = subject_proc.stdout.split('\n')
+>     subject = ''
+>     for line in subject_lines:
+>         if line.startswith('Subject:'):
+>             subject = line[len('Subject:'):].strip()
+>             break
+>     # Get validity dates
+>     date_proc = subprocess.run(['openssl', 'x509', '-in', pem_path, '-date'], capture_output=True, text=True)
+>     dates = {}
+>     for line in date_proc.stdout.split('\n'):
+>         if 'Not Before:' in line or 'Not After:' in line:
+>             key = line.split(':')[0].strip()
+>             value = line.split(':')[1].strip()
+>             dates[key] = value
+>     # Get SHA-256 fingerprint
+>     fp_proc = subprocess.run(['openssl', 'x509', '-in', pem_path, '-sha256', '-fingerprint'], capture_output=True, text=True)
+>     fp = fp_proc.stdout.split('=')[1].strip()
+>     return subject, dates, fp
+>
+> def main():
+>     ssl_path = '/app/ssl/server.pem'
+>     if not os.path.exists(ssl_path):
+>         print('ERROR: PEM file not found at', ssl_path)
+>         sys.exit(1)
+>     try:
+>         subject, dates, fp = get_certificate_details(ssl_path)
+>         # Extract Common Name
+>         common_name = subject.split('CN = ')[1]
+>         # Extract expiration date (Not After) and format as YYYY-MM-DD
+>         exp_date_str = dates.get('Not After:', '')
+>         # exp_date_str format: "2026-03-20T07:23:00Z"
+>         if 'T' in exp_date_str:
+>             exp_date_str = exp_date_str.split('T')[0]
+>         print('Subject:', subject)
+>         print('Common Name:', common_name)
+>         print('Expiration date:', exp_date_str)
+>         print('SHA-256 fingerprint:', fp)
+>         print('Certificate verification successful')
+>     except Exception as e:
+>         print('ERROR: Failed to load or verify certificate:', e)
+>         sys.exit(1)
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@a85ef5acc74a:/app# python3 check_cert.py
+ERROR: Failed to load or verify certificate: list index out of range
+root@a85ef5acc74a:/app#

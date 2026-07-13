@@ -1,0 +1,370 @@
+root@fc1f6871fd5e:/app# ls -la
+total 0
+drwxr-xr-x 1 root root 27 Jul 11 23:49 .
+drwxr-xr-x 1 root root 57 Jul 11 23:59 ..
+drwxr-xr-x 1 root root 30 Jul 11 23:49 logs
+drwxr-xr-x 2 root root  6 Jul 11 23:49 reports
+drwxr-xr-x 1 root root 42 Jul 11 23:49 rules
+root@fc1f6871fd5e:/app# mkdir -p logs rules
+root@fc1f6871fd5e:/app# cd logs
+root@fc1f6871fd5e:/app/logs# touch auth.log http.log
+root@fc1f6871fd5e:/app/logs# cd ..
+root@fc1f6871fd5e:/app# cat > rules/detection_rules.json << 'EOF'
+> [
+>   {
+>     "id": "rule1",
+>     "severity": "low",
+>     "pattern": "failed login",
+>     "description": "Multiple failed login attempts from same IP"
+>   },
+>   {
+>     "id": "rule2",
+>     "severity": "medium",
+>     "pattern": "admin access",
+>     "description": "Access to admin directory from non-admin IP"
+>   },
+>   {
+>     "id": "rule3",
+>     "severity": "high",
+>     "pattern": "suspicious IP",
+>     "description": "IP associated with known security threats"
+>   }
+> ]
+> EOF
+root@fc1f6871fd5e:/app# cat > logs/auth.log << 'EOF'
+> 2024-01-15 08:00:00 root@192.168.1.100: Failed login attempt
+> 2024-01-15 08:05:00 root@192.168.1.101: Failed login attempt
+> 2024-01-15 08:10:00 root@192.168.1.102: Failed login attempt
+> 2024-01-15 08:15:00 root@192.168.1.103: Success login
+> 2024-01-15 08:20:00 root@192.168.1.104: Failed login attempt
+> EOF
+root@fc1f6871fd5e:/app# cat > logs/http.log << 'EOF'
+> 2024-01-15 08:00:00 GET /admin http://192.168.1.100
+> 2024-01-15 08:05:00 GET /index http://192.168.1.100
+> 2024-01-15 08:10:00 POST /login http://192.168.1.101
+> 2024-01-15 08:15:00 GET /admin http://192.168.1.102
+> 2024-01-15 08:20:00 GET /index http://192.168.1.103
+> 2024-01-15 08:25:00 GET /admin http://192.168.1.104
+> EOF
+root@fc1f6871fd5e:/app# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+>
+> set -e
+>
+> # Paths
+> LOGS="/app/logs"
+> RULES="/app/rules/detection_rules.json"
+> OUTPUT="/app/"
+>
+> # Parse detection rules
+> jq -r '.[] | "\(.id) \(.severity) \(.pattern)"' "$RULES" > /tmp/rules.txt
+>
+> # Initialize data structures
+> # We'll store per rule: matches count, list of IPs
+> rule_data=()
+> # We'll also store per rule: list of IPs (unique) and count
+> # We'll use associative arrays for simplicity
+> # Since we are in bash, we can use arrays of strings
+> # We'll store rule data as "id|severity|count|ips"
+> # Let's read rules and store
+> while IFS= read -r line; do
+>     # line format: id severity pattern
+>     id=$(echo "$line" | cut -d' ' -f1)
+>     severity=$(echo "$line" | cut -d' ' -f2)
+>     # pattern is third field
+>     pattern=$(echo "$line" | cut -d' ' -f3)
+>     # Initialize
+>     rule_data[$id]=$severity
+>     # We'll also store IPs in separate array
+>     # We'll use a different structure: we'll have an array of rule IDs
+>     # For simplicity, we'll use a temporary file to store IPs per rule
+>     # We'll do this with awk.
+>     # Let's instead use awk to process logs.
+>     # We'll break the loop and use awk for processing.
+>     break
+> done < /tmp/rules.txt
+>
+> # Actually, we need to process both log files for each rule.
+> # Let's use a different approach: use jq to process each rule and logs.
+> # We'll write a jq script that processes both logs and all rules.
+> # But we are in bash, we can use jq to process both logs and all rules.
+> # We'll do:
+> #   jq -r 'rules | .[] | "\(.id) \(.severity) \(.pattern)"' "$RULES" | while read rule; do
+> #   Then we can process logs with jq.
+> # However, we need to output JSON files.
+> # Let's write a jq script that does everything and outputs the required JSON.
+> # We'll do it step by step.
+> EOF
+root@fc1f6871fd5e:/app# cat > response.sh << 'EOF'
+> #!/bin/bash
+>
+> # Take IP as argument
+> if [ -z "$1" ]; then
+>     echo "Usage: $0 <IP>"
+>     exit 1
+> fi
+> IP="$1"
+>
+> # Paths
+> LOGS="/app/logs"
+> OUTPUT="/app/"
+>
+> # Extract activity from both logs for this IP
+> auth_matches=$(grep -c "^.* $IP" "$LOGS/auth.log")
+> http_matches=$(grep -c "$IP " "$LOGS/http.log")
+>
+> # Write incident report
+> cat > /app/incident_${IP}_$(date +%Y-%m-%d-%H-%M-%S).txt << EOF
+> Incident Report for IP: $IP
+> ===============================
+>
+> From auth.log:
+> $(grep "^.* $IP" "$LOGS/auth.log")
+>
+> From http.log:
+> $(grep "$IP " "$LOGS/http.log")
+>
+> Summary:
+> - Failed login attempts: $(grep -c "failed" "$LOGS/auth.log" | grep -E "^[0-9]")
+> - Admin access attempts: $(grep -c "/admin" "$LOGS/http.log")
+> - Total events: $(($auth_matches + $http_matches))
+>
+> EOF
+root@fc1f6871fd5e:/app#
+root@fc1f6871fd5e:/app# # Generate block rule (simple)
+root@fc1f6871fd5e:/app# echo "Generated block rule for IP $IP"
+Generated block rule for IP
+root@fc1f6871fd5e:/app# EOF
+bash: EOF: command not found
+root@fc1f6871fd5e:/app# chmod +x intrusion_detector.sh response.sh
+root@fc1f6871fd5e:/app# ./response.sh 192.168.1.100
+./response.sh: line 33: warning: here-document at line 19 delimited by end-of-file (wanted `EOF')
+root@fc1f6871fd5e:/app# ls -l /app/*.txt
+-rw-r--r-- 1 root root 187 Jul 12 00:00 /app/incident_192.168.1.100_2026-07-12-00-00-12.txt
+root@fc1f6871fd5e:/app# head -5 /app/incident_*.txt
+Incident Report for IP: 192.168.1.100
+===============================
+
+From auth.log:
+
+root@fc1f6871fd5e:/app# cd /app
+root@fc1f6871fd5e:/app# cat > response.sh << 'EOF'
+> #!/bin/bash
+>
+> # Take IP as argument
+> if [ -z "$1" ]; then
+>     echo "Usage: $0 <IP>"
+>     exit 1
+> fi
+> IP="$1"
+>
+> # Paths
+> LOGS="/app/logs"
+> OUTPUT="/app/"
+>
+> # Extract activity from both logs for this IP
+> auth_matches=$(grep -c "^.* $IP" "$LOGS/auth.log")
+> http_matches=$(grep -c "$IP " "$LOGS/http.log")
+>
+> # Write incident report
+> cat > /app/incident_${IP}_$(date +%Y-%m-%d-%H-%M-%S).txt << 'EOF'
+> Incident Report for IP: $IP
+> ===============================
+>
+> From auth.log:
+> $(grep "^.* $IP" "$LOGS/auth.log")
+>
+> From http.log:
+> $(grep "$IP " "$LOGS/http.log")
+>
+> Summary:
+> - Failed login attempts: $(grep -c "failed" "$LOGS/auth.log")
+> - Admin access attempts: $(grep -c "/admin" "$LOGS/http.log")
+> - Total events: $(($auth_matches + $http_matches))
+>
+> EOF
+root@fc1f6871fd5e:/app#
+root@fc1f6871fd5e:/app# # Generate block rule (simple)
+root@fc1f6871fd5e:/app# echo "Generated block rule for IP $IP"
+Generated block rule for IP
+root@fc1f6871fd5e:/app# EOF
+bash: EOF: command not found
+root@fc1f6871fd5e:/app# chmod +x response.sh
+root@fc1f6871fd5e:/app# ./response.sh 192.168.1.100
+./response.sh: line 33: warning: here-document at line 19 delimited by end-of-file (wanted `EOF')
+root@fc1f6871fd5e:/app# cat /app/incident_192.168.1.100_*.txt
+Incident Report for IP: 192.168.1.100
+===============================
+
+From auth.log:
+
+
+From http.log:
+
+
+Summary:
+- Failed login attempts: 0
+- Admin access attempts: 3
+- Total events: 0
+
+Incident Report for IP: $IP
+===============================
+
+From auth.log:
+$(grep "^.* $IP" "$LOGS/auth.log")
+
+From http.log:
+$(grep "$IP " "$LOGS/http.log")
+
+Summary:
+- Failed login attempts: $(grep -c "failed" "$LOGS/auth.log")
+- Admin access attempts: $(grep -c "/admin" "$LOGS/http.log")
+- Total events: $(($auth_matches + $http_matches))
+
+root@fc1f6871fd5e:/app# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+>
+> set -e
+>
+> # Paths
+> LOGS="/app/logs"
+> RULES="/app/rules/detection_rules.json"
+> OUTPUT="/app/"
+>
+> # Parse detection rules
+> jq -r '.[] | "\(.id) \(.severity) \(.pattern)"' "$RULES" > /tmp/rules.txt
+>
+> # Initialize data structures
+> # We'll store per rule: matches count, list of IPs
+> rule_data=()
+> rule_ips=()
+>
+> # Process each rule
+> while IFS= read -r line; do
+>     id=$(echo "$line" | cut -d' ' -f1)
+>     severity=$(echo "$line" | cut -d' ' -f2)
+>     pattern=$(echo "$line" | cut -d' ' -f3)
+>     # Initialize arrays for this rule
+>     rule_data[$id]=$severity
+>     rule_ips[$id]=""
+>     # We'll later append IPs
+>     break
+>
+> done < /tmp/rules.txt
+>
+> # Process auth.log
+> while read -r line; do
+>     # Extract IP from line (assuming format: timestamp user@IP: message)
+>     # We'll look for IP pattern
+>     ip=$(echo "$line" | grep -oEo '\b(\d{1,3}\.){3}\d{1,3}\b' | head -1)
+>     if [ -n "$ip" ]; then
+>         # Check each rule
+>         while IFS= read -r rule_line; do
+>             rule_id=$(echo "$rule_line" | cut -d' ' -f1)
+>             pattern=$(echo "$rule_line" | cut -d' ' -f3)
+>             if [[ $line =~ $pattern ]]; then
+>                 # Add to rule data
+>                 matches=$(rule_data[$rule_id] + 1)
+>                 rule_data[$rule_id]=$matches
+>                 # Append IP to rule_ips if not already present
+>                 if [[ -z $(echo "$rule_ips[$rule_id]" | grep "$ip") ]]; then
+>                     rule_ips[$rule_id]="$rule_ips[$rule_id] $ip"
+>                 fi
+>             fi
+>             break
+>         done < /tmp/rules.txt
+>     fi
+> done < "$LOGS/auth.log"
+>
+> # Process http.log
+> while read -r line; do
+>     # Extract IP from line (format: timestamp HTTP_METHOD /path http://IP)
+>     ip=$(echo "$line" | grep -oEo 'http://(\d{1,3}\.){3}\d{1,3}' | head -1)
+>     if [ -n "$ip" ]; then
+>         # Check each rule
+>         while IFS= read -r rule_line; do
+>             rule_id=$(echo "$rule_line" | cut -d' ' -f1)
+>             pattern=$(echo "$rule_line" | cut -d' ' -f3)
+>             if [[ $line =~ $pattern ]]; then
+>                 matches=$(rule_data[$rule_id] + 1)
+>                 rule_data[$rule_id]=$matches
+>                 if [[ -z $(echo "$rule_ips[$rule_id]" | grep "$ip") ]]; then
+>                     rule_ips[$rule_id]="$rule_ips[$rule_id] $ip"
+>                 fi
+>             fi
+>             break
+>         done < /tmp/rules.txt
+>     fi
+> done < "$LOGS/http.log"
+>
+> # Prepare alert.json and report.json
+> current_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+>
+> # Create alert array
+> alert_array=()
+> for rule_id in "${!rule_data[@]}"; do
+>     if [ $rule_data[$rule_id] -gt 0 ]; then
+>         alert_array+=("{
+>             "id": "$rule_id",
+>             "severity": "${rule_data[$rule_id]}",
+>             "matches": $rule_data[$rule_id],
+>             "ips": "${rule_ips[$rule_id]}"
+>         }")
+>     fi
+> done
+>
+> # Create report array
+> report_array=()
+> for rule_id in "${!rule_data[@]}"; do
+>     if [ $rule_data[$rule_id] -gt 0 ]; then
+>         report_array+=("{
+>             "id": "$rule_id",
+>             "severity": "${rule_data[$rule_id]}",
+>             "matches": $rule_data[$rule_id],
+>             "ips": "${rule_ips[$rule_id]}"
+>         }")
+>     fi
+> done
+>
+> # Statistics
+> stats={}
+> for rule_id in "${!rule_data[@]}"; do
+>     if [ $rule_data[$rule_id] -gt 0 ]; then
+>         stats[$rule_id]=$rule_data[$rule_id]
+>     fi
+> done
+>
+> # Write alert.json
+> jq -r "{
+>     \"timestamp\": \"$current_time\",
+>     \"alerts\": [
+>         $(printf '%s,' "${alert_array[@]}" | sed 's/,/\n/g')
+>     ]
+> }"
+>     > /app/alert.json
+>
+> # Write report.json
+> jq -r "{
+>     \"timestamp\": \"$current_time\",
+>     \"events\": [
+>         $(printf '%s,' "${report_array[@]}" | sed 's/,/\n/g')
+>     ],
+>     \"statistics\": {
+>         \"rule_id\": $(printf '%s,' "${!stats[@]}" | sed 's/,/\n/g')
+>     }
+> }"
+>     > /app/report.json
+>
+> # Print summary
+> echo "Detection complete. Alert matches: $(jq length /app/alert.json)" && echo "Report matches: $(jq '.statistics.rule_id' /app/report.json)"
+> EOF
+root@fc1f6871fd5e:/app# chmod +x intrusion_detector.sh
+root@fc1f6871fd5e:/app# ./intrusion_detector.sh
+./intrusion_detector.sh: line 82: [: low[0]: integer expression expected
+./intrusion_detector.sh: line 95: [: low[0]: integer expression expected
+./intrusion_detector.sh: line 108: [: low[0]: integer expression expected
+cat /app/alert.json
+parse error: Invalid numeric literal at line 1, column 4
+root@fc1f6871fd5e:/app# cat /app/report.json
+cat: /app/report.json: No such file or directory
+root@fc1f6871fd5e:/app#

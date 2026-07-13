@@ -1,0 +1,120 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@41626f833e6f:/app# cat > /app/fit8.py << 'EOF'
+p1, x01, gamma1, offset1, amp2, x02, gamma2, offset2]
+    results = {
+        'G': {
+            'x0': float(params[1]),
+            'gamma': float(params[2]),
+            'amplitude': float(params[0]),
+            'offset': float(params[3])
+        },
+        '2D': {
+            'x0': float(params[5]),
+            'gamma': float(params[6]),
+            'amplitude': float(params[4]),
+            'offset': float(params[7])
+        }
+    }
+    with open('/app/results.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    print('Results written to results.json')
+
+if __name__ == '__main__':
+    main()
+EOF
+> import numpy as np
+> import json
+> import re
+> from scipy.optimize import minimize
+>
+> def read_data(filename):
+>     with open(filename, 'r') as f:
+>         lines = f.readlines()
+>     data = []
+>     for line in lines:
+>         line = line.strip()
+>         if not line:
+>             continue
+>         # Find numbers with possible commas
+>         numbers = re.findall(r'\d+(?:,\d+)*', line)
+>         if len(numbers) != 2:
+>             print(f'Warning: line does not have 2 numbers: {line}')
+>             continue
+>         x = int(numbers[0].replace(',', ''))
+>         y = int(numbers[1].replace(',', ''))
+>         data.append((x, y))
+>     if not data:
+>         print('No data')
+>         return np.array([], dtype=np.float64).T
+>     return np.array(data, dtype=np.float64).T
+>
+> def main():
+>     x, y = read_data('/app/graphene.dat')
+>     print('Data shape:', x.shape)
+>     print('First few x:', x[:5])
+>     print('First few y:', y[:5])
+>     # Find indices of the two maxima
+>     max_indices = np.where(np.diff(np.append([False], np.abs(np.diff(y)) > np.abs(np.diff(y)[1:]))))
+>     peak1_idx = max_indices[0]
+>     peak2_idx = max_indices[1]
+>     x1 = x[peak1_idx]
+>     y1 = y[peak1_idx]
+>     x2 = x[peak2_idx]
+>     y2 = y[peak2_idx]
+>     print('Peak1 (G):', x1, y1)
+>     print('Peak2 (2D):', x2, y2)
+>     # Combined model: y = amp1 / (1 + (x - x01)^2 / gamma1^2) + offset1 + amp2 / (1 + (x - x02)^2 / gamma2^2) + offset2
+>     def model(x, amp1, x01, gamma1, offset1, amp2, x02, gamma2, offset2):
+>         return amp1 / (1 + (x - x01)**2 / gamma1**2) + offset1 + amp2 / (1 + (x - x02)**2 / gamma2**2) + offset2
+>     # Initial guess: use the approximate positions and reasonable values
+>     initial = [y1, x1, 10, y1, y2, x2, 10, y2]
+>     # bounds: amp > 0, gamma > 0, offset real
+>     def residual(p):
+>         amp1, x01, gamma1, offset1, amp2, x02, gamma2, offset2 = p
+>         return np.sum((model(x, amp1, x01, gamma1, offset1, amp2, x02, gamma2, offset2) - y)**2)
+>     result = minimize(residual, initial)
+>     params = result.x
+>     print('Params:', params)
+>     # params = [amp1, x01, gamma1, offset1, amp2, x02, gamma2, offset2]
+>     results = {
+>         'G': {
+>             'x0': float(params[1]),
+>             'gamma': float(params[2]),
+>             'amplitude': float(params[0]),
+>             'offset': float(params[3])
+>         },
+>         '2D': {
+>             'x0': float(params[5]),
+>             'gamma': float(params[6]),
+>             'amplitude': float(params[4]),
+>             'offset': float(params[7])
+>         }
+>     }
+>     with open('/app/results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@41626f833e6f:/app# python3 /app/fit8.py 2>&1
+Data shape: (3565,)
+First few x: [4.71835546e+10 4.65883600e+10 4.60081913e+10 4.54424887e+10
+ 4.48907180e+10]
+First few y: [1.92615472e+10 1.92660897e+10 1.90779970e+10 1.91732873e+10
+ 1.95015183e+10]
+Traceback (most recent call last):
+  File "/app/fit8.py", line 74, in <module>
+    main()
+    ~~~~^^
+  File "/app/fit8.py", line 33, in main
+    max_indices = np.where(np.diff(np.append([False], np.abs(np.diff(y)) > np.abs(np.diff(y)[1:]))))
+                                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ValueError: operands could not be broadcast together with shapes (3564,) (3563,)
+root@41626f833e6f:/app# cat /app/results.json 2>/dev/null || echo 'No results.json'
+No results.json
+root@41626f833e6f:/app#

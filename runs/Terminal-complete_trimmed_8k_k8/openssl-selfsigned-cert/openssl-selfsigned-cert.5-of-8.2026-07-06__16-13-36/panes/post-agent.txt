@@ -1,0 +1,1008 @@
+root@8b6b3d06105a:/app# mkdir -p /app/ssl
+root@8b6b3d06105a:/app# cd /app/ssl
+root@8b6b3d06105a:/app/ssl# openssl genrsa -out server.key 2048
+root@8b6b3d06105a:/app/ssl# chmod 600 server.key
+root@8b6b3d06105a:/app/ssl# openssl req -new -key server.key -x509 -days 365 -subj "/C=US/O=DevOps Team/CN=dev-internal.company.local" -out server.crt
+root@8b6b3d06105a:/app/ssl# cat server.key server.crt > server.pem
+root@8b6b3d06105a:/app/ssl# cd /app
+root@8b6b3d06105a:/app# # Create verification.txt with subject, dates, and SHA-256 fingerprint
+root@8b6b3d06105a:/app# openssl x509 -in ssl/server.crt -noout -subject > ssl/verification.txt
+root@8b6b3d06105a:/app# echo '---' >> ssl/verification.txt
+root@8b6b3d06105a:/app# openssl x509 -in ssl/server.crt -noout -dates >> ssl/verification.txt
+root@8b6b3d06105a:/app# echo '---' >> ssl/verification.txt
+root@8b6b3d06105a:/app# openssl x509 -in ssl/server.crt -noout -fingerprint >> ssl/verification.txt
+root@8b6b3d06105a:/app# # Create Python script at /app/check_cert.py
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Create a simple SSL context to load the certificate
+>     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     # Get the subject
+>     subject = context.get_subject()
+>     common_name = subject.get('CN')
+>     print(f'Common Name: {common_name}')
+>
+>     # Get the certificate's validity date
+>     cert = context.get_certificate()
+>     not_before = cert.get_not_before().decode('utf-8')
+>     not_after = cert.get_not_after().decode('utf-8')
+>     print(f'Not Before: {not_before}')
+>     print(f'Not After: {not_after}')
+>
+>     # Convert dates to YYYY-MM-DD format
+>     # OpenSSL dates are in 'YYYY-MM-DD HH:MM:SS' format
+>     # We'll take the date part only
+>     not_before_date = not_before.split()[0]
+>     not_after_date = not_after.split()[0]
+>     print(f'Expiration Date: {not_after_date}')
+>
+>     # Verify that the certificate is valid (not expired)
+>     from datetime import datetime
+>     now = datetime.now()
+>     cert_not_before = datetime.strptime(not_before, '%Y-%m-%d %H:%M:%S')
+>     cert_not_after = datetime.strptime(not_after, '%Y-%m-%d %H:%M:%S')
+>     if cert_not_before <= now <= cert_not_after:
+>         print('Certificate verification successful')
+>     else:
+>         print('ERROR: Certificate is expired or not valid')
+>         sys.exit(1)
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# # Verify that all files are present and have correct permissions
+root@8b6b3d06105a:/app# ls -la /app/ssl/
+total 20
+drwxr-xr-x 2 root root  104 Jul  7 17:16 .
+drwxr-xr-x 1 root root   50 Jul  7 17:16 ..
+-rw-r--r-- 1 root root 1253 Jul  7 17:16 server.crt
+-rw------- 1 root root 1704 Jul  7 17:16 server.key
+-rw-r--r-- 1 root root 2957 Jul  7 17:16 server.pem
+-rw-r--r-- 1 root root  219 Jul  7 17:16 verification.txt
+root@8b6b3d06105a:/app# # Test the Python script
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:25: DeprecationWarning: ssl.PROTOCOL_TLSv1_2 is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 59, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 29, in verify_certificate
+    subject = context.get_subject()
+              ^^^^^^^^^^^^^^^^^^^
+AttributeError: 'SSLContext' object has no attribute 'get_subject'
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context to verify it can be loaded
+>     context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)  # Use SSLv23 which supports TLSv1.2
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     # Get the subject and dates using OpenSSL subprocess
+>     # Subject
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'],
+>                            capture_output=True, text=True)
+>     subject = result.stdout.strip()
+>     # Dates
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-dates'],
+>                            capture_output=True, text=True)
+>     dates = result.stdout.strip()
+>
+>     # Parse expiration date for validation
+>     # OpenSSL date format: "notBefore=2024-01-01 00:00:00 GMT, notAfter=2025-01-01 00:00:00 GMT"
+>     # Extract notAfter date
+>     not_after_str = dates.split('notAfter=')[1].split(',')[0].strip()
+>     try:
+>         expiration_date = datetime.strptime(not_after_str, '%Y-%m-%d %H:%M:%S %z')
+>     except ValueError:
+>         expiration_date = datetime.strptime(not_after_str, '%Y-%m-%d %H:%M:%S')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Print Common Name (extract from subject)
+>     # Subject format: "Subject: CN=dev-internal.company.local, O=DevOps Team, C=US"
+>     # We'll split by commas and take the first part after 'CN='
+>     # But we can also use OpenSSL to get Common Name directly
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'],
+>                            capture_output=True, text=True)
+>     subject_lines = result.stdout.split('\n')
+>     common_name = None
+>     for line in subject_lines:
+>         if line.startswith(' CN='):
+>             common_name = line[4:].strip()
+>             break
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Dates: {dates}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:26: DeprecationWarning: ssl.PROTOCOL_TLS is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)  # Use SSLv23 which supports TLSv1.2
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 44, in verify_certificate
+    expiration_date = datetime.strptime(not_after_str, '%Y-%m-%d %H:%M:%S %z')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data 'Jul  7 17:16:53 2027 GMT' does not match format '%Y-%m-%d %H:%M:%S %z'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 80, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 46, in verify_certificate
+    expiration_date = datetime.strptime(not_after_str, '%Y-%m-%d %H:%M:%S')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data 'Jul  7 17:16:53 2027 GMT' does not match format '%Y-%m-%d %H:%M:%S'
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct
+root@8b6b3d06105a:/app# ls -la /app/ssl/
+total 20
+drwxr-xr-x 2 root root  104 Jul  7 17:16 .
+drwxr-xr-x 1 root root   50 Jul  7 17:16 ..
+-rw-r--r-- 1 root root 1253 Jul  7 17:16 server.crt
+-rw------- 1 root root 1704 Jul  7 17:16 server.key
+-rw-r--r-- 1 root root 2957 Jul  7 17:16 server.pem
+-rw-r--r-- 1 root root  219 Jul  7 17:16 verification.txt
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context
+>     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)  # Use TLSv1.2
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     cert = context.get_certificate()
+>     subject = cert.get_subject()
+>     common_name = subject.get('CN')
+>
+>     # Get dates (notBefore, notAfter) from cert
+>     not_before = cert.get_not_before()
+>     not_after = cert.get_not_after()
+>
+>     # Parse dates using datetime.strptime with OpenSSL format
+>     # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'
+>     # Use format: '%b %d %H:%M:%S %Y %z'
+>     try:
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %z')
+>     except ValueError:
+>         # Try without timezone
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Not Before: {not_before}')
+>     print(f'Not After: {not_after}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:26: DeprecationWarning: ssl.PROTOCOL_TLSv1_2 is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)  # Use TLSv1.2
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 66, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 29, in verify_certificate
+    cert = context.get_certificate()
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'SSLContext' object has no attribute 'get_certificate'
+root@8b6b3d06105a:/app# echo $?
+1
+root@8b6b3d06105a:/app# # Also test that verification.txt exists and contains correct info
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct (server.key should be 600)
+root@8b6b3d06105a:/app# ls -l /app/ssl/server.key
+-rw------- 1 root root 1704 Jul  7 17:16 /app/ssl/server.key
+root@8b6b3d06105a:/app# # Verify that server.pem contains both key and cert
+root@8b6b3d06105a:/app# head -5 /app/ssl/server.pem
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+ShGOINFxDGvL
+XGBuMljnN45DHwXfkoPp4nASKhmEQ0URsGtOmYuetBnIHjUZ5jhprPUHRdCREC4x
+H6iX5PXYYXUYU5UCvgb3PRFkOa+wYuMJ0rYA5uQjCjYivIqjD+v4NJO4Yley09ho
+54CerKeQNFKl48ek7I0CWMXr2j4PW7iVVhwdhdwKqEtXcS8GzBMkvCxo1Q4079r1
+root@8b6b3d06105a:/app# tail -5 /app/ssl/server.pem
+U2F7Yql+ZYv5zQmNY4UjOxhOOs/uoUeWjlThdmaW6KPxqFI336ImkURz6uefbjGW
+Es0IB+2FCWEJcwzHh1rJ+F0t65l+5J9wZqX54ursNGoY2lpIntefPqSgBzTT45YB
+iRgBz8qixcfH+cc+707wNzAVgFFw4PGK4aeSDtazs/jpxUlJrtoRsbVx7WHE/mBt
+NgOiy2uI/XY5cbkRaEt/2EKUf2P0
+-----END CERTIFICATE-----
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+> from ssl import cert
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context for verification
+>     context = ssl.SSLContext(ssl.PROTOCOL_TLS)  # Use TLS (supports TLSv1.2)
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     # Get the certificate object from the context
+>     cert_obj = context.get_certificate()  # This returns a cert.Certificate object
+>
+>     # Get subject
+>     subject = cert_obj.get_subject()
+>     common_name = subject.get('CN')
+>
+>     # Get dates
+>     not_before = cert_obj.get_not_before()
+>     not_after = cert_obj.get_not_after()
+>
+>     # Parse dates using datetime.strptime with OpenSSL format
+>     # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'
+>     # Use format: '%b %d %H:%M:%S %Y %z'
+>     try:
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %z')
+>     except ValueError:
+>         # Try without timezone
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Not Before: {not_before}')
+>     print(f'Not After: {not_after}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 5, in <module>
+    from ssl import cert
+ImportError: cannot import name 'cert' from 'ssl' (/usr/local/lib/python3.13/ssl.py)
+root@8b6b3d06105a:/app# echo $?
+1
+root@8b6b3d06105a:/app# # Also test that verification.txt exists and contains correct info
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct (server.key should be 600)
+root@8b6b3d06105a:/app# ls -l /app/ssl/server.key
+-rw------- 1 root root 1704 Jul  7 17:16 /app/ssl/server.key
+root@8b6b3d06105a:/app# # Verify that server.pem contains both key and cert
+root@8b6b3d06105a:/app# head -5 /app/ssl/server.pem
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+ShGOINFxDGvL
+XGBuMljnN45DHwXfkoPp4nASKhmEQ0URsGtOmYuetBnIHjUZ5jhprPUHRdCREC4x
+H6iX5PXYYXUYU5UCvgb3PRFkOa+wYuMJ0rYA5uQjCjYivIqjD+v4NJO4Yley09ho
+54CerKeQNFKl48ek7I0CWMXr2j4PW7iVVhwdhdwKqEtXcS8GzBMkvCxo1Q4079r1
+root@8b6b3d06105a:/app# tail -5 /app/ssl/server.pem
+U2F7Yql+ZYv5zQmNY4UjOxhOOs/uoUeWjlThdmaW6KPxqFI336ImkURz6uefbjGW
+Es0IB+2FCWEJcwzHh1rJ+F0t65l+5J9wZqX54ursNGoY2lpIntefPqSgBzTT45YB
+iRgBz8qixcfH+cc+707wNzAVgFFw4PGK4aeSDtazs/jpxUlJrtoRsbVx7WHE/mBt
+NgOiy2uI/XY5cbkRaEt/2EKUf2P0
+-----END CERTIFICATE-----
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context for verification
+>     context = ssl.SSLContext(ssl.PROTOCOL_TLS)  # Use TLS
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     cert_obj = context.get_certificate()  # This returns a cert.Certificate object
+>
+>     # Get subject
+>     subject = cert_obj.get_subject()
+>     common_name = subject.get('CN')
+>
+>     # Get dates
+>     not_before = cert_obj.get_not_before()
+>     not_after = cert_obj.get_not_after()
+>
+>     # Parse dates using datetime.strptime with OpenSSL format
+>     # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'
+>     # Use format: '%b %d %H:%M:%S %Y %z'
+>     try:
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %z')
+>     except ValueError:
+>         # Try without timezone
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Not Before: {not_before}')
+>     print(f'Not After: {not_after}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:26: DeprecationWarning: ssl.PROTOCOL_TLS is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_TLS)  # Use TLS
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 68, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 29, in verify_certificate
+    cert_obj = context.get_certificate()  # This returns a cert.Certificate object
+               ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'SSLContext' object has no attribute 'get_certificate'
+root@8b6b3d06105a:/app# echo $?
+1
+root@8b6b3d06105a:/app# # Also test that verification.txt exists and contains correct info
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct (server.key should be 600)
+root@8b6b3d06105a:/app# ls -l /app/ssl/server.key
+-rw------- 1 root root 1704 Jul  7 17:16 /app/ssl/server.key
+root@8b6b3d06105a:/app# # Verify that server.pem contains both key and cert
+root@8b6b3d06105a:/app# head -5 /app/ssl/server.pem
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+ShGOINFxDGvL
+XGBuMljnN45DHwXfkoPp4nASKhmEQ0URsGtOmYuetBnIHjUZ5jhprPUHRdCREC4x
+H6iX5PXYYXUYU5UCvgb3PRFkOa+wYuMJ0rYA5uQjCjYivIqjD+v4NJO4Yley09ho
+54CerKeQNFKl48ek7I0CWMXr2j4PW7iVVhwdhdwKqEtXcS8GzBMkvCxo1Q4079r1
+root@8b6b3d06105a:/app# tail -5 /app/ssl/server.pem
+U2F7Yql+ZYv5zQmNY4UjOxhOOs/uoUeWjlThdmaW6KPxqFI336ImkURz6uefbjGW
+Es0IB+2FCWEJcwzHh1rJ+F0t65l+5J9wZqX54ursNGoY2lpIntefPqSgBzTT45YB
+iRgBz8qixcfH+cc+707wNzAVgFFw4PGK4aeSDtazs/jpxUlJrtoRsbVx7WHE/mBt
+NgOiy2uI/XY5cbkRaEt/2EKUf2P0
+-----END CERTIFICATE-----
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+> from ssl import Certificate
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into a Certificate object
+>     with open(cert_path, 'rb') as f:
+>         cert_obj = Certificate.load(f.read())
+>
+>     # Get subject
+>     subject = cert_obj.get_subject()
+>     common_name = subject.get('CN')
+>
+>     # Get dates
+>     not_before = cert_obj.get_not_before()
+>     not_after = cert_obj.get_not_after()
+>
+>     # Parse dates using datetime.strptime with OpenSSL format
+>     # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'
+>     # Use format: '%b %d %H:%M:%S %Y %z'
+>     try:
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %z')
+>     except ValueError:
+>         # Try without timezone
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Not Before: {not_before}')
+>     print(f'Not After: {not_after}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 5, in <module>
+    from ssl import Certificate
+ImportError: cannot import name 'Certificate' from 'ssl' (/usr/local/lib/python3.13/ssl.py). Did you mean: 'CertificateError'?
+root@8b6b3d06105a:/app# echo $?
+1
+root@8b6b3d06105a:/app# # Also test that verification.txt exists and contains correct info
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct (server.key should be 600)
+root@8b6b3d06105a:/app# ls -l /app/ssl/server.key
+-rw------- 1 root root 1704 Jul  7 17:16 /app/ssl/server.key
+root@8b6b3d06105a:/app# # Verify that server.pem contains both key and cert
+root@8b6b3d06105a:/app# head -5 /app/ssl/server.pem
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+ShGOINFxDGvL
+XGBuMljnN45DHwXfkoPp4nASKhmEQ0URsGtOmYuetBnIHjUZ5jhprPUHRdCREC4x
+H6iX5PXYYXUYU5UCvgb3PRFkOa+wYuMJ0rYA5uQjCjYivIqjD+v4NJO4Yley09ho
+54CerKeQNFKl48ek7I0CWMXr2j4PW7iVVhwdhdwKqEtXcS8GzBMkvCxo1Q4079r1
+root@8b6b3d06105a:/app# tail -5 /app/ssl/server.pem
+U2F7Yql+ZYv5zQmNY4UjOxhOOs/uoUeWjlThdmaW6KPxqFI336ImkURz6uefbjGW
+Es0IB+2FCWEJcwzHh1rJ+F0t65l+5J9wZqX54ursNGoY2lpIntefPqSgBzTT45YB
+iRgBz8qixcfH+cc+707wNzAVgFFw4PGK4aeSDtazs/jpxUlJrtoRsbVx7WHE/mBt
+NgOiy2uI/XY5cbkRaEt/2EKUf2P0
+-----END CERTIFICATE-----
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context for verification
+>     context = ssl.SSLContext(ssl.PROTOCOL_TLS)
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     # Use OpenSSL to get subject and dates
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'],
+>                            capture_output=True, text=True)
+>     subject = result.stdout.strip()
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-dates'],
+>                            capture_output=True, text=True)
+>     dates = result.stdout.strip()
+>
+>     # Parse dates using datetime.strptime with OpenSSL format
+>     # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'
+>     # Use format: '%b %d %H:%M:%S %Y %z'
+>     try:
+>         expiration_date = datetime.strptime(dates.split('notAfter=')[1].split(',')[0].strip(), '%b %d %H:%M:%S %Y %z')
+>     except ValueError:
+>         # Try without timezone
+>         expiration_date = datetime.strptime(dates.split('notAfter=')[1].split(',')[0].strip(), '%b %d %H:%M:%S %Y')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Extract common name from subject
+>     # Subject format: "Subject: CN=dev-internal.company.local, O=DevOps Team, C=US"
+>     common_name = None
+>     for line in subject.split('\n'):
+>         if line.startswith(' CN='):
+>             common_name = line[4:].strip()
+>             break
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Dates: {dates}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:26: DeprecationWarning: ssl.PROTOCOL_TLS is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_TLS)
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 41, in verify_certificate
+    expiration_date = datetime.strptime(dates.split('notAfter=')[1].split(',')[0].strip(), '%b %d %H:%M:%S %Y %z')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data 'Jul  7 17:16:53 2027 GMT' does not match format '%b %d %H:%M:%S %Y %z'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 73, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 44, in verify_certificate
+    expiration_date = datetime.strptime(dates.split('notAfter=')[1].split(',')[0].strip(), '%b %d %H:%M:%S %Y')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 458, in _strptime
+    raise ValueError("unconverted data remains: %s" %
+                      data_string[found.end():])
+ValueError: unconverted data remains:  GMT
+root@8b6b3d06105a:/app# echo $?
+1
+root@8b6b3d06105a:/app# # Also test that verification.txt exists and contains correct info
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct (server.key should be 600)
+root@8b6b3d06105a:/app# ls -l /app/ssl/server.key
+-rw------- 1 root root 1704 Jul  7 17:16 /app/ssl/server.key
+root@8b6b3d06105a:/app# # Verify that server.pem contains both key and cert
+root@8b6b3d06105a:/app# head -5 /app/ssl/server.pem
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+ShGOINFxDGvL
+XGBuMljnN45DHwXfkoPp4nASKhmEQ0URsGtOmYuetBnIHjUZ5jhprPUHRdCREC4x
+H6iX5PXYYXUYU5UCvgb3PRFkOa+wYuMJ0rYA5uQjCjYivIqjD+v4NJO4Yley09ho
+54CerKeQNFKl48ek7I0CWMXr2j4PW7iVVhwdhdwKqEtXcS8GzBMkvCxo1Q4079r1
+root@8b6b3d06105a:/app# tail -5 /app/ssl/server.pem
+U2F7Yql+ZYv5zQmNY4UjOxhOOs/uoUeWjlThdmaW6KPxqFI336ImkURz6uefbjGW
+Es0IB+2FCWEJcwzHh1rJ+F0t65l+5J9wZqX54ursNGoY2lpIntefPqSgBzTT45YB
+iRgBz8qixcfH+cc+707wNzAVgFFw4PGK4aeSDtazs/jpxUlJrtoRsbVx7WHE/mBt
+NgOiy2uI/XY5cbkRaEt/2EKUf2P0
+-----END CERTIFICATE-----
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context for verification
+>     context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     # Use OpenSSL to get subject and dates
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'],
+>                            capture_output=True, text=True)
+>     subject = result.stdout.strip()
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-dates'],
+>                            capture_output=True, text=True)
+>     dates = result.stdout.strip()
+>
+>     # Parse dates: we have format 'Jul  7 17:16:53 2027 GMT'
+>     # Extract the date and time part (without timezone)
+>     # Split by space and take first 4 parts (date, time, year, timezone)
+>     parts = dates.split('notAfter=')[1].split()
+>     date_str = parts[0] + ' ' + parts[1] + ' ' + parts[2]  # date, time, year
+>     # Now parse with format '%b %d %H:%M:%S %Y'
+>     expiration_date = datetime.strptime(date_str, '%b %d %H:%M:%S %Y')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Extract common name from subject
+>     common_name = None
+>     for line in subject.split('\n'):
+>         if line.startswith(' CN='):
+>             common_name = line[4:].strip()
+>             break
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Dates: {dates}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:26: DeprecationWarning: ssl.PROTOCOL_TLS is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 71, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 43, in verify_certificate
+    expiration_date = datetime.strptime(date_str, '%b %d %H:%M:%S %Y')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data 'Jul 7 17:16:53' does not match format '%b %d %H:%M:%S %Y'
+root@8b6b3d06105a:/app# echo $?
+1
+root@8b6b3d06105a:/app# # Also test that verification.txt exists and contains correct info
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct (server.key should be 600)
+root@8b6b3d06105a:/app# ls -l /app/ssl/server.key
+-rw------- 1 root root 1704 Jul  7 17:16 /app/ssl/server.key
+root@8b6b3d06105a:/app# # Verify that server.pem contains both key and cert
+root@8b6b3d06105a:/app# head -5 /app/ssl/server.pem
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+ShGOINFxDGvL
+XGBuMljnN45DHwXfkoPp4nASKhmEQ0URsGtOmYuetBnIHjUZ5jhprPUHRdCREC4x
+H6iX5PXYYXUYU5UCvgb3PRFkOa+wYuMJ0rYA5uQjCjYivIqjD+v4NJO4Yley09ho
+54CerKeQNFKl48ek7I0CWMXr2j4PW7iVVhwdhdwKqEtXcS8GzBMkvCxo1Q4079r1
+root@8b6b3d06105a:/app# tail -5 /app/ssl/server.pem
+U2F7Yql+ZYv5zQmNY4UjOxhOOs/uoUeWjlThdmaW6KPxqFI336ImkURz6uefbjGW
+Es0IB+2FCWEJcwzHh1rJ+F0t65l+5J9wZqX54ursNGoY2lpIntefPqSgBzTT45YB
+iRgBz8qixcfH+cc+707wNzAVgFFw4PGK4aeSDtazs/jpxUlJrtoRsbVx7WHE/mBt
+NgOiy2uI/XY5cbkRaEt/2EKUf2P0
+-----END CERTIFICATE-----
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context for verification
+>     context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     # Use OpenSSL to get subject and dates
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'],
+>                            capture_output=True, text=True)
+>     subject = result.stdout.strip()
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-dates'],
+>                            capture_output=True, text=True)
+>     dates = result.stdout.strip()
+>
+>     # Parse dates: we have format 'Jul  7 17:16:53 2027 GMT'
+>     # Extract the date and time part (without timezone)
+>     # Split by space and take first 4 parts (date, time, year, timezone)
+>     parts = dates.split('notAfter=')[1].split()
+>     date_str = parts[0] + ' ' + parts[1] + ' ' + parts[2]  # date, time, year
+>     # Now parse with format '%b %d %H:%M:%S %Y'
+>     expiration_date = datetime.strptime(date_str, '%b %d %H:%M:%S %Y')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Extract common name from subject
+>     common_name = None
+>     for line in subject.split('\n'):
+>         if line.startswith(' CN='):
+>             common_name = line[4:].strip()
+>             break
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Dates: {dates}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:26: DeprecationWarning: ssl.PROTOCOL_TLS is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 71, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 43, in verify_certificate
+    expiration_date = datetime.strptime(date_str, '%b %d %H:%M:%S %Y')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data 'Jul 7 17:16:53' does not match format '%b %d %H:%M:%S %Y'
+root@8b6b3d06105a:/app# echo $?
+1
+root@8b6b3d06105a:/app# # Also test that verification.txt exists and contains correct info
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct (server.key should be 600)
+root@8b6b3d06105a:/app# ls -l /app/ssl/server.key
+-rw------- 1 root root 1704 Jul  7 17:16 /app/ssl/server.key
+root@8b6b3d06105a:/app# # Verify that server.pem contains both key and cert
+root@8b6b3d06105a:/app# head -5 /app/ssl/server.pem
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+ShGOINFxDGvL
+XGBuMljnN45DHwXfkoPp4nASKhmEQ0URsGtOmYuetBnIHjUZ5jhprPUHRdCREC4x
+H6iX5PXYYXUYU5UCvgb3PRFkOa+wYuMJ0rYA5uQjCjYivIqjD+v4NJO4Yley09ho
+54CerKeQNFKl48ek7I0CWMXr2j4PW7iVVhwdhdwKqEtXcS8GzBMkvCxo1Q4079r1
+root@8b6b3d06105a:/app# tail -5 /app/ssl/server.pem
+U2F7Yql+ZYv5zQmNY4UjOxhOOs/uoUeWjlThdmaW6KPxqFI336ImkURz6uefbjGW
+Es0IB+2FCWEJcwzHh1rJ+F0t65l+5J9wZqX54ursNGoY2lpIntefPqSgBzTT45YB
+iRgBz8qixcfH+cc+707wNzAVgFFw4PGK4aeSDtazs/jpxUlJrtoRsbVx7WHE/mBt
+NgOiy2uI/XY5cbkRaEt/2EKUf2P0
+-----END CERTIFICATE-----
+root@8b6b3d06105a:/app#

@@ -1,0 +1,1874 @@
+        Whether to select contiguous blocks of indices for shards.
+    keep_in_memory (`bool`, defaults to `False`):
+        Keep the dataset in memory instead of writing it to a cache file.
+    indices_cache_file_name (`str`, *optional*):
+        Provide the name of a path for the cache file. It is used to store the
+        indices of each shard instead of the automatically generated cache file name.
+    writer_batch_size (`int`, defaults to `1000`):
+        This only concerns the indices mapping.
+        Number of indices per write operation for the cache file writer.
+        This value is a good trade-off between memory usage during the processing, and processing speed.
+        Higher value makes the processing do fewer lookups, lower value consume less temporary memory while running `map`.
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset("cornell-movie-review-data/rotten_tomatoes", split="validation")
+>>> ds
+Dataset({
+    features: ['text', 'label'],
+    num_rows: 1066
+})
+>>> ds = ds.shard(num_shards=2, index=0)
+>>> ds
+Dataset({
+    features: ['text', 'label'],
+    num_rows: 533
+})
+```
+shuffle: Create a new Dataset where the rows are shuffled.
+
+Currently shuffling uses numpy random generators.
+You can either supply a NumPy BitGenerator to use, or a seed to initiate NumPy's default random generator (PCG64).
+
+Shuffling takes the list of indices `[0:len(my_dataset)]` and shuffles it to create an indices mapping.
+However as soon as your [`Dataset`] has an indices mapping, the speed can become 10x slower.
+This is because there is an extra step to get the row index to read using the indices mapping, and most importantly, you aren't reading contiguous chunks of dat
+a anymore.
+To restore the speed, you'd need to rewrite the entire dataset on your disk again using [`Dataset.flatten_indices`], which removes the indices mapping.
+This may take a lot of time depending of the size of your dataset though:
+
+```python
+my_dataset[0]  # fast
+my_dataset = my_dataset.shuffle(seed=42)
+my_dataset[0]  # up to 10x slower
+my_dataset = my_dataset.flatten_indices()  # rewrite the shuffled dataset on disk as contiguous chunks of data
+my_dataset[0]  # fast again
+```
+
+In this case, we recommend switching to an [`IterableDataset`] and leveraging its fast approximate shuffling method [`IterableDataset.shuffle`].
+It only shuffles the shards order and adds a shuffle buffer to your dataset, which keeps the speed of your dataset optimal:
+
+```python
+my_iterable_dataset = my_dataset.to_iterable_dataset(num_shards=128)
+for example in enumerate(my_iterable_dataset):  # fast
+    pass
+
+shuffled_iterable_dataset = my_iterable_dataset.shuffle(seed=42, buffer_size=100)
+
+for example in enumerate(shuffled_iterable_dataset):  # as fast as before
+    pass
+```
+
+Args:
+    seed (`int`, *optional*):
+        A seed to initialize the default BitGenerator if `generator=None`.
+        If `None`, then fresh, unpredictable entropy will be pulled from the OS.
+        If an `int` or `array_like[ints]` is passed, then it will be passed to SeedSequence to derive the initial BitGenerator state.
+    generator (`numpy.random.Generator`, *optional*):
+        Numpy random Generator to use to compute the permutation of the dataset rows.
+        If `generator=None` (default), uses `np.random.default_rng` (the default BitGenerator (PCG64) of NumPy).
+    keep_in_memory (`bool`, default `False`):
+        Keep the shuffled indices in memory instead of writing it to a cache file.
+    load_from_cache_file (`Optional[bool]`, defaults to `True` if caching is enabled):
+        If a cache file storing the shuffled indices
+        can be identified, use it instead of recomputing.
+    indices_cache_file_name (`str`, *optional*):
+        Provide the name of a path for the cache file. It is used to store the
+        shuffled indices instead of the automatically generated cache file name.
+    writer_batch_size (`int`, defaults to `1000`):
+        Number of rows per write operation for the cache file writer.
+        This value is a good trade-off between memory usage during the processing, and processing speed.
+        Higher value makes the processing do fewer lookups, lower value consume less temporary memory while running `map`.
+    new_fingerprint (`str`, *optional*, defaults to `None`):
+        The new fingerprint of the dataset after transform.
+        If `None`, the new fingerprint is computed using a hash of the previous fingerprint, and the transform arguments.
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset("cornell-movie-review-data/rotten_tomatoes", split="validation")
+>>> ds['label'][:10]
+[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+
+# set a seed
+>>> shuffled_ds = ds.shuffle(seed=42)
+>>> shuffled_ds['label'][:10]
+[1, 0, 1, 1, 0, 0, 0, 0, 0, 0]
+```
+size_in_bytes: The type of the None singleton.
+skip: Create a new [`Dataset`] that skips the first `n` elements.
+
+Args:
+    n (`int`):
+        Number of elements to skip.
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset("cornell-movie-review-data/rotten_tomatoes", split="train")
+>>> list(ds.take(3))
+[{'label': 1,
+ 'text': 'the rock is destined to be the 21st century's new " conan " and that he's going to make a splash even greater than arnold schwarzenegger , jean-claud
+van damme or steven segal .'},
+ {'label': 1,
+ 'text': 'the gorgeously elaborate continuation of " the lord of the rings " trilogy is so huge that a column of words cannot adequately describe co-writer/dire
+ctor peter jackson's expanded vision of j . r . r . tolkien's middle-earth .'},
+ {'label': 1, 'text': 'effective but too-tepid biopic'}]
+>>> ds = ds.skip(1)
+>>> list(ds.take(3))
+[{'label': 1,
+ 'text': 'the gorgeously elaborate continuation of " the lord of the rings " trilogy is so huge that a column of words cannot adequately describe co-writer/dire
+ctor peter jackson's expanded vision of j . r . r . tolkien's middle-earth .'},
+ {'label': 1, 'text': 'effective but too-tepid biopic'},
+ {'label': 1,
+ 'text': 'if you sometimes like to go to the movies to have fun , wasabi is a good place to start .'}]
+```
+sort: Create a new dataset sorted according to a single or multiple columns.
+
+Args:
+    column_names (`Union[str, Sequence[str]]`):
+        Column name(s) to sort by.
+    reverse (`Union[bool, Sequence[bool]]`, defaults to `False`):
+        If `True`, sort by descending order rather than ascending. If a single bool is provided,
+        the value is applied to the sorting of all column names. Otherwise a list of bools with the
+        same length and order as column_names must be provided.
+    null_placement (`str`, defaults to `at_end`):
+        Put `None` values at the beginning if `at_start` or `first` or at the end if `at_end` or `last`
+
+        <Added version="1.14.2"/>
+    keep_in_memory (`bool`, defaults to `False`):
+        Keep the sorted indices in memory instead of writing it to a cache file.
+    load_from_cache_file (`Optional[bool]`, defaults to `True` if caching is enabled):
+        If a cache file storing the sorted indices
+        can be identified, use it instead of recomputing.
+    indices_cache_file_name (`str`, *optional*, defaults to `None`):
+        Provide the name of a path for the cache file. It is used to store the
+        sorted indices instead of the automatically generated cache file name.
+    writer_batch_size (`int`, defaults to `1000`):
+        Number of rows per write operation for the cache file writer.
+        Higher value gives smaller cache files, lower value consume less temporary memory.
+    new_fingerprint (`str`, *optional*, defaults to `None`):
+        The new fingerprint of the dataset after transform.
+        If `None`, the new fingerprint is computed using a hash of the previous fingerprint, and the transform arguments
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset('cornell-movie-review-data/rotten_tomatoes', split='validation')
+>>> ds['label'][:10]
+[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+>>> sorted_ds = ds.sort('label')
+>>> sorted_ds['label'][:10]
+[0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+>>> another_sorted_ds = ds.sort(['label', 'text'], reverse=[True, False])
+>>> another_sorted_ds['label'][:10]
+[1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+```
+split: The type of the None singleton.
+supervised_keys: The type of the None singleton.
+take: Create a new [`Dataset`] with only the first `n` elements.
+
+Args:
+    n (`int`):
+        Number of elements to take.
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset("cornell-movie-review-data/rotten_tomatoes", split="train")
+>>> small_ds = ds.take(2)
+>>> list(small_ds)
+[{'label': 1,
+ 'text': 'the rock is destined to be the 21st century's new " conan " and that he's going to make a splash even greater than arnold schwarzenegger , jean-claud
+van damme or steven segal .'},
+ {'label': 1,
+ 'text': 'the gorgeously elaborate continuation of " the lord of the rings " trilogy is so huge that a column of words cannot adequately describe co-writer/dire
+ctor peter jackson's expanded vision of j . r . r . tolkien's middle-earth .'}]
+```
+to_csv: Exports the dataset to csv
+
+Args:
+    path_or_buf (`PathLike` or `FileOrBuffer`):
+        Either a path to a file (e.g. `file.csv`), a remote URI (e.g. `hf://datasets/username/my_dataset_name/data.csv`),
+        or a BinaryIO, where the dataset will be saved to in the specified format.
+    batch_size (`int`, *optional*):
+        Size of the batch to load in memory and write at once.
+        Defaults to `datasets.config.DEFAULT_MAX_BATCH_SIZE`.
+    num_proc (`int`, *optional*):
+        Number of processes for multiprocessing. By default it doesn't
+        use multiprocessing. `batch_size` in this case defaults to
+        `datasets.config.DEFAULT_MAX_BATCH_SIZE` but feel free to make it 5x or 10x of the default
+        value if you have sufficient compute power.
+    storage_options (`dict`, *optional*):
+        Key/value pairs to be passed on to the file-system backend, if any.
+
+        <Added version="2.19.0"/>
+    **to_csv_kwargs (additional keyword arguments):
+        Parameters to pass to pandas's [`pandas.DataFrame.to_csv`](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_csv.html).
+
+        <Changed version="2.10.0">
+
+        Now, `index` defaults to `False` if not specified.
+
+        If you would like to write the index, pass `index=True` and also set a name for the index column by
+        passing `index_label`.
+
+        </Changed>
+
+Returns:
+    `int`: The number of characters or bytes written.
+
+Example:
+
+```py
+>>> ds.to_csv("path/to/dataset/directory")
+```
+to_dict: Returns the dataset as a Python dict. Can also return a generator for large datasets.
+
+Args:
+    batch_size (`int`, *optional*): The size (number of rows) of the batches if `batched` is `True`.
+        Defaults to `datasets.config.DEFAULT_MAX_BATCH_SIZE`.
+    batched (`bool`):
+        Set to `True` to return a generator that yields the dataset as batches
+        of `batch_size` rows. Defaults to `False` (returns the whole datasets once).
+
+Returns:
+    `dict` or `Iterator[dict]`
+
+Example:
+
+```py
+>>> ds.to_dict()
+```
+to_iterable_dataset: Get an [`datasets.IterableDataset`] from a map-style [`datasets.Dataset`].
+This is equivalent to loading a dataset in streaming mode with [`datasets.load_dataset`], but much faster since the data is streamed from local files.
+
+Contrary to map-style datasets, iterable datasets are lazy and can only be iterated over (e.g. using a for loop).
+Since they are read sequentially in training loops, iterable datasets are much faster than map-style datasets.
+All the transformations applied to iterable datasets like filtering or processing are done on-the-fly when you start iterating over the dataset.
+
+Still, it is possible to shuffle an iterable dataset using [`datasets.IterableDataset.shuffle`].
+This is a fast approximate shuffling that works best if you have multiple shards and if you specify a buffer size that is big enough.
+
+To get the best speed performance, make sure your dataset doesn't have an indices mapping.
+If this is the case, the data are not read contiguously, which can be slow sometimes.
+You can use `ds = ds.flatten_indices()` to write your dataset in contiguous chunks of data and have optimal speed before switching to an iterable dataset.
+
+Args:
+    num_shards (`int`, default to `1`):
+        Number of shards to define when instantiating the iterable dataset. This is especially useful for big datasets to be able to shuffle properly,
+        and also to enable fast parallel loading using a PyTorch DataLoader or in distributed setups for example.
+        Shards are defined using [`datasets.Dataset.shard`]: it simply slices the data without writing anything on disk.
+
+Returns:
+    [`datasets.IterableDataset`]
+
+Example:
+
+Basic usage:
+```python
+>>> ids = ds.to_iterable_dataset()
+>>> for example in ids:
+...     pass
+```
+
+With lazy filtering and processing:
+```python
+>>> ids = ds.to_iterable_dataset()
+>>> ids = ids.filter(filter_fn).map(process_fn)  # will filter and process on-the-fly when you start iterating over the iterable dataset
+>>> for example in ids:
+...     pass
+```
+
+With sharding to enable efficient shuffling:
+```python
+>>> ids = ds.to_iterable_dataset(num_shards=64)  # the dataset is split into 64 shards to be iterated over
+>>> ids = ids.shuffle(buffer_size=10_000)  # will shuffle the shards order and use a shuffle buffer for fast approximate shuffling when you start iterating
+>>> for example in ids:
+...     pass
+```
+
+With a PyTorch DataLoader:
+```python
+>>> import torch
+>>> ids = ds.to_iterable_dataset(num_shards=64)
+>>> ids = ids.filter(filter_fn).map(process_fn)
+>>> dataloader = torch.utils.data.DataLoader(ids, num_workers=4)  # will assign 64 / 4 = 16 shards to each worker to load, filter and process when you start ite
+rating
+>>> for example in ids:
+...     pass
+```
+
+With a PyTorch DataLoader and shuffling:
+```python
+>>> import torch
+>>> ids = ds.to_iterable_dataset(num_shards=64)
+>>> ids = ids.shuffle(buffer_size=10_000)  # will shuffle the shards order and use a shuffle buffer when you start iterating
+>>> dataloader = torch.utils.data.DataLoader(ids, num_workers=4)  # will assign 64 / 4 = 16 shards from the shuffled list of shards to each worker when you star
+t iterating
+>>> for example in ids:
+...     pass
+```
+
+In a distributed setup like PyTorch DDP with a PyTorch DataLoader and shuffling
+```python
+>>> from datasets.distributed import split_dataset_by_node
+>>> ids = ds.to_iterable_dataset(num_shards=512)
+>>> ids = ids.shuffle(buffer_size=10_000, seed=42)  # will shuffle the shards order and use a shuffle buffer when you start iterating
+>>> ids = split_dataset_by_node(ds, world_size=8, rank=0)  # will keep only 512 / 8 = 64 shards from the shuffled lists of shards when you start iterating
+>>> dataloader = torch.utils.data.DataLoader(ids, num_workers=4)  # will assign 64 / 4 = 16 shards from this node's list of shards to each worker when you start
+ iterating
+>>> for example in ids:
+...     pass
+```
+
+With shuffling and multiple epochs:
+```python
+>>> ids = ds.to_iterable_dataset(num_shards=64)
+>>> ids = ids.shuffle(buffer_size=10_000, seed=42)  # will shuffle the shards order and use a shuffle buffer when you start iterating
+>>> for epoch in range(n_epochs):
+...     ids.set_epoch(epoch)  # will use effective_seed = seed + epoch to shuffle the shards and for the shuffle buffer when you start iterating
+...     for example in ids:
+...         pass
+```
+Feel free to also use [`IterableDataset.set_epoch`] when using a PyTorch DataLoader or in distributed setups.
+to_json: Export the dataset to JSON Lines or JSON.
+
+The default output format is [JSON Lines](https://jsonlines.org/).
+To export to [JSON](https://www.json.org), pass `lines=False` argument and the desired `orient`.
+
+Args:
+    path_or_buf (`PathLike` or `FileOrBuffer`):
+        Either a path to a file (e.g. `file.json`), a remote URI (e.g. `hf://datasets/username/my_dataset_name/data.json`),
+        or a BinaryIO, where the dataset will be saved to in the specified format.
+    batch_size (`int`, *optional*):
+        Size of the batch to load in memory and write at once.
+        Defaults to `datasets.config.DEFAULT_MAX_BATCH_SIZE`.
+    num_proc (`int`, *optional*):
+        Number of processes for multiprocessing. By default, it doesn't
+        use multiprocessing. `batch_size` in this case defaults to
+        `datasets.config.DEFAULT_MAX_BATCH_SIZE` but feel free to make it 5x or 10x of the default
+        value if you have sufficient compute power.
+    storage_options (`dict`, *optional*):
+        Key/value pairs to be passed on to the file-system backend, if any.
+
+        <Added version="2.19.0"/>
+    **to_json_kwargs (additional keyword arguments):
+        Parameters to pass to pandas's [`pandas.DataFrame.to_json`](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_json.html).
+        Default arguments are `lines=True` and `orient="records".
+
+        <Changed version="2.11.0">
+
+        The parameter `index` defaults to `False` if `orient` is `"split"` or `"table"`.
+
+        If you would like to write the index, pass `index=True`.
+
+        </Changed>
+
+Returns:
+    `int`: The number of characters or bytes written.
+
+Example:
+
+```py
+>>> ds.to_json("path/to/dataset/directory/filename.jsonl")
+```
+to_list: Returns the dataset as a Python list.
+
+Returns:
+    `list`
+
+Example:
+
+```py
+>>> ds.to_list()
+```
+to_pandas: Returns the dataset as a `pandas.DataFrame`. Can also return a generator for large datasets.
+
+Args:
+    batch_size (`int`, *optional*):
+        The size (number of rows) of the batches if `batched` is `True`.
+        Defaults to `datasets.config.DEFAULT_MAX_BATCH_SIZE`.
+    batched (`bool`):
+        Set to `True` to return a generator that yields the dataset as batches
+        of `batch_size` rows. Defaults to `False` (returns the whole datasets once).
+
+Returns:
+    `pandas.DataFrame` or `Iterator[pandas.DataFrame]`
+
+Example:
+
+```py
+>>> ds.to_pandas()
+```
+to_parquet: Exports the dataset to parquet
+
+Args:
+    path_or_buf (`PathLike` or `FileOrBuffer`):
+        Either a path to a file (e.g. `file.parquet`), a remote URI (e.g. `hf://datasets/username/my_dataset_name/data.parquet`),
+        or a BinaryIO, where the dataset will be saved to in the specified format.
+    batch_size (`int`, *optional*):
+        Size of the batch to load in memory and write at once.
+        By default it aims for row groups with maximum uncompressed byte size of "100MB",
+        defined by `datasets.config.MAX_ROW_GROUP_SIZE`.
+    storage_options (`dict`, *optional*):
+        Key/value pairs to be passed on to the file-system backend, if any.
+
+        <Added version="2.19.0"/>
+    **parquet_writer_kwargs (additional keyword arguments):
+        Parameters to pass to PyArrow's `pyarrow.parquet.ParquetWriter`.
+
+Returns:
+    `int`: The number of characters or bytes written.
+
+Example:
+
+```py
+>>> ds.to_parquet("path/to/dataset/directory")
+```
+to_polars: Returns the dataset as a `polars.DataFrame`. Can also return a generator for large datasets.
+
+Args:
+    batch_size (`int`, *optional*):
+        The size (number of rows) of the batches if `batched` is `True`.
+        Defaults to `datasets.config.DEFAULT_MAX_BATCH_SIZE`.
+    batched (`bool`):
+        Set to `True` to return a generator that yields the dataset as batches
+        of `batch_size` rows. Defaults to `False` (returns the whole datasets once).
+    schema_overrides (`dict`, *optional*):
+        Support type specification or override of one or more columns; note that
+        any dtypes inferred from the schema param will be overridden.
+    rechunk (`bool`):
+        Make sure that all data is in contiguous memory. Defaults to `True`.
+Returns:
+    `polars.DataFrame` or `Iterator[polars.DataFrame]`
+
+Example:
+
+```py
+>>> ds.to_polars()
+```
+to_sql: Exports the dataset to a SQL database.
+
+Args:
+    name (`str`):
+        Name of SQL table.
+    con (`str` or `sqlite3.Connection` or `sqlalchemy.engine.Connection` or `sqlalchemy.engine.Connection`):
+        A [URI string](https://docs.sqlalchemy.org/en/13/core/engines.html#database-urls) or a SQLite3/SQLAlchemy connection object used to write to a database.
+    batch_size (`int`, *optional*):
+        Size of the batch to load in memory and write at once.
+        Defaults to `datasets.config.DEFAULT_MAX_BATCH_SIZE`.
+    num_proc (`int`, *optional*):
+        Number of processes for multiprocessing. By default, it doesn't
+        use multiprocessing. `batch_size` in this case defaults to
+        `datasets.config.DEFAULT_MAX_BATCH_SIZE` but feel free to make it 5x or 10x of the default
+        value if you have sufficient compute power.
+    **sql_writer_kwargs (additional keyword arguments):
+        Parameters to pass to pandas's [`pandas.DataFrame.to_sql`](https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.to_sql.html).
+
+        <Changed version="2.11.0">
+
+        Now, `index` defaults to `False` if not specified.
+
+        If you would like to write the index, pass `index=True` and also set a name for the index column by
+        passing `index_label`.
+
+        </Changed>
+
+Returns:
+    `int`: The number of records written.
+
+Example:
+
+```py
+>>> # con provided as a connection URI string
+>>> ds.to_sql("data", "sqlite:///my_own_db.sql")
+>>> # con provided as a sqlite3 connection object
+>>> import sqlite3
+>>> con = sqlite3.connect("my_own_db.sql")
+>>> with con:
+...     ds.to_sql("data", con)
+```
+to_tf_dataset: The type of the None singleton.
+train_test_split: Return a dictionary ([`datasets.DatasetDict`]) with two random train and test subsets (`train` and `test` `Dataset` splits).
+Splits are created from the dataset according to `test_size`, `train_size` and `shuffle`.
+
+This method is similar to scikit-learn `train_test_split`.
+
+Args:
+    test_size (`Union[float, int, None]`, *optional*):
+        Size of the test split
+        If `float`, should be between `0.0` and `1.0` and represent the proportion of the dataset to include in the test split.
+        If `int`, represents the absolute number of test samples.
+        If `None`, the value is set to the complement of the train size.
+        If `train_size` is also `None`, it will be set to `0.25`.
+    train_size (`Union[float, int, None]`, *optional*):
+        Size of the train split
+        If `float`, should be between `0.0` and `1.0` and represent the proportion of the dataset to include in the train split.
+        If `int`, represents the absolute number of train samples.
+        If `None`, the value is automatically set to the complement of the test size.
+    shuffle (`bool`, *optional*, defaults to `True`):
+        Whether or not to shuffle the data before splitting.
+    stratify_by_column (`str`, *optional*, defaults to `None`):
+        The column name of labels to be used to perform stratified split of data.
+    seed (`int`, *optional*):
+        A seed to initialize the default BitGenerator if `generator=None`.
+        If `None`, then fresh, unpredictable entropy will be pulled from the OS.
+        If an `int` or `array_like[ints]` is passed, then it will be passed to SeedSequence to derive the initial BitGenerator state.
+    generator (`numpy.random.Generator`, *optional*):
+        Numpy random Generator to use to compute the permutation of the dataset rows.
+        If `generator=None` (default), uses `np.random.default_rng` (the default BitGenerator (PCG64) of NumPy).
+    keep_in_memory (`bool`, defaults to `False`):
+        Keep the splits indices in memory instead of writing it to a cache file.
+    load_from_cache_file (`Optional[bool]`, defaults to `True` if caching is enabled):
+        If a cache file storing the splits indices
+        can be identified, use it instead of recomputing.
+    train_cache_file_name (`str`, *optional*):
+        Provide the name of a path for the cache file. It is used to store the
+        train split indices instead of the automatically generated cache file name.
+    test_cache_file_name (`str`, *optional*):
+        Provide the name of a path for the cache file. It is used to store the
+        test split indices instead of the automatically generated cache file name.
+    writer_batch_size (`int`, defaults to `1000`):
+        Number of rows per write operation for the cache file writer.
+        This value is a good trade-off between memory usage during the processing, and processing speed.
+        Higher value makes the processing do fewer lookups, lower value consume less temporary memory while running `map`.
+    train_new_fingerprint (`str`, *optional*, defaults to `None`):
+        The new fingerprint of the train set after transform.
+        If `None`, the new fingerprint is computed using a hash of the previous fingerprint, and the transform arguments
+    test_new_fingerprint (`str`, *optional*, defaults to `None`):
+        The new fingerprint of the test set after transform.
+        If `None`, the new fingerprint is computed using a hash of the previous fingerprint, and the transform arguments
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset("cornell-movie-review-data/rotten_tomatoes", split="validation")
+>>> ds = ds.train_test_split(test_size=0.2, shuffle=True)
+DatasetDict({
+    train: Dataset({
+        features: ['text', 'label'],
+        num_rows: 852
+    })
+    test: Dataset({
+        features: ['text', 'label'],
+        num_rows: 214
+    })
+})
+
+# set a seed
+>>> ds = ds.train_test_split(test_size=0.2, seed=42)
+
+# stratified split
+>>> ds = load_dataset("stanfordnlp/imdb",split="train")
+Dataset({
+    features: ['text', 'label'],
+    num_rows: 25000
+})
+>>> ds = ds.train_test_split(test_size=0.2, stratify_by_column="label")
+DatasetDict({
+    train: Dataset({
+        features: ['text', 'label'],
+        num_rows: 20000
+    })
+    test: Dataset({
+        features: ['text', 'label'],
+        num_rows: 5000
+    })
+})
+```
+unique: Return a list of the unique elements in a column.
+
+This is implemented in the low-level backend and as such, very fast.
+
+Args:
+    column (`str`):
+        Column name (list all the column names with [`~datasets.Dataset.column_names`]).
+
+Returns:
+    `list`: List of unique elements in the given column.
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset("cornell-movie-review-data/rotten_tomatoes", split="validation")
+>>> ds.unique('label')
+[1, 0]
+```
+version: The type of the None singleton.
+with_format: Set `__getitem__` return format (type and columns). The data formatting is applied on-the-fly.
+The format `type` (for example "numpy") is used to format batches when using `__getitem__`.
+
+It's also possible to use custom transforms for formatting using [`~datasets.Dataset.with_transform`].
+
+Contrary to [`~datasets.Dataset.set_format`], `with_format` returns a new [`Dataset`] object.
+
+Args:
+    type (`str`, *optional*):
+        Either output type selected in `[None, 'numpy', 'torch', 'tensorflow', 'jax', 'arrow', 'pandas', 'polars']`.
+        `None` means `__getitem__` returns python objects (default).
+    columns (`List[str]`, *optional*):
+        Columns to format in the output.
+        `None` means `__getitem__` returns all columns (default).
+    output_all_columns (`bool`, defaults to `False`):
+        Keep un-formatted columns as well in the output (as python objects).
+    **format_kwargs (additional keyword arguments):
+        Keywords arguments passed to the convert function like `np.array`, `torch.tensor` or `tensorflow.ragged.constant`.
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> from transformers import AutoTokenizer
+>>> ds = load_dataset("cornell-movie-review-data/rotten_tomatoes", split="validation")
+>>> tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
+>>> ds = ds.map(lambda x: tokenizer(x['text'], truncation=True, padding=True), batched=True)
+>>> ds.format
+{'columns': ['text', 'label', 'input_ids', 'token_type_ids', 'attention_mask'],
+ 'format_kwargs': {},
+ 'output_all_columns': False,
+ 'type': None}
+>>> ds = ds.with_format("torch")
+>>> ds.format
+{'columns': ['text', 'label', 'input_ids', 'token_type_ids', 'attention_mask'],
+ 'format_kwargs': {},
+ 'output_all_columns': False,
+ 'type': 'torch'}
+>>> ds[0]
+{'text': 'compassionately explores the seemingly irreconcilable situation between conservative christian parents and their estranged gay and lesbian children .'
+,
+ 'label': tensor(1),
+ 'input_ids': tensor([  101, 18027, 16310, 16001,  1103,  9321,   178, 11604,  7235,  6617,
+        1742,  2165,  2820,  1206,  6588, 22572, 12937,  1811,  2153,  1105,
+        1147, 12890, 19587,  6463,  1105, 15026,  1482,   119,   102,     0,
+            0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+            0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+            0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+            0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+            0,     0,     0,     0,     0,     0,     0,     0,     0,     0,
+            0,     0,     0,     0]),
+ 'token_type_ids': tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+ 'attention_mask': tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])}
+```
+with_transform: Set `__getitem__` return format using this transform. The transform is applied on-the-fly on batches when `__getitem__` is called.
+
+As [`~datasets.Dataset.set_format`], this can be reset using [`~datasets.Dataset.reset_format`].
+
+Contrary to [`~datasets.Dataset.set_transform`], `with_transform` returns a new [`Dataset`] object.
+
+Args:
+    transform (`Callable`, `optional`):
+        User-defined formatting transform, replaces the format defined by [`~datasets.Dataset.set_format`].
+        A formatting function is a callable that takes a batch (as a `dict`) as input and returns a batch.
+        This function is applied right before returning the objects in `__getitem__`.
+    columns (`List[str]`, `optional`):
+        Columns to format in the output.
+        If specified, then the input batch of the transform only contains those columns.
+    output_all_columns (`bool`, defaults to `False`):
+        Keep un-formatted columns as well in the output (as python objects).
+        If set to `True`, then the other un-formatted columns are kept with the output of the transform.
+
+Example:
+
+```py
+>>> from datasets import load_dataset
+>>> from transformers import AutoTokenizer
+>>> ds = load_dataset("cornell-movie-review-data/rotten_tomatoes", split="validation")
+>>> tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
+>>> def encode(example):
+...     return tokenizer(example["text"], padding=True, truncation=True, return_tensors='pt')
+>>> ds = ds.with_transform(encode)
+>>> ds[0]
+{'attention_mask': tensor([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+ 1, 1, 1, 1, 1]),
+ 'input_ids': tensor([  101, 18027, 16310, 16001,  1103,  9321,   178, 11604,  7235,  6617,
+         1742,  2165,  2820,  1206,  6588, 22572, 12937,  1811,  2153,  1105,
+         1147, 12890, 19587,  6463,  1105, 15026,  1482,   119,   102]),
+ 'token_type_ids': tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+         0, 0, 0, 0, 0])}
+```
+root@c34b154d48cc:/app# cat > download_and_load.py << 'EOF'
+> import requests
+> import json
+> import tempfile
+> from datasets import Dataset
+> import sys
+>
+> def download_dataset(dataset_name):
+>     url = f'https://huggingface.co/api/datasets/{dataset_name}'
+>     response = requests.get(url)
+>     response.raise_for_status()
+>     # The response is a JSON object with a 'dataset' key containing the download URL
+>     download_url = response.json().get('dataset', {}).get('url')
+>     if not download_url:
+>         print('No download URL found')
+>         return None
+>     download_response = requests.get(download_url, stream=True)
+>     download_response.raise_for_status()
+>     # Write to a temporary file
+>     with tempfile.NamedTemporaryFile(mode='wb', suffix='.tar.gz', delete=False) as f:
+>         for chunk in download_response.iter_content(1024):
+>             f.write(chunk)
+>         temp_path = f.name
+>     return temp_path
+>
+> def main():
+>     temp_path = download_dataset('open-thoughts/OpenThoughts-114k')
+>     if temp_path:
+>         print(f'Dataset downloaded to {temp_path}')
+>         dataset = Dataset.from_file(temp_path)
+>         print(f'Dataset loaded, shape: {dataset.shape}')
+>         # Remove the temporary file
+>         import os
+>         os.unlink(temp_path)
+>         print('Temporary file removed.')
+>         # Explore
+>         print('Columns:', dataset.columns)
+>         for col in dataset.columns:
+>             print(f'{col}: {dataset[col].unique()[:10]}')
+>         # Check for domain column
+>         for col in dataset.columns:
+>             if 'domain' in col.lower():
+>                 print(f'Found domain column: {col}')
+>                 break
+>         else:
+>             print('No domain column found.')
+>         # Write the dataset to a temporary file for exploration (optional)
+>         import shutil
+>         shutil.copy(temp_path, '/tmp/dataset.tar.gz')
+>         print('Dataset saved to /tmp/dataset.tar.gz')
+>         # Now we can load the dataset again if needed
+>         dataset = Dataset.from_file('/tmp/dataset.tar.gz')
+>         print(f'Dataset shape again: {dataset.shape}')
+>     else:
+>         print('Failed to download dataset')
+>         sys.exit(1)
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@c34b154d48cc:/app# python3 download_and_load.py
+No download URL found
+Failed to download dataset
+root@c34b154d48cc:/app# cat > explore_api.py << 'EOF'
+> import requests
+> url = 'https://huggingface.co/api/datasets/open-thoughts/OpenThoughts-114k'
+> response = requests.get(url)
+> print('Status:', response.status_code)
+> print('JSON:', response.json())
+> EOF
+root@c34b154d48cc:/app# python3 explore_api.py
+Status: 200
+JSON: {'_id': '6797e648de960c48ff034e54', 'id': 'open-thoughts/OpenThoughts-114k', 'author': 'open-thoughts', 'sha': 'bd093c3994fd54d2390985b66988ddf282a55eb6',
+ 'lastModified': '2025-08-31T00:24:46.000Z', 'private': False, 'gated': False, 'disabled': False, 'tags': ['license:apache-2.0', 'size_categories:100K<n<1M', 'f
+ormat:parquet', 'modality:text', 'library:datasets', 'library:dask', 'library:polars', 'library:mlcroissant', 'arxiv:2506.04178', 'region:us', 'curator', 'synth
+etic'], 'description': '\n    \n\n\n\n[!NOTE]\nWe have released a paper for OpenThoughts! See our paper here.\n\n\n \n\n\n\n\t\n\t\t\n\t\n\t\n\t\tOpen-Thoughts-
+114k\n\t\n\nOpen synthetic reasoning dataset with 114k high-quality examples covering math, science, code, and puzzles!\nInspect the content with rich formattin
+g with Curator Viewer.\n\n\t\n\t\t\n\t\n\t\n\t\tAvailable Subsets\n\t\n\ndefault subset containing ready-to-train data used to finetune the OpenThinker-7B and O
+penThinker-32B models:\nds = load_dataset("open-thoughts/OpenThoughts-114k"… See the full description on the dataset page: https://huggingface.co/datasets/open-
+thoughts/OpenThoughts-114k.', 'downloads': 73032, 'likes': 878, 'cardData': {'dataset_info': [{'config_name': 'default', 'features': [{'name': 'system', 'dtype'
+: 'string'}, {'name': 'conversations', 'list': [{'name': 'from', 'dtype': 'string'}, {'name': 'value', 'dtype': 'string'}]}], 'splits': [{'name': 'train', 'num_
+bytes': 2635015668, 'num_examples': 113957}], 'download_size': 1078777193, 'dataset_size': 2635015668}, {'config_name': 'metadata', 'features': [{'name': 'probl
+em', 'dtype': 'string'}, {'name': 'deepseek_reasoning', 'dtype': 'string'}, {'name': 'deepseek_solution', 'dtype': 'string'}, {'name': 'ground_truth_solution',
+'dtype': 'string'}, {'name': 'domain', 'dtype': 'string'}, {'name': 'source', 'dtype': 'string'}, {'name': 'test_cases', 'dtype': 'string'}, {'name': 'starter_c
+ode', 'dtype': 'string'}], 'splits': [{'name': 'train', 'num_bytes': 5525214077.699433, 'num_examples': 113957}], 'download_size': 2469729724, 'dataset_size': 5
+525214077.699433}], 'configs': [{'config_name': 'default', 'data_files': [{'split': 'train', 'path': 'data/train-*'}]}, {'config_name': 'metadata', 'data_files'
+: [{'split': 'train', 'path': 'metadata/train-*'}]}], 'tags': ['curator', 'synthetic'], 'license': 'apache-2.0'}, 'siblings': [{'rfilename': '.gitattributes'},
+{'rfilename': 'README.md'}, {'rfilename': 'data/train-00000-of-00006.parquet'}, {'rfilename': 'data/train-00001-of-00006.parquet'}, {'rfilename': 'data/train-00
+002-of-00006.parquet'}, {'rfilename': 'data/train-00003-of-00006.parquet'}, {'rfilename': 'data/train-00004-of-00006.parquet'}, {'rfilename': 'data/train-00005-
+of-00006.parquet'}, {'rfilename': 'diagram.png'}, {'rfilename': 'diagram_dark.png'}, {'rfilename': 'metadata/train-00000-of-00012.parquet'}, {'rfilename': 'meta
+data/train-00001-of-00012.parquet'}, {'rfilename': 'metadata/train-00002-of-00012.parquet'}, {'rfilename': 'metadata/train-00003-of-00012.parquet'}, {'rfilename
+': 'metadata/train-00004-of-00012.parquet'}, {'rfilename': 'metadata/train-00005-of-00012.parquet'}, {'rfilename': 'metadata/train-00006-of-00012.parquet'}, {'r
+filename': 'metadata/train-00007-of-00012.parquet'}, {'rfilename': 'metadata/train-00008-of-00012.parquet'}, {'rfilename': 'metadata/train-00009-of-00012.parque
+t'}, {'rfilename': 'metadata/train-00010-of-00012.parquet'}, {'rfilename': 'metadata/train-00011-of-00012.parquet'}, {'rfilename': 'open_thoughts.png'}], 'creat
+edAt': '2025-01-27T20:02:16.000Z', 'usedStorage': 3836804068}
+root@c34b154d48cc:/app# cat > explore_datasets2.py << 'EOF'
+> import datasets
+> import inspect
+>
+> # Check for load method
+> print('Checking Dataset.load:')
+> for name in dir(datasets.Dataset):
+>     if 'load' in name:
+>         print(f'Found: {name}')
+>         print(inspect.getdoc(datasets.Dataset.__dict__.get(name)))
+>
+> # Check for download
+> print('\nChecking download:')
+> for name in dir(datasets):
+>     if 'download' in name:
+>         print(f'Found: {name}')
+>         print(inspect.getdoc(datasets.__dict__.get(name)))
+>
+> # Check for from_file
+> print('\nChecking from_file:')
+> for name in dir(datasets):
+>     if 'from_file' in name:
+>         print(f'Found: {name}')
+>         print(inspect.getdoc(datasets.__dict__.get(name)))
+> EOF
+root@c34b154d48cc:/app# python3 explore_datasets2.py
+Checking Dataset.load:
+Found: download_checksums
+The type of the None singleton.
+Found: download_size
+The type of the None singleton.
+Found: load_elasticsearch_index
+The type of the None singleton.
+Found: load_faiss_index
+The type of the None singleton.
+Found: load_from_disk
+Loads a dataset that was previously saved using [`save_to_disk`] from a dataset directory, or from a
+filesystem using any implementation of `fsspec.spec.AbstractFileSystem`.
+
+Args:
+    dataset_path (`path-like`):
+        Path (e.g. `"dataset/train"`) or remote URI (e.g. `"s3//my-bucket/dataset/train"`)
+        of the dataset directory where the dataset will be loaded from.
+    keep_in_memory (`bool`, defaults to `None`):
+        Whether to copy the dataset in-memory. If `None`, the
+        dataset will not be copied in-memory unless explicitly enabled by setting
+        `datasets.config.IN_MEMORY_MAX_SIZE` to nonzero. See more details in the
+        [improve performance](../cache#improve-performance) section.
+    storage_options (`dict`, *optional*):
+        Key/value pairs to be passed on to the file-system backend, if any.
+
+        <Added version="2.8.0"/>
+
+Returns:
+    [`Dataset`] or [`DatasetDict`]:
+    - If `dataset_path` is a path of a dataset directory, the dataset requested.
+    - If `dataset_path` is a path of a dataset dict directory, a `datasets.DatasetDict` with each split.
+
+Example:
+
+```py
+>>> ds = load_from_disk("path/to/dataset/directory")
+```
+
+Checking download:
+Found: download
+None
+
+Checking from_file:
+root@c34b154d48cc:/app# python3 explore_datasets2.py
+Checking Dataset.load:
+Found: download_checksums
+The type of the None singleton.
+Found: download_size
+The type of the None singleton.
+Found: load_elasticsearch_index
+The type of the None singleton.
+Found: load_faiss_index
+The type of the None singleton.
+Found: load_from_disk
+Loads a dataset that was previously saved using [`save_to_disk`] from a dataset directory, or from a
+filesystem using any implementation of `fsspec.spec.AbstractFileSystem`.
+
+Args:
+    dataset_path (`path-like`):
+        Path (e.g. `"dataset/train"`) or remote URI (e.g. `"s3//my-bucket/dataset/train"`)
+        of the dataset directory where the dataset will be loaded from.
+    keep_in_memory (`bool`, defaults to `None`):
+        Whether to copy the dataset in-memory. If `None`, the
+        dataset will not be copied in-memory unless explicitly enabled by setting
+        `datasets.config.IN_MEMORY_MAX_SIZE` to nonzero. See more details in the
+        [improve performance](../cache#improve-performance) section.
+    storage_options (`dict`, *optional*):
+        Key/value pairs to be passed on to the file-system backend, if any.
+
+        <Added version="2.8.0"/>
+
+Returns:
+    [`Dataset`] or [`DatasetDict`]:
+    - If `dataset_path` is a path of a dataset directory, the dataset requested.
+    - If `dataset_path` is a path of a dataset dict directory, a `datasets.DatasetDict` with each split.
+
+Example:
+
+```py
+>>> ds = load_from_disk("path/to/dataset/directory")
+```
+
+Checking download:
+Found: download
+None
+
+Checking from_file:
+root@c34b154d48cc:/app# cat > fetch_api.py << 'EOF'
+> import requests
+> url = 'https://huggingface.co/api/datasets/open-thoughts/OpenThoughts-114k'
+> response = requests.get(url)
+> print('Status:', response.status_code)
+> if response.status_code == 200:
+>     data = response.json()
+>     print('JSON:')
+>     print(json.dumps(data, indent=2))
+>     print('\nDataset key:', data.get('dataset'))
+>     if data.get('dataset'):
+>         download_url = data['dataset'].get('url')
+>         print('Download URL:', download_url)
+>         if download_url:
+>             # Download
+>             download_response = requests.get(download_url, stream=True)
+>             download_response.raise_for_status()
+>             with open('/tmp/dataset.tar.gz', 'wb') as f:
+>                 for chunk in download_response.iter_content(1024):
+>                     f.write(chunk)
+>             print('Downloaded to /tmp/dataset.tar.gz')
+>             from datasets import Dataset
+>             dataset = Dataset.from_file('/tmp/dataset.tar.gz')
+>             print('Loaded dataset shape:', dataset.shape)
+>             print('Columns:', dataset.columns)
+>         else:
+>             print('No download URL found')
+> else:
+>     print('API request failed')
+> EOF
+root@c34b154d48cc:/app# python3 fetch_api.py
+Status: 200
+JSON:
+Traceback (most recent call last):
+  File "/app/fetch_api.py", line 8, in <module>
+    print(json.dumps(data, indent=2))
+          ^^^^
+NameError: name 'json' is not defined. Did you forget to import 'json'?
+root@c34b154d48cc:/app# cat > fetch_api.py << 'EOF'
+t.shape)
+            print('Columns:', dataset.columns)
+        else:
+            print('No download URL found')
+else:
+    print('API request failed')
+EOF
+> import requests
+> import json
+> url = 'https://huggingface.co/api/datasets/open-thoughts/OpenThoughts-114k'
+> response = requests.get(url)
+> print('Status:', response.status_code)
+> if response.status_code == 200:
+>     data = response.json()
+>     print('JSON:')
+>     print(json.dumps(data, indent=2))
+>     print('\nDataset key:', data.get('dataset'))
+>     if data.get('dataset'):
+>         download_url = data['dataset'].get('url')
+>         print('Download URL:', download_url)
+>         if download_url:
+>             # Download
+>             download_response = requests.get(download_url, stream=True)
+>             download_response.raise_for_status()
+>             with open('/tmp/dataset.tar.gz', 'wb') as f:
+>                 for chunk in download_response.iter_content(1024):
+>                     f.write(chunk)
+>             print('Downloaded to /tmp/dataset.tar.gz')
+>             from datasets import Dataset
+>             dataset = Dataset.from_file('/tmp/dataset.tar.gz')
+>             print('Loaded dataset shape:', dataset.shape)
+>             print('Columns:', dataset.columns)
+>         else:
+>             print('No download URL found')
+> else:
+>     print('API request failed')
+> EOF
+root@c34b154d48cc:/app# python3 fetch_api.py
+Status: 200
+JSON:
+{
+  "_id": "6797e648de960c48ff034e54",
+  "id": "open-thoughts/OpenThoughts-114k",
+  "author": "open-thoughts",
+  "sha": "bd093c3994fd54d2390985b66988ddf282a55eb6",
+  "lastModified": "2025-08-31T00:24:46.000Z",
+  "private": false,
+  "gated": false,
+  "disabled": false,
+  "tags": [
+    "license:apache-2.0",
+    "size_categories:100K<n<1M",
+    "format:parquet",
+    "modality:text",
+    "library:datasets",
+    "library:dask",
+    "library:polars",
+    "library:mlcroissant",
+    "arxiv:2506.04178",
+    "region:us",
+    "curator",
+    "synthetic"
+  ],
+  "description": "\n    \n\n\n\n[!NOTE]\nWe have released a paper for OpenThoughts! See our paper here.\n\n\n \n\n\n\n\t\n\t\t\n\t\n\t\n\t\tOpen-Thoughts-114k\n
+\t\n\nOpen synthetic reasoning dataset with 114k high-quality examples covering math, science, code, and puzzles!\nInspect the content with rich formatting with
+ Curator Viewer.\n\n\t\n\t\t\n\t\n\t\n\t\tAvailable Subsets\n\t\n\ndefault subset containing ready-to-train data used to finetune the OpenThinker-7B and OpenThi
+nker-32B models:\nds = load_dataset(\"open-thoughts/OpenThoughts-114k\"\u2026 See the full description on the dataset page: https://huggingface.co/datasets/open
+-thoughts/OpenThoughts-114k.",
+  "downloads": 73032,
+  "likes": 878,
+  "cardData": {
+    "dataset_info": [
+      {
+        "config_name": "default",
+        "features": [
+          {
+            "name": "system",
+            "dtype": "string"
+          },
+          {
+            "name": "conversations",
+            "list": [
+              {
+                "name": "from",
+                "dtype": "string"
+              },
+              {
+                "name": "value",
+                "dtype": "string"
+              }
+            ]
+          }
+        ],
+        "splits": [
+          {
+            "name": "train",
+            "num_bytes": 2635015668,
+            "num_examples": 113957
+          }
+        ],
+        "download_size": 1078777193,
+        "dataset_size": 2635015668
+      },
+      {
+        "config_name": "metadata",
+        "features": [
+          {
+            "name": "problem",
+            "dtype": "string"
+          },
+          {
+            "name": "deepseek_reasoning",
+            "dtype": "string"
+          },
+          {
+            "name": "deepseek_solution",
+            "dtype": "string"
+          },
+          {
+            "name": "ground_truth_solution",
+            "dtype": "string"
+          },
+          {
+            "name": "domain",
+            "dtype": "string"
+          },
+          {
+            "name": "source",
+            "dtype": "string"
+          },
+          {
+            "name": "test_cases",
+            "dtype": "string"
+          },
+          {
+            "name": "starter_code",
+            "dtype": "string"
+          }
+        ],
+        "splits": [
+          {
+            "name": "train",
+            "num_bytes": 5525214077.699433,
+            "num_examples": 113957
+          }
+        ],
+        "download_size": 2469729724,
+        "dataset_size": 5525214077.699433
+      }
+    ],
+    "configs": [
+      {
+        "config_name": "default",
+        "data_files": [
+          {
+            "split": "train",
+            "path": "data/train-*"
+          }
+        ]
+      },
+      {
+        "config_name": "metadata",
+        "data_files": [
+          {
+            "split": "train",
+            "path": "metadata/train-*"
+          }
+        ]
+      }
+    ],
+    "tags": [
+      "curator",
+      "synthetic"
+    ],
+    "license": "apache-2.0"
+  },
+  "siblings": [
+    {
+      "rfilename": ".gitattributes"
+    },
+    {
+      "rfilename": "README.md"
+    },
+    {
+      "rfilename": "data/train-00000-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00001-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00002-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00003-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00004-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00005-of-00006.parquet"
+    },
+    {
+      "rfilename": "diagram.png"
+    },
+    {
+      "rfilename": "diagram_dark.png"
+    },
+    {
+      "rfilename": "metadata/train-00000-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00001-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00002-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00003-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00004-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00005-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00006-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00007-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00008-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00009-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00010-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00011-of-00012.parquet"
+    },
+    {
+      "rfilename": "open_thoughts.png"
+    }
+  ],
+  "createdAt": "2025-01-27T20:02:16.000Z",
+  "usedStorage": 3836804068
+}
+
+Dataset key: None
+root@c34b154d48cc:/app# cat > fetch_api.py << 'EOF'
+t.shape)
+            print('Columns:', dataset.columns)
+        else:
+            print('No download URL found')
+else:
+    print('API request failed')
+EOF
+> import requests
+> import json
+> url = 'https://huggingface.co/api/datasets/open-thoughts/OpenThoughts-114k'
+> response = requests.get(url)
+> print('Status:', response.status_code)
+> if response.status_code == 200:
+>     data = response.json()
+>     print('JSON:')
+>     print(json.dumps(data, indent=2))
+>     print('\nDataset key:', data.get('dataset'))
+>     if data.get('dataset'):
+>         download_url = data['dataset'].get('url')
+>         print('Download URL:', download_url)
+>         if download_url:
+>             # Download
+>             download_response = requests.get(download_url, stream=True)
+>             download_response.raise_for_status()
+>             with open('/tmp/dataset.tar.gz', 'wb') as f:
+>                 for chunk in download_response.iter_content(1024):
+>                     f.write(chunk)
+>             print('Downloaded to /tmp/dataset.tar.gz')
+>             from datasets import Dataset
+>             dataset = Dataset.from_file('/tmp/dataset.tar.gz')
+>             print('Loaded dataset shape:', dataset.shape)
+>             print('Columns:', dataset.columns)
+>         else:
+>             print('No download URL found')
+> else:
+>     print('API request failed')
+> EOF
+root@c34b154d48cc:/app# python3 fetch_api.py
+Status: 200
+JSON:
+{
+  "_id": "6797e648de960c48ff034e54",
+  "id": "open-thoughts/OpenThoughts-114k",
+  "author": "open-thoughts",
+  "sha": "bd093c3994fd54d2390985b66988ddf282a55eb6",
+  "lastModified": "2025-08-31T00:24:46.000Z",
+  "private": false,
+  "gated": false,
+  "disabled": false,
+  "tags": [
+    "license:apache-2.0",
+    "size_categories:100K<n<1M",
+    "format:parquet",
+    "modality:text",
+    "library:datasets",
+    "library:dask",
+    "library:polars",
+    "library:mlcroissant",
+    "arxiv:2506.04178",
+    "region:us",
+    "curator",
+    "synthetic"
+  ],
+  "description": "\n    \n\n\n\n[!NOTE]\nWe have released a paper for OpenThoughts! See our paper here.\n\n\n \n\n\n\n\t\n\t\t\n\t\n\t\n\t\tOpen-Thoughts-114k\n
+\t\n\nOpen synthetic reasoning dataset with 114k high-quality examples covering math, science, code, and puzzles!\nInspect the content with rich formatting with
+ Curator Viewer.\n\n\t\n\t\t\n\t\n\t\n\t\tAvailable Subsets\n\t\n\ndefault subset containing ready-to-train data used to finetune the OpenThinker-7B and OpenThi
+nker-32B models:\nds = load_dataset(\"open-thoughts/OpenThoughts-114k\"\u2026 See the full description on the dataset page: https://huggingface.co/datasets/open
+-thoughts/OpenThoughts-114k.",
+  "downloads": 73032,
+  "likes": 878,
+  "cardData": {
+    "dataset_info": [
+      {
+        "config_name": "default",
+        "features": [
+          {
+            "name": "system",
+            "dtype": "string"
+          },
+          {
+            "name": "conversations",
+            "list": [
+              {
+                "name": "from",
+                "dtype": "string"
+              },
+              {
+                "name": "value",
+                "dtype": "string"
+              }
+            ]
+          }
+        ],
+        "splits": [
+          {
+            "name": "train",
+            "num_bytes": 2635015668,
+            "num_examples": 113957
+          }
+        ],
+        "download_size": 1078777193,
+        "dataset_size": 2635015668
+      },
+      {
+        "config_name": "metadata",
+        "features": [
+          {
+            "name": "problem",
+            "dtype": "string"
+          },
+          {
+            "name": "deepseek_reasoning",
+            "dtype": "string"
+          },
+          {
+            "name": "deepseek_solution",
+            "dtype": "string"
+          },
+          {
+            "name": "ground_truth_solution",
+            "dtype": "string"
+          },
+          {
+            "name": "domain",
+            "dtype": "string"
+          },
+          {
+            "name": "source",
+            "dtype": "string"
+          },
+          {
+            "name": "test_cases",
+            "dtype": "string"
+          },
+          {
+            "name": "starter_code",
+            "dtype": "string"
+          }
+        ],
+        "splits": [
+          {
+            "name": "train",
+            "num_bytes": 5525214077.699433,
+            "num_examples": 113957
+          }
+        ],
+        "download_size": 2469729724,
+        "dataset_size": 5525214077.699433
+      }
+    ],
+    "configs": [
+      {
+        "config_name": "default",
+        "data_files": [
+          {
+            "split": "train",
+            "path": "data/train-*"
+          }
+        ]
+      },
+      {
+        "config_name": "metadata",
+        "data_files": [
+          {
+            "split": "train",
+            "path": "metadata/train-*"
+          }
+        ]
+      }
+    ],
+    "tags": [
+      "curator",
+      "synthetic"
+    ],
+    "license": "apache-2.0"
+  },
+  "siblings": [
+    {
+      "rfilename": ".gitattributes"
+    },
+    {
+      "rfilename": "README.md"
+    },
+    {
+      "rfilename": "data/train-00000-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00001-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00002-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00003-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00004-of-00006.parquet"
+    },
+    {
+      "rfilename": "data/train-00005-of-00006.parquet"
+    },
+    {
+      "rfilename": "diagram.png"
+    },
+    {
+      "rfilename": "diagram_dark.png"
+    },
+    {
+      "rfilename": "metadata/train-00000-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00001-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00002-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00003-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00004-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00005-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00006-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00007-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00008-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00009-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00010-of-00012.parquet"
+    },
+    {
+      "rfilename": "metadata/train-00011-of-00012.parquet"
+    },
+    {
+      "rfilename": "open_thoughts.png"
+    }
+  ],
+  "createdAt": "2025-01-27T20:02:16.000Z",
+  "usedStorage": 3836804068
+}
+
+Dataset key: None
+root@c34b154d48cc:/app# python3 -c "import requests; r = requests.get('https://huggingface.co/api/datasets/open-thoughts/OpenThoughts-114k'); d = r.json(); prin
+t(json.dumps(d, indent=2))"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import requests; r = requests.get('https://huggingface.co/api/datasets/open-thoughts/OpenThoughts-114k'); d = r.json(); print(json.dumps(d, indent=2))
+                                                                                                                                  ^^^^
+NameError: name 'json' is not defined. Did you forget to import 'json'?
+root@c34b154d48cc:/app# python3 -c "import datasets; print(dir(datasets))"
+python3 -c "import datasets; print(datasets.__dict__)"
+['Array2D', 'Array3D', 'Array4D', 'Array5D', 'ArrowBasedBuilder', 'Audio', 'BuilderConfig', 'ClassLabel', 'Column', 'Dataset', 'DatasetBuilder', 'DatasetDict',
+'DatasetInfo', 'DownloadConfig', 'DownloadManager', 'DownloadMode', 'Features', 'GeneratorBasedBuilder', 'Image', 'IterableColumn', 'IterableDataset', 'Iterable
+DatasetDict', 'Json', 'LargeList', 'List', 'Mesh', 'NamedSplit', 'NamedSplitAll', 'Nifti', 'Pdf', 'ReadInstruction', 'Sequence', 'Split', 'SplitBase', 'SplitDic
+t', 'SplitGenerator', 'SplitInfo', 'StreamingDownloadManager', 'SubSplitInfo', 'Translation', 'TranslationVariableLanguages', 'Value', 'VerificationMode', 'Vers
+ion', 'Video', '__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__path__', '__spec__', '__version__', 'are_progres
+s_bars_disabled', 'arrow_dataset', 'arrow_reader', 'arrow_writer', 'builder', 'combine', 'concatenate_datasets', 'config', 'data_files', 'dataset_dict', 'disabl
+e_caching', 'disable_progress_bar', 'disable_progress_bars', 'doc_utils', 'download', 'enable_caching', 'enable_progress_bar', 'enable_progress_bars', 'exceptio
+ns', 'experimental', 'extract', 'features', 'file_utils', 'filesystems', 'fingerprint', 'formatting', 'get_dataset_config_info', 'get_dataset_config_names', 'ge
+t_dataset_default_config_name', 'get_dataset_infos', 'get_dataset_split_names', 'hub', 'info', 'info_utils', 'inspect', 'interleave_datasets', 'is_caching_enabl
+ed', 'is_progress_bar_enabled', 'iterable_dataset', 'json', 'load', 'load_dataset', 'load_dataset_builder', 'load_from_disk', 'logging', 'metadata', 'naming', '
+packaged_modules', 'parallel', 'patching', 'percent', 'py_utils', 'search', 'sharding', 'splits', 'stratify', 'streaming', 'table', 'tf_utils', 'tqdm', 'track',
+ 'typing', 'utils', 'version']
+root@c34b154d48cc:/app# python3 -c "import datasets; print(datasets.__dict__)"
+{'__name__': 'datasets', '__doc__': None, '__package__': 'datasets', '__loader__': <_frozen_importlib_external.SourceFileLoader object at 0x7ca6cd49c5a0>, '__sp
+ec__': ModuleSpec(name='datasets', loader=<_frozen_importlib_external.SourceFileLoader object at 0x7ca6cd49c5a0>, origin='/usr/local/lib/python3.13/site-package
+s/datasets/__init__.py', submodule_search_locations=['/usr/local/lib/python3.13/site-packages/datasets']), '__path__': ['/usr/local/lib/python3.13/site-packages
+/datasets'], '__file__': '/usr/local/lib/python3.13/site-packages/datasets/__init__.py', '__cached__': '/usr/local/lib/python3.13/site-packages/datasets/__pycac
+he__/__init__.cpython-313.pyc', '__builtins__': {'__name__': 'builtins', '__doc__': "Built-in functions, types, exceptions, and other objects.\n\nThis module pr
+ovides direct access to all 'built-in'\nidentifiers of Python; for example, builtins.len is\nthe full name for the built-in function len().\n\nThis module is no
+t normally accessed explicitly by most\napplications, but can be useful in modules that provide\nobjects with the same name as a built-in value, but in\nwhich t
+he built-in of that name is also needed.", '__package__': '', '__loader__': <class '_frozen_importlib.BuiltinImporter'>, '__spec__': ModuleSpec(name='builtins',
+ loader=<class '_frozen_importlib.BuiltinImporter'>, origin='built-in'), '__build_class__': <built-in function __build_class__>, '__import__': <built-in functio
+n __import__>, 'abs': <built-in function abs>, 'all': <built-in function all>, 'any': <built-in function any>, 'ascii': <built-in function ascii>, 'bin': <built
+-in function bin>, 'breakpoint': <built-in function breakpoint>, 'callable': <built-in function callable>, 'chr': <built-in function chr>, 'compile': <built-in
+function compile>, 'delattr': <built-in function delattr>, 'dir': <built-in function dir>, 'divmod': <built-in function divmod>, 'eval': <built-in function eval
+>, 'exec': <built-in function exec>, 'format': <built-in function format>, 'getattr': <built-in function getattr>, 'globals': <built-in function globals>, 'hasa
+ttr': <built-in function hasattr>, 'hash': <built-in function hash>, 'hex': <built-in function hex>, 'id': <built-in function id>, 'input': <built-in function i
+nput>, 'isinstance': <built-in function isinstance>, 'issubclass': <built-in function issubclass>, 'iter': <built-in function iter>, 'aiter': <built-in function
+ aiter>, 'len': <built-in function len>, 'locals': <built-in function locals>, 'max': <built-in function max>, 'min': <built-in function min>, 'next': <built-in
+ function next>, 'anext': <built-in function anext>, 'oct': <built-in function oct>, 'ord': <built-in function ord>, 'pow': <built-in function pow>, 'print': <b
+uilt-in function print>, 'repr': <built-in function repr>, 'round': <built-in function round>, 'setattr': <built-in function setattr>, 'sorted': <built-in funct
+ion sorted>, 'sum': <built-in function sum>, 'vars': <built-in function vars>, 'None': None, 'Ellipsis': Ellipsis, 'NotImplemented': NotImplemented, 'False': Fa
+lse, 'True': True, 'bool': <class 'bool'>, 'memoryview': <class 'memoryview'>, 'bytearray': <class 'bytearray'>, 'bytes': <class 'bytes'>, 'classmethod': <class
+ 'classmethod'>, 'complex': <class 'complex'>, 'dict': <class 'dict'>, 'enumerate': <class 'enumerate'>, 'filter': <class 'filter'>, 'float': <class 'float'>, '
+frozenset': <class 'frozenset'>, 'property': <class 'property'>, 'int': <class 'int'>, 'list': <class 'list'>, 'map': <class 'map'>, 'object': <class 'object'>,
+ 'range': <class 'range'>, 'reversed': <class 'reversed'>, 'set': <class 'set'>, 'slice': <class 'slice'>, 'staticmethod': <class 'staticmethod'>, 'str': <class
+ 'str'>, 'super': <class 'super'>, 'tuple': <class 'tuple'>, 'type': <class 'type'>, 'zip': <class 'zip'>, '__debug__': True, 'BaseException': <class 'BaseExcep
+tion'>, 'BaseExceptionGroup': <class 'BaseExceptionGroup'>, 'Exception': <class 'Exception'>, 'GeneratorExit': <class 'GeneratorExit'>, 'KeyboardInterrupt': <cl
+ass 'KeyboardInterrupt'>, 'SystemExit': <class 'SystemExit'>, 'ArithmeticError': <class 'ArithmeticError'>, 'AssertionError': <class 'AssertionError'>, 'Attribu
+teError': <class 'AttributeError'>, 'BufferError': <class 'BufferError'>, 'EOFError': <class 'EOFError'>, 'ImportError': <class 'ImportError'>, 'LookupError': <
+class 'LookupError'>, 'MemoryError': <class 'MemoryError'>, 'NameError': <class 'NameError'>, 'OSError': <class 'OSError'>, 'ReferenceError': <class 'ReferenceE
+rror'>, 'RuntimeError': <class 'RuntimeError'>, 'StopAsyncIteration': <class 'StopAsyncIteration'>, 'StopIteration': <class 'StopIteration'>, 'SyntaxError': <cl
+ass 'SyntaxError'>, 'SystemError': <class 'SystemError'>, 'TypeError': <class 'TypeError'>, 'ValueError': <class 'ValueError'>, 'Warning': <class 'Warning'>, 'F
+loatingPointError': <class 'FloatingPointError'>, 'OverflowError': <class 'OverflowError'>, 'ZeroDivisionError': <class 'ZeroDivisionError'>, 'BytesWarning': <c
+lass 'BytesWarning'>, 'DeprecationWarning': <class 'DeprecationWarning'>, 'EncodingWarning': <class 'EncodingWarning'>, 'FutureWarning': <class 'FutureWarning'>
+, 'ImportWarning': <class 'ImportWarning'>, 'PendingDeprecationWarning': <class 'PendingDeprecationWarning'>, 'ResourceWarning': <class 'ResourceWarning'>, 'Run
+timeWarning': <class 'RuntimeWarning'>, 'SyntaxWarning': <class 'SyntaxWarning'>, 'UnicodeWarning': <class 'UnicodeWarning'>, 'UserWarning': <class 'UserWarning
+'>, 'BlockingIOError': <class 'BlockingIOError'>, 'ChildProcessError': <class 'ChildProcessError'>, 'ConnectionError': <class 'ConnectionError'>, 'FileExistsErr
+or': <class 'FileExistsError'>, 'FileNotFoundError': <class 'FileNotFoundError'>, 'InterruptedError': <class 'InterruptedError'>, 'IsADirectoryError': <class 'I
+sADirectoryError'>, 'NotADirectoryError': <class 'NotADirectoryError'>, 'PermissionError': <class 'PermissionError'>, 'ProcessLookupError': <class 'ProcessLooku
+pError'>, 'TimeoutError': <class 'TimeoutError'>, 'IndentationError': <class 'IndentationError'>, '_IncompleteInputError': <class '_IncompleteInputError'>, 'Ind
+exError': <class 'IndexError'>, 'KeyError': <class 'KeyError'>, 'ModuleNotFoundError': <class 'ModuleNotFoundError'>, 'NotImplementedError': <class 'NotImplemen
+tedError'>, 'PythonFinalizationError': <class 'PythonFinalizationError'>, 'RecursionError': <class 'RecursionError'>, 'UnboundLocalError': <class 'UnboundLocalE
+rror'>, 'UnicodeError': <class 'UnicodeError'>, 'BrokenPipeError': <class 'BrokenPipeError'>, 'ConnectionAbortedError': <class 'ConnectionAbortedError'>, 'Conne
+ctionRefusedError': <class 'ConnectionRefusedError'>, 'ConnectionResetError': <class 'ConnectionResetError'>, 'TabError': <class 'TabError'>, 'UnicodeDecodeErro
+r': <class 'UnicodeDecodeError'>, 'UnicodeEncodeError': <class 'UnicodeEncodeError'>, 'UnicodeTranslateError': <class 'UnicodeTranslateError'>, 'ExceptionGroup'
+: <class 'ExceptionGroup'>, 'EnvironmentError': <class 'OSError'>, 'IOError': <class 'OSError'>, 'open': <built-in function open>, 'quit': Use quit() or Ctrl-D
+(i.e. EOF) to exit, 'exit': Use exit() or Ctrl-D (i.e. EOF) to exit, 'copyright': Copyright (c) 2001-2024 Python Software Foundation.
+All Rights Reserved.
+
+Copyright (c) 2000 BeOpen.com.
+All Rights Reserved.
+
+Copyright (c) 1995-2001 Corporation for National Research Initiatives.
+All Rights Reserved.
+
+Copyright (c) 1991-1995 Stichting Mathematisch Centrum, Amsterdam.
+All Rights Reserved., 'credits':     Thanks to CWI, CNRI, BeOpen, Zope Corporation, the Python Software
+    Foundation, and a cast of thousands for supporting Python
+    development.  See www.python.org for more information., 'license': Type license() to see the full license text, 'help': Type help() for interactive help, or
+ help(object) for help about object.}, '__version__': '5.0.0', 'config': <module 'datasets.config' from '/usr/local/lib/python3.13/site-packages/datasets/config
+.py'>, 'table': <module 'datasets.table' from '/usr/local/lib/python3.13/site-packages/datasets/table.py'>, 'exceptions': <module 'datasets.exceptions' from '/u
+sr/local/lib/python3.13/site-packages/datasets/exceptions.py'>, 'utils': <module 'datasets.utils' from '/usr/local/lib/python3.13/site-packages/datasets/utils/_
+_init__.py'>, 'filesystems': <module 'datasets.filesystems' from '/usr/local/lib/python3.13/site-packages/datasets/filesystems/__init__.py'>, 'parallel': <modul
+e 'datasets.parallel' from '/usr/local/lib/python3.13/site-packages/datasets/parallel/__init__.py'>, 'download': <module 'datasets.download' from '/usr/local/li
+b/python3.13/site-packages/datasets/download/__init__.py'>, 'naming': <module 'datasets.naming' from '/usr/local/lib/python3.13/site-packages/datasets/naming.py
+'>, 'arrow_reader': <module 'datasets.arrow_reader' from '/usr/local/lib/python3.13/site-packages/datasets/arrow_reader.py'>, 'features': <module 'datasets.feat
+ures' from '/usr/local/lib/python3.13/site-packages/datasets/features/__init__.py'>, 'splits': <module 'datasets.splits' from '/usr/local/lib/python3.13/site-pa
+ckages/datasets/splits.py'>, 'info': <module 'datasets.info' from '/usr/local/lib/python3.13/site-packages/datasets/info.py'>, 'arrow_writer': <module 'datasets
+.arrow_writer' from '/usr/local/lib/python3.13/site-packages/datasets/arrow_writer.py'>, 'data_files': <module 'datasets.data_files' from '/usr/local/lib/python
+3.13/site-packages/datasets/data_files.py'>, 'fingerprint': <module 'datasets.fingerprint' from '/usr/local/lib/python3.13/site-packages/datasets/fingerprint.py
+'>, 'formatting': <module 'datasets.formatting' from '/usr/local/lib/python3.13/site-packages/datasets/formatting/__init__.py'>, 'search': <module 'datasets.sea
+rch' from '/usr/local/lib/python3.13/site-packages/datasets/search.py'>, 'arrow_dataset': <module 'datasets.arrow_dataset' from '/usr/local/lib/python3.13/site-
+packages/datasets/arrow_dataset.py'>, 'Column': <class 'datasets.arrow_dataset.Column'>, 'Dataset': <class 'datasets.arrow_dataset.Dataset'>, 'ReadInstruction':
+ <class 'datasets.arrow_reader.ReadInstruction'>, 'iterable_dataset': <module 'datasets.iterable_dataset' from '/usr/local/lib/python3.13/site-packages/datasets
+/iterable_dataset.py'>, 'dataset_dict': <module 'datasets.dataset_dict' from '/usr/local/lib/python3.13/site-packages/datasets/dataset_dict.py'>, 'streaming': <
+module 'datasets.streaming' from '/usr/local/lib/python3.13/site-packages/datasets/streaming.py'>, 'builder': <module 'datasets.builder' from '/usr/local/lib/py
+thon3.13/site-packages/datasets/builder.py'>, 'ArrowBasedBuilder': <class 'datasets.builder.ArrowBasedBuilder'>, 'BuilderConfig': <class 'datasets.builder.Build
+erConfig'>, 'DatasetBuilder': <class 'datasets.builder.DatasetBuilder'>, 'GeneratorBasedBuilder': <class 'datasets.builder.GeneratorBasedBuilder'>, 'combine': <
+module 'datasets.combine' from '/usr/local/lib/python3.13/site-packages/datasets/combine.py'>, 'concatenate_datasets': <function concatenate_datasets at 0x7ca61
+b964680>, 'interleave_datasets': <function interleave_datasets at 0x7ca61b9645e0>, 'DatasetDict': <class 'datasets.dataset_dict.DatasetDict'>, 'IterableDatasetD
+ict': <class 'datasets.dataset_dict.IterableDatasetDict'>, 'DownloadConfig': <class 'datasets.download.download_config.DownloadConfig'>, 'DownloadManager': <cla
+ss 'datasets.download.download_manager.DownloadManager'>, 'DownloadMode': <enum 'DownloadMode'>, 'StreamingDownloadManager': <class 'datasets.download.streaming
+_download_manager.StreamingDownloadManager'>, 'Audio': <class 'datasets.features.audio.Audio'>, 'Array2D': <class 'datasets.features.features.Array2D'>, 'Array3
+D': <class 'datasets.features.features.Array3D'>, 'Array4D': <class 'datasets.features.features.Array4D'>, 'Array5D': <class 'datasets.features.features.Array5D
+'>, 'ClassLabel': <class 'datasets.features.features.ClassLabel'>, 'Features': <class 'datasets.features.features.Features'>, 'Json': <class 'datasets.features.
+features.Json'>, 'LargeList': <class 'datasets.features.features.LargeList'>, 'List': <class 'datasets.features.features.List'>, 'Sequence': <class 'datasets.fe
+atures.features.Sequence'>, 'Value': <class 'datasets.features.features.Value'>, 'Image': <class 'datasets.features.image.Image'>, 'Mesh': <class 'datasets.feat
+ures.mesh.Mesh'>, 'Translation': <class 'datasets.features.translation.Translation'>, 'TranslationVariableLanguages': <class 'datasets.features.translation.Tran
+slationVariableLanguages'>, 'Video': <class 'datasets.features.video.Video'>, 'Pdf': <class 'datasets.features.pdf.Pdf'>, 'Nifti': <class 'datasets.features.nif
+ti.Nifti'>, 'disable_caching': <function disable_caching at 0x7ca61ba5e5c0>, 'enable_caching': <function enable_caching at 0x7ca61ba5e520>, 'is_caching_enabled'
+: <function is_caching_enabled at 0x7ca61ba5e660>, 'DatasetInfo': <class 'datasets.info.DatasetInfo'>, 'packaged_modules': <module 'datasets.packaged_modules' f
+rom '/usr/local/lib/python3.13/site-packages/datasets/packaged_modules/__init__.py'>, 'load': <module 'datasets.load' from '/usr/local/lib/python3.13/site-packa
+ges/datasets/load.py'>, 'inspect': <module 'datasets.inspect' from '/usr/local/lib/python3.13/site-packages/datasets/inspect.py'>, 'get_dataset_config_info': <f
+unction get_dataset_config_info at 0x7ca61b817740>, 'get_dataset_config_names': <function get_dataset_config_names at 0x7ca61b964b80>, 'get_dataset_default_conf
+ig_name': <function get_dataset_default_config_name at 0x7ca61b8176a0>, 'get_dataset_infos': <function get_dataset_infos at 0x7ca61b964ea0>, 'get_dataset_split_
+names': <function get_dataset_split_names at 0x7ca61b8177e0>, 'IterableColumn': <class 'datasets.iterable_dataset.IterableColumn'>, 'IterableDataset': <class 'd
+atasets.iterable_dataset.IterableDataset'>, 'load_dataset': <function load_dataset at 0x7ca61b817560>, 'load_dataset_builder': <function load_dataset_builder at
+ 0x7ca61b816a20>, 'load_from_disk': <function load_from_disk at 0x7ca61b817600>, 'NamedSplit': <class 'datasets.splits.NamedSplit'>, 'NamedSplitAll': <class 'da
+tasets.splits.NamedSplitAll'>, 'Split': <class 'datasets.splits.Split'>, 'SplitBase': <class 'datasets.splits.SplitBase'>, 'SplitDict': <class 'datasets.splits.
+SplitDict'>, 'SplitGenerator': <class 'datasets.splits.SplitGenerator'>, 'SplitInfo': <class 'datasets.splits.SplitInfo'>, 'SubSplitInfo': <class 'datasets.spli
+ts.SubSplitInfo'>, 'percent': <class 'datasets.splits.PercentSlice'>, 'tqdm': <class 'datasets.utils.tqdm.tqdm'>, 'experimental': <function experimental at 0x7c
+a6203b63e0>, 'logging': <module 'datasets.utils.logging' from '/usr/local/lib/python3.13/site-packages/datasets/utils/logging.py'>, 'track': <module 'datasets.u
+tils.track' from '/usr/local/lib/python3.13/site-packages/datasets/utils/track.py'>, 'info_utils': <module 'datasets.utils.info_utils' from '/usr/local/lib/pyth
+on3.13/site-packages/datasets/utils/info_utils.py'>, 'VerificationMode': <enum 'VerificationMode'>, 'disable_progress_bar': <function disable_progress_bars at 0
+x7ca6203b5ee0>, 'enable_progress_bar': <function enable_progress_bars at 0x7ca6203b5f80>, 'is_progress_bar_enabled': <function is_progress_bar_enabled at 0x7ca6
+203b60c0>, 'are_progress_bars_disabled': <function are_progress_bars_disabled at 0x7ca6203b6020>, 'disable_progress_bars': <function disable_progress_bars at 0x
+7ca6203b5ee0>, 'enable_progress_bars': <function enable_progress_bars at 0x7ca6203b5f80>, 'version': <module 'datasets.utils.version' from '/usr/local/lib/pytho
+n3.13/site-packages/datasets/utils/version.py'>, 'Version': <class 'datasets.utils.version.Version'>, 'extract': <module 'datasets.utils.extract' from '/usr/loc
+al/lib/python3.13/site-packages/datasets/utils/extract.py'>, 'file_utils': <module 'datasets.utils.file_utils' from '/usr/local/lib/python3.13/site-packages/dat
+asets/utils/file_utils.py'>, 'py_utils': <module 'datasets.utils.py_utils' from '/usr/local/lib/python3.13/site-packages/datasets/utils/py_utils.py'>, 'json': <
+module 'datasets.utils.json' from '/usr/local/lib/python3.13/site-packages/datasets/utils/json.py'>, 'metadata': <module 'datasets.utils.metadata' from '/usr/lo
+cal/lib/python3.13/site-packages/datasets/utils/metadata.py'>, 'stratify': <module 'datasets.utils.stratify' from '/usr/local/lib/python3.13/site-packages/datas
+ets/utils/stratify.py'>, 'tf_utils': <module 'datasets.utils.tf_utils' from '/usr/local/lib/python3.13/site-packages/datasets/utils/tf_utils.py'>, 'typing': <mo
+dule 'datasets.utils.typing' from '/usr/local/lib/python3.13/site-packages/datasets/utils/typing.py'>, 'sharding': <module 'datasets.utils.sharding' from '/usr/
+local/lib/python3.13/site-packages/datasets/utils/sharding.py'>, 'doc_utils': <module 'datasets.utils.doc_utils' from '/usr/local/lib/python3.13/site-packages/d
+atasets/utils/doc_utils.py'>, 'patching': <module 'datasets.utils.patching' from '/usr/local/lib/python3.13/site-packages/datasets/utils/patching.py'>, 'hub': <
+module 'datasets.utils.hub' from '/usr/local/lib/python3.13/site-packages/datasets/utils/hub.py'>}
+root@c34b154d48cc:/app# cat > explore_load.py << 'EOF'
+> import datasets
+> import inspect
+>
+> print('Dataset.load doc:')
+> print(inspect.getdoc(datasets.Dataset.load))
+> print('\nDataset.load_dataset doc:')
+> print(inspect.getdoc(datasets.load_dataset))
+> print('\nDataset.download doc:')
+> print(inspect.getdoc(datasets.download))
+> EOF
+root@c34b154d48cc:/app# python3 explore_load.py
+Dataset.load doc:
+Traceback (most recent call last):
+  File "/app/explore_load.py", line 5, in <module>
+    print(inspect.getdoc(datasets.Dataset.load))
+                         ^^^^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'Dataset' has no attribute 'load'
+root@c34b154d48cc:/app# cat > explore_load2.py << 'EOF'
+> import datasets
+> import inspect
+>
+> print('load_dataset doc:')
+> print(inspect.getdoc(datasets.load_dataset))
+> print('\nload_dataset with arguments:')
+> print(inspect.signature(datasets.load_dataset))
+> print('\nDataset.download doc:')
+> print(inspect.getdoc(datasets.download))
+> print('\nDataset.download with arguments:')
+> print(inspect.signature(datasets.download))
+> EOF
+root@c34b154d48cc:/app# python3 explore_load2.py
+load_dataset doc:
+Load a dataset from the Hugging Face Hub, or a local dataset.
+
+You can find the list of datasets on the [Hub](https://huggingface.co/datasets) or with [`huggingface_hub.list_datasets`].
+
+A dataset is a directory that contains some data files in generic formats (JSON, CSV, Parquet, etc.) and possibly
+in a generic structure (Webdataset, ImageFolder, AudioFolder, VideoFolder, MeshFolder, etc.)
+
+This function does the following under the hood:
+
+    1. Load a dataset builder:
+
+        * Find the most common data format in the dataset and pick its associated builder (JSON, CSV, Parquet, Webdataset, ImageFolder, AudioFolder, MeshFolder,
+ etc.)
+        * Find which file goes into which split (e.g. train/test) based on file and directory names or on the YAML configuration
+        * It is also possible to specify `data_files` manually, and which dataset builder to use (e.g. "parquet").
+
+    2. Run the dataset builder:
+
+        In the general case:
+
+        * Download the data files from the dataset if they are not already available locally or cached.
+        * Process and cache the dataset in typed Arrow tables for caching.
+
+            Arrow table are arbitrarily long, typed tables which can store nested objects and be mapped to numpy/pandas/python generic types.
+            They can be directly accessed from disk, loaded in RAM or even streamed over the web.
+
+        In the streaming case:
+
+        * Don't download or cache anything. Instead, the dataset is lazily loaded and will be streamed on-the-fly when iterating on it.
+
+    3. Return a dataset built from the requested splits in `split` (default: all).
+
+Args:
+
+    path (`str`):
+        Path or name of the dataset.
+
+        - if `path` is a dataset repository on the HF hub (list all available datasets with [`huggingface_hub.list_datasets`])
+          -> load the dataset from supported files in the repository (csv, json, parquet, etc.)
+          e.g. `'username/dataset_name'`, a dataset repository on the HF hub containing the data files.
+
+        - if `path` is a directory within a Storage Bucket on the HF Hub (list your buckets with [`huggingface_hub.list_buckets`])
+          -> load the dataset from supported files in the directory (csv, json, parquet, etc.)
+          e.g. `'buckets/username/bucket_name/my_dataset'`.
+
+        - if `path` is a local directory
+          -> load the dataset from supported files in the directory (csv, json, parquet, etc.)
+          e.g. `'./path/to/directory/with/my/csv/data'`.
+
+        - if `path` is the name of a dataset builder and `data_files` or `data_dir` is specified
+          (available builders are "json", "csv", "parquet", "arrow", "text", "xml", "webdataset", "imagefolder", "audiofolder", "videofolder", "meshfolder")
+          -> load the dataset from the files in `data_files` or `data_dir`
+          e.g. `'parquet'`.
+
+        Use a `hf://` path like `'hf://datasets/username/dataset_name'` to allow remote only.
+        Use an absolute path to allow local only.
+
+    name (`str`, *optional*):
+        Defining the name of the dataset configuration.
+    data_dir (`str`, *optional*):
+        Defining the `data_dir` of the dataset configuration. If specified for the generic builders (csv, text etc.) or the Hub datasets and `data_files` is `No
+ne`,
+        the behavior is equal to passing `os.path.join(data_dir, **)` as `data_files` to reference all the files in a directory.
+    data_files (`str` or `Sequence` or `Mapping`, *optional*):
+        Path(s) to source data file(s).
+    split (`Split` or `str`):
+        Which split of the data to load.
+        If `None`, will return a `dict` with all splits (typically `datasets.Split.TRAIN` and `datasets.Split.TEST`).
+        If given, will return a single Dataset.
+        Splits can be combined and specified like in tensorflow-datasets.
+    cache_dir (`str`, *optional*):
+        Directory to read/write data. Defaults to `"~/.cache/huggingface/datasets"`.
+    features (`Features`, *optional*):
+        Set the features type to use for this dataset.
+    download_config ([`DownloadConfig`], *optional*):
+        Specific download configuration parameters.
+    download_mode ([`DownloadMode`] or `str`, defaults to `REUSE_DATASET_IF_EXISTS`):
+        Download/generate mode.
+    verification_mode ([`VerificationMode`] or `str`, defaults to `BASIC_CHECKS`):
+        Verification mode determining the checks to run on the downloaded/processed dataset information (checksums/size/splits/...).
+
+        <Added version="2.9.1"/>
+    keep_in_memory (`bool`, defaults to `None`):
+        Whether to copy the dataset in-memory. If `None`, the dataset
+        will not be copied in-memory unless explicitly enabled by setting `datasets.config.IN_MEMORY_MAX_SIZE` to
+        nonzero. See more details in the [improve performance](../cache#improve-performance) section.
+    revision ([`Version`] or `str`, *optional*):
+        Version of the dataset to load.
+        As datasets have their own git repository on the Datasets Hub, the default version "main" corresponds to their "main" branch.
+        You can specify a different version than the default "main" by using a commit SHA or a git tag of the dataset repository.
+    token (`str` or `bool`, *optional*):
+        Optional string or boolean to use as Bearer token for remote files on the Datasets Hub.
+        If `True`, or not specified, will get token from `"~/.huggingface"`.
+    streaming (`bool`, defaults to `False`):
+        If set to `True`, don't download the data files. Instead, it streams the data progressively while
+        iterating on the dataset. An [`IterableDataset`] or [`IterableDatasetDict`] is returned instead in this case.
+
+        Note that streaming works for datasets that use data formats that support being iterated over like txt, csv, jsonl for example.
+        Json files may be downloaded completely. Also streaming from remote zip or gzip files is supported but other compressed formats
+        like rar and xz are not yet supported. The tgz format doesn't allow streaming.
+    num_proc (`int`, *optional*, defaults to `None`):
+        Number of processes when downloading and generating the dataset locally.
+        Multiprocessing is disabled by default.
+
+        <Added version="2.7.0"/>
+    storage_options (`dict`, *optional*, defaults to `None`):
+        **Experimental**. Key/value pairs to be passed on to the dataset file-system backend, if any.
+
+        <Added version="2.11.0"/>
+    **config_kwargs (additional keyword arguments):
+        Keyword arguments to be passed to the `BuilderConfig`
+        and used in the [`DatasetBuilder`].
+
+Returns:
+    [`Dataset`] or [`DatasetDict`]:
+    - if `split` is not `None`: the dataset requested,
+    - if `split` is `None`, a [`~datasets.DatasetDict`] with each split.
+
+    or [`IterableDataset`] or [`IterableDatasetDict`]: if `streaming=True`
+
+    - if `split` is not `None`, the dataset is requested
+    - if `split` is `None`, a [`~datasets.streaming.IterableDatasetDict`] with each split.
+
+Example:
+
+Load a dataset from the Hugging Face Hub:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset('cornell-movie-review-data/rotten_tomatoes', split='train')
+
+# Load a subset or dataset configuration (here 'sst2')
+>>> from datasets import load_dataset
+>>> ds = load_dataset('nyu-mll/glue', 'sst2', split='train')
+
+# Manual mapping of data files to splits
+>>> data_files = {'train': 'train.csv', 'test': 'test.csv'}
+>>> ds = load_dataset('namespace/your_dataset_name', data_files=data_files)
+
+# Manual selection of a directory to load
+>>> ds = load_dataset('namespace/your_dataset_name', data_dir='folder_name')
+```
+
+Load a dataset from a Storage Bucket on the Hugging Face Hub:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset('buckets/username/bucket_name/rotten_tomatoes', split='train')
+```
+
+Load a local dataset:
+
+```py
+# Load a CSV file
+>>> from datasets import load_dataset
+>>> ds = load_dataset('csv', data_files='path/to/local/my_dataset.csv')
+
+# Load a JSON file
+>>> from datasets import load_dataset
+>>> ds = load_dataset('json', data_files='path/to/local/my_dataset.json')
+```
+
+Load an [`~datasets.IterableDataset`]:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset('cornell-movie-review-data/rotten_tomatoes', split='train', streaming=True)
+```
+
+Load an image dataset with the `ImageFolder` dataset builder:
+
+```py
+>>> from datasets import load_dataset
+>>> ds = load_dataset('imagefolder', data_dir='/path/to/images', split='train')
+```
+
+load_dataset with arguments:
+(path: str, name: Optional[str] = None, data_dir: Optional[str] = None, data_files: Union[str, collections.abc.Sequence[str], collections.abc.Mapping[str, Union
+[str, collections.abc.Sequence[str]]], NoneType] = None, split: Union[str, datasets.splits.Split, list[str], list[datasets.splits.Split], NoneType] = None, cach
+e_dir: Optional[str] = None, features: Optional[datasets.features.features.Features] = None, download_config: Optional[datasets.download.download_config.Downloa
+dConfig] = None, download_mode: Union[datasets.download.download_manager.DownloadMode, str, NoneType] = None, verification_mode: Union[datasets.utils.info_utils
+.VerificationMode, str, NoneType] = None, keep_in_memory: Optional[bool] = None, save_infos: bool = False, revision: Union[datasets.utils.version.Version, str,
+NoneType] = None, token: Union[bool, str, NoneType] = None, streaming: bool = False, num_proc: Optional[int] = None, storage_options: Optional[dict] = None, **c
+onfig_kwargs) -> Union[datasets.dataset_dict.DatasetDict, datasets.arrow_dataset.Dataset, datasets.dataset_dict.IterableDatasetDict, datasets.iterable_dataset.I
+terableDataset]
+
+Dataset.download doc:
+None
+
+Dataset.download with arguments:
+Traceback (most recent call last):
+  File "/app/explore_load2.py", line 11, in <module>
+    print(inspect.signature(datasets.download))
+          ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/inspect.py", line 3344, in signature
+    return Signature.from_callable(obj, follow_wrapped=follow_wrapped,
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                                   globals=globals, locals=locals, eval_str=eval_str)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/inspect.py", line 3070, in from_callable
+    return _signature_from_callable(obj, sigcls=cls,
+                                    follow_wrapper_chains=follow_wrapped,
+                                    globals=globals, locals=locals, eval_str=eval_str)
+  File "/usr/local/lib/python3.13/inspect.py", line 2498, in _signature_from_callable
+    raise TypeError('{!r} is not a callable object'.format(obj))
+TypeError: <module 'datasets.download' from '/usr/local/lib/python3.13/site-packages/datasets/download/__init__.py'> is not a callable object
+root@c34b154d48cc:/app# cat > load_dataset_final.py << 'EOF'
+> import datasets
+> import json
+> import inspect
+>
+> print('Loading dataset with load_from_disk...')
+> dataset = datasets.load_from_disk('open-thoughts/OpenThoughts-114k')
+> print(f'Dataset shape: {dataset.shape}')
+> print(f'Columns: {dataset.columns}')
+> print('\nFirst 5 rows:')
+> for row in dataset.head():
+>     print(row)
+> print('\nUnique values in each column:')
+> for col in dataset.columns:
+>     print(f'{col}: {dataset[col].unique()[:10]}')
+>
+> # Check for domain column
+> for col in dataset.columns:
+>     if 'domain' in col.lower():
+>         print(f'Found domain column: {col}')
+>         break
+> else:
+>     print('No domain column found.')
+>
+> # Check for science domain values
+> if 'domain' in dataset.columns:
+>     print('Unique domain values:')
+>     print(dataset['domain'].unique())
+>
+> # Write the dataset to a temporary file for exploration (optional)
+> import shutil
+> shutil.copy('/tmp/dataset.tar.gz', '/tmp/dataset.tar.gz.backup')
+> print('Dataset saved to /tmp/dataset.tar.gz.backup')
+> EOF
+root@c34b154d48cc:/app# python3 load_dataset_final.py
+Loading dataset with load_from_disk...
+Traceback (most recent call last):
+  File "/app/load_dataset_final.py", line 6, in <module>
+    dataset = datasets.load_from_disk('open-thoughts/OpenThoughts-114k')
+  File "/usr/local/lib/python3.13/site-packages/datasets/load.py", line 1772, in load_from_disk
+    raise FileNotFoundError(f"Directory {dataset_path} not found")
+FileNotFoundError: Directory open-thoughts/OpenThoughts-114k not found
+root@c34b154d48cc:/app#

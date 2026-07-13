@@ -1,0 +1,56 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la\n'
+'head -c 100 /app/trunc.db | od -c\n'
+'which sqlite3\n'
+'sqlite3 --help 2>&1 | head -20\n'
+'apt-get update && apt-get install -y python3 python3-sqlite3 2>&1 | tail -20\n'
+'python3 -c "import sqlite3; print(\'sqlite3 module available\')"\n'
+'wc -c /app/trunc.db\n'
+'head -200 /app/trunc.db | cat -A\n'
+'cat /app/trunc.db\n'
+'python3 -c "\nimport sqlite3\nimport sys\ntry:\n    conn = sqlite3.connect(\'/app/trunc.db\')\n    cursor = conn.cursor()\n    # Try to get the number of rows\n    cursor.execute(\'SELECT COUNT(*) FROM testwords\')\n    print(\'Row count:\', cursor.fetchone()[0])\n    # If we can, get the data\n    cursor.execute(\'SELECT word, value FROM testwords\')\n    rows = cursor.fetchall()\n    print(\'Rows:\', len(rows))\n    for r in rows:\n        print(r)\nexcept Exception as e:\n    print(\'Error:\', e)\n    sys.exit(1)\n"\n'
+'od -x /app/trunc.db | head -30\n'
+'python3 -c "\nimport sys\nwith open(\'/app/trunc.db\', \'rb\') as f:\n    data = f.read()\n    print(\'First 100 bytes:\', data[:100])\n    # Try to parse as lines\n    lines = data.split(b\'\\n\')\n    for i, line in enumerate(lines):\n        line = line.strip()\n        if line:\n            parts = line.split()\n            print(f\'Line {i}: {len(parts)} parts: {parts}\')\n"\n'
+'python3 /app/parse.py\n'
+'cat /app/recover.json\n'
+'python3 -c "import json; data=open(\'/app/recover.json\').read(); print(\'Valid JSON:\', json.loads(data))"\n'
+"sed -n '2p' /app/trunc.db | od -c\n"
+"cat > /app/parse.py << 'EOF'\nimport re\nimport json\nimport sys\n\ndef extract_word_value(entry):\n    # entry format: testword09?\n    # match testword followed by digits\n    m = re.match(r'^testword(\\d+)', entry)\n    if m:\n        return m.group(1), int(m.group(1))\n    else:\n        # maybe there is a character after number\n        # try to find digits at start\n        digits = re.match(r'^(\\d+)', entry)\n        if digits:\n            return digits.group(0), int(digits.group(0))\n        else:\n            # fallback: return empty\n            return '', None\n\ndef main():\n    with open('/app/trunc.db', 'r') as f:\n        lines = f.readlines()\n    if len(lines) < 2:\n        print('Not enough lines')\n        sys.exit(1)\n    # skip first line (header)\n    entries_line = lines[1].strip()\n    if not entries_line:\n        print('Second line empty')\n        sys.exit(1)\n    # split by whitespace\n    tokens = entries_line.split()\n    data = []\n    for token in tokens:\n        word, value = extract_word_value(token)\n        if word and value is not None:\n            data.append({'word': word, 'value': value})\n    # write JSON\n    with open('/app/recover.json', 'w') as out:\n        json.dump(data, out, indent=2)\n    print(f'Found {len(data)} entries')\n\nif __name__ == '__main__':\n    main()\nEOF\n"
+'python3 /app/parse.py\n'
+'cat /app/recover.json\n'
+'hexdump -C /app/trunc.db | head -20\n'
+"cat > /app/parse2.py << 'EOF'\nimport re\nimport json\nimport sys\n\ndef extract_word_value(entry):\n    # entry format: testword09?\n    # match testword followed by digits\n    m = re.match(r'^testword(\\d+)', entry)\n    if m:\n        return m.group(1), int(m.group(1))\n    else:\n        # maybe there is a character after number\n        # try to find digits at start\n        digits = re.match(r'^(\\d+)', entry)\n        if digits:\n            return digits.group(0), int(digits.group(0))\n        else:\n            # fallback: return empty\n            return '', None\n\ndef main():\n    with open('/app/trunc.db', 'rb') as f:\n        data = f.read()\n    lines = data.split(b'\\n')\n    if len(lines) < 2:\n        print('Not enough lines')\n        sys.exit(1)\n    entries_line = lines[1].strip()\n    if not entries_line:\n        print('Second line empty')\n        sys.exit(1)\n    # split by whitespace\n    tokens = entries_line.split()\n    data = []\n    for token in tokens:\n        word, value = extract_word_value(token.decode('utf-8'))\n        if word and value is not None:\n            data.append({'word': word, 'value': value})\n    # write JSON\n    with open('/app/recover.json', 'w') as out:\n        json.dump(data, out, indent=2)\n    print(f'Found {len(data)} entries')\n\nif __name__ == '__main__':\n    main()\nEOF\n"
+'python3 /app/parse2.py\n'
+'cat /app/recover.json\n'
+'od -c /app/trunc.db\n'
+'file /app/trunc.db\n'
+"cat > /app/parse3.py << 'EOF'\nimport re\nimport json\n\ndef main():\n    with open('/app/trunc.db', 'r', encoding='utf-8-sig') as f:\n        lines = f.readlines()\n    if len(lines) < 2:\n        print('Not enough lines')\n        return\n    entries_line = lines[1].strip()\n    print('Second line (raw):', repr(entries_line))\n    tokens = entries_line.split()\n    data = []\n    for token in tokens:\n        # token is like 'testword09?' or 'testword08@X'\n        # extract digits after 'testword'\n        m = re.match(r'^testword(\\d+)', token)\n        if m:\n            num = m.group(1)\n            value = int(num)\n            data.append({'word': token, 'value': value})\n        else:\n            # try to find digits at start\n            digits = re.match(r'^(\\d+)', token)\n            if digits:\n                num = digits.group(1)\n                value = int(num)\n                # word is the rest\n                word = token[digits.end():].lstrip()\n                data.append({'word': word, 'value': value})\n    print(f'Found {len(data)} entries')\n    with open('/app/recover.json', 'w') as out:\n        json.dump(data, out, indent=2)\n\nif __name__ == '__main__':\n    main()\nEOF\n"
+'python3 /app/parse3.py\n'
+'cat /app/recover.json\n'
+"cat > /app/parse4.py << 'EOF'\nimport re\nimport json\n\ndef main():\n    with open('/app/trunc.db', 'rb') as f:\n        data = f.read()\n    # Remove UTF-8 BOM if present\n    if data.startswith(b'\\xef\\xbb\\xbf'):\n        data = data[3:]\n    lines = data.split(b'\\n')\n    if len(lines) < 2:\n        print('Not enough lines')\n        return\n    entries_line = lines[1].strip()\n    print('Second line (raw bytes):', entries_line)\n    print('Second line (hex):', entries_line.hex())\n    tokens = entries_line.split()\n    print('Tokens:', tokens)\n    data = []\n    for token in tokens:\n        # token is like 'testword09?' or 'testword08@X'\n        # extract digits after 'testword'\n        m = re.match(r'^testword(\\d+)', token.decode('utf-8', errors='ignore'))\n        if m:\n            num = m.group(1)\n            value = int(num)\n            data.append({'word': token, 'value': value})\n        else:\n            # try to find digits at start\n            digits = re.match(r'^(\\d+)', token.decode('utf-8', errors='ignore'))\n            if digits:\n                num = digits.group(1)\n                value = int(num)\n                # word is the rest\n                word = token[digits.end():].lstrip()\n                data.append({'word': word, 'value': value})\n    print(f'Found {len(data)} entries')\n    with open('/app/recover.json', 'w') as out:\n        json.dump(data, out, indent=2)\n\nif __name__ == '__main__':\n    main()\nEOF\n"
+'python3 /app/parse4.py\n'
+'cat /app/recover.json\n'
+'rm /app/recover.json\n'
+'python3 /app/parse4.py\n'
+'cat /app/recover.json\n'
+'python3 -c "import json; d=json.load(open(\'/app/recover.json\')); print(d)" 2>&1\n'
+'cat -A /app/trunc.db\n'
+'python3 -c "with open(\'/app/trunc.db\', \'r\', encoding=\'utf-8\') as f: lines = f.readlines(); print(\'Line 1:\', repr(lines[0].strip())); print(\'Line 2:\', repr(lines[1].strip()))"\n'
+'python3 -c "import json; data = json.loads(lines[1].strip()); print(data)" 2>&1\n'
+'python3 -c "with open(\'/app/trunc.db\', \'rb\') as f: lines = f.readlines(); print(\'Line length:\', len(lines[1]))"\n'
+'python3 -c "with open(\'/app/trunc.db\', \'rb\') as f: lines = f.readlines(); print(\'First 10 bytes:\', lines[1][:10])"\n'
+'python3 -c "with open(\'/app/trunc.db\', \'rb\') as f: lines = f.readlines(); b = lines[1]; print(\'Decoded UTF-16 little-endian:\', b.decode(\'utf-16-le\'))" 2>&1\n'
+'python3 -c "import json; with open(\'/app/trunc.db\', \'rb\') as f: lines = f.readlines(); b = lines[1]; s = b.decode(\'utf-16-le\'); print(\'Decoded:\', s)" 2>&1\n'
+'cat > /app/decode.py << \'EOF\'\nimport json\nwith open(\'/app/trunc.db\', \'rb\') as f:\n    lines = f.readlines()\nif len(lines) >= 2:\n    b = lines[1]\n    s = b.decode(\'utf-16-le\')\n    print(\'Decoded string:\', repr(s))\n    # The string should be a JSON object\n    try:\n        data = json.loads(s)\n        print(\'Parsed dictionary:\', data)\n        with open(\'/app/recover.json\', \'w\') as out:\n            json.dump(data, out, indent=2)\n        print(\'Written to recover.json\')\n    except Exception as e:\n        print(\'Error:\', e)\n        # If not JSON, maybe we need to manually extract\n        # Let\'s print characters in groups\n        for i in range(0, len(s), 2):\n            print(f\'{i}: {s[i]} {s[i+1] if i+1 < len(s) else ""}\')\nEOF\n'
+'python3 /app/decode.py\n'
+'cat /app/recover.json\n'
+'rm /app/decode.py\n'
+'cat > /app/decode.py << \'EOF\'\nimport json\nwith open(\'/app/trunc.db\', \'rb\') as f:\n    lines = f.readlines()\nif len(lines) >= 2:\n    b = lines[1]\n    s = b.decode(\'utf-16-le\')\n    print(\'Decoded string:\', repr(s))\n    # The string should be a JSON object\n    try:\n        data = json.loads(s)\n        print(\'Parsed dictionary:\', data)\n        with open(\'/app/recover.json\', \'w\') as out:\n            json.dump(data, out, indent=2)\n        print(\'Written to recover.json\')\n    except Exception as e:\n        print(\'Error:\', e)\n        # If not JSON, maybe we need to manually extract\n        # Let\'s print characters in groups\n        for i in range(0, len(s), 2):\n            print(f\'{i}: {s[i]} {s[i+1] if i+1 < len(s) else ""}\')\nEOF\n'
+'python3 /app/decode.py\n'
+'cat /app/recover.json\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

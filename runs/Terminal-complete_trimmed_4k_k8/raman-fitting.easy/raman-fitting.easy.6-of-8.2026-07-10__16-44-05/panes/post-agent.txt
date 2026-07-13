@@ -1,0 +1,535 @@
+root@985c2a6163ad:/app# ls -la
+total 88
+drwxr-xr-x 1 root root    34 Jun 24 11:01 .
+drwxr-xr-x 1 root root    57 Jul 11 17:47 ..
+-rw-rw-r-- 1 root root 88805 Jun 24 11:01 graphene.dat
+root@985c2a6163ad:/app# cat graphene.dat | head -20
+47183,554644    19261,547207
+46588,360019    19266,089699
+46008,191298    19077,996963
+45442,488736    19173,287322
+44890,718036    19501,518253
+44352,368927    19506,586203
+43826,959593    19752,431144
+43314,029137    19812,863021
+42813,138290    19678,348151
+42323,866373    19764,871128
+41845,813826    19360,099292
+41378,600916    19413,554878
+40921,863181    19626,191780
+40475,250679    19704,066336
+40038,430487    19495,727898
+39611,084116    19672,573559
+39192,908278    19538,763458
+38783,609488    19344,943112
+38382,908122    19510,307527
+37990,536178    19552,152695
+cat: write error: Broken pipe
+root@985c2a6163ad:/app# pip install numpy scipy
+Collecting numpy
+  Downloading numpy-2.5.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+Collecting scipy
+  Downloading scipy-1.18.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+Downloading numpy-2.5.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 279.1 MB/s eta 0:00:00
+Downloading scipy-1.18.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (35.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.3/35.3 MB 264.4 MB/s eta 0:00:00
+Installing collected packages: numpy, scipy
+Successfully installed numpy-2.5.1 scipy-1.18.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you ar
+e doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@985c2a6163ad:/app# head -5 graphene.dat
+47183,554644    19261,547207
+46588,360019    19266,089699
+46008,191298    19077,996963
+45442,488736    19173,287322
+44890,718036    19501,518253
+root@985c2a6163ad:/app# grep -n '1580' graphene.dat
+55:28025,415801 16827,649805
+1724:2640,901580        539,846610
+2748:1926,158050        2630,531977
+2932:1850,077412        3269,158068
+root@985c2a6163ad:/app# grep -n '2700' graphene.dat
+1315:3224,492700        781,374429
+3194:1756,927008        4519,736817
+root@985c2a6163ad:/app# awk -F',' '{print NF}' graphene.dat | uniq -c
+   3565 3
+root@985c2a6163ad:/app# od -c '47183,554644    19261,547207' | head -20
+od: '47183,554644    19261,547207': No such file or directory
+root@985c2a6163ad:/app# cat > parse.py << 'EOF'
+> import numpy as np
+> import scipy
+> from scipy import optimize
+> import json
+>
+> def parse_file(filename):
+>     data = []
+>     with open(filename, 'r') as f:
+>         for line in f:
+>             line = line.strip()
+>             if not line:
+>                 continue
+>             # split by whitespace
+>             parts = line.split()
+>             if len(parts) >= 3:
+>                 # third part is a comma-separated pair
+>                 third = parts[2]
+>                 # split by comma
+>                 third_parts = third.split(',')
+>                 if len(third_parts) == 2:
+>                     wavenumber = float(third_parts[0])
+>                     count = float(third_parts[1])
+>                     data.append((wavenumber, count))
+>     return np.array(data, dtype=np.float64)
+>
+> def lorentzian(x, x0, gamma, amp, offset):
+>     return offset + amp * gamma / ( (x - x0)**2 + gamma**2 )
+>
+> def main():
+>     data = parse_file('graphene.dat')
+>     wavenumbers = data[:,0]
+>     counts = data[:,1]
+>
+>     # find indices where wavenumber is close to 1580 and 2700
+>     g_idx = np.where(np.abs(wavenumbers - 1580) < 0.01)[0]
+>     d_idx = np.where(np.abs(wavenumbers - 2700) < 0.01)[0]
+>
+>     # fit G peak
+>     x0_g = wavenumbers[g_idx[0]]
+>     gamma_g = 10.0  # initial guess
+>     amp_g = 1.0
+>     offset_g = 0.0
+>
+>     # fit 2D peak
+>     x0_d = wavenumbers[d_idx[0]]
+>     gamma_d = 10.0
+>     amp_d = 1.0
+>     offset_d = 0.0
+>
+>     # we could do a more accurate fit by fitting both peaks together
+>     # but let's do separate fits for simplicity.
+>     # We'll fit using optimize.curve_fit with initial guesses.
+>
+>     # define function for both
+>     def fit_both(wavenumbers, counts, x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d):
+>         return offset_g + amp_g * gamma_g / ( (wavenumbers - x0_g)**2 + gamma_g**2 ) + offset_d + amp_d * gamma_d / ( (wavenumbers - x0_d)**2 + gamma_d**2 )
+>
+>     # initial guess for all parameters
+>     initial = [x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d]
+>     # bounds? not needed.
+>
+>     result, cov = optimize.curve_fit(fit_both, wavenumbers, counts, initial)
+>     x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d = result
+>
+>     print('G peak:', x0_g, gamma_g, amp_g, offset_g)
+>     print('2D peak:', x0_d, gamma_d, amp_d, offset_d)
+>
+>     # write to results.json
+>     results = {
+>         'G': {
+>             'x0': float(x0_g),
+>             'gamma': float(gamma_g),
+>             'amplitude': float(amp_g),
+>             'offset': float(offset_g)
+>         },
+>         '2D': {
+>             'x0': float(x0_d),
+>             'gamma': float(gamma_d),
+>             'amplitude': float(amp_d),
+>             'offset': float(offset_d)
+>         }
+>     }
+>
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@985c2a6163ad:/app# python3 parse.py
+Traceback (most recent call last):
+  File "/app/parse.py", line 89, in <module>
+    main()
+    ~~~~^^
+  File "/app/parse.py", line 31, in main
+    wavenumbers = data[:,0]
+                  ~~~~^^^^^
+IndexError: too many indices for array: array is 1-dimensional, but 2 were indexed
+root@985c2a6163ad:/app# cat > parse.py << 'EOF'
+> import numpy as np
+> import scipy
+> from scipy import optimize
+> import json
+>
+> def parse_file(filename):
+>     data = []
+>     with open(filename, 'r') as f:
+>         for line in f:
+>             line = line.strip()
+>             if not line:
+>                 continue
+>             parts = line.split()
+>             if len(parts) >= 3:
+>                 third = parts[2]
+>                 third_parts = third.split(',')
+>                 if len(third_parts) == 2:
+>                     wavenumber = float(third_parts[0])
+>                     count = float(third_parts[1])
+>                     data.append((wavenumber, count))
+>     # Convert to numpy array
+>     arr = np.array(data, dtype=np.float64).reshape(-1, 2)
+>     return arr
+>
+> def lorentzian(x, x0, gamma, amp, offset):
+>     return offset + amp * gamma / ( (x - x0)**2 + gamma**2 )
+>
+> def main():
+>     data = parse_file('graphene.dat')
+>     wavenumbers = data[:,0]
+>     counts = data[:,1]
+>
+>     # find indices where wavenumber is close to 1580 and 2700
+>     g_idx = np.where(np.abs(wavenumbers - 1580) < 0.01)[0]
+>     d_idx = np.where(np.abs(wavenumbers - 2700) < 0.01)[0]
+>
+>     # initial guess for gamma: we can compute from the width of the peak by looking at the data.
+>     # For simplicity, we'll use 10.0.
+>     gamma_g = 10.0
+>     gamma_d = 10.0
+>
+>     # fit G peak
+>     x0_g = wavenumbers[g_idx[0]]
+>     amp_g = counts[g_idx[0]]
+>     offset_g = 0.0
+>
+>     # fit 2D peak
+>     x0_d = wavenumbers[d_idx[0]]
+>     amp_d = counts[d_idx[0]]
+>     offset_d = 0.0
+>
+>     # fit both peaks together using initial guess
+>     initial = [x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d]
+>     def fit_both(wavenumbers, counts, x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d):
+>         return offset_g + amp_g * gamma_g / ( (wavenumbers - x0_g)**2 + gamma_g**2 ) + offset_d + amp_d * gamma_d / ( (wavenumbers - x0_d)**2 + gamma_d**2 )
+>     result, cov = optimize.curve_fit(fit_both, wavenumbers, counts, initial)
+>     x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d = result
+>
+>     print('G peak:', x0_g, gamma_g, amp_g, offset_g)
+>     print('2D peak:', x0_d, gamma_d, amp_d, offset_d)
+>
+>     # write to results.json
+>     results = {
+>         'G': {
+>             'x0': float(x0_g),
+>             'gamma': float(gamma_g),
+>             'amplitude': float(amp_g),
+>             'offset': float(offset_g)
+>         },
+>         '2D': {
+>             'x0': float(x0_d),
+>             'gamma': float(gamma_d),
+>             'amplitude': float(amp_d),
+>             'offset': float(offset_d)
+>         }
+>     }
+>
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@985c2a6163ad:/app# python3 parse.py
+Traceback (most recent call last):
+  File "/app/parse.py", line 83, in <module>
+    main()
+    ~~~~^^
+  File "/app/parse.py", line 43, in main
+    x0_g = wavenumbers[g_idx[0]]
+                       ~~~~~^^^
+IndexError: index 0 is out of bounds for axis 0 with size 0
+root@985c2a6163ad:/app# head -100 graphene.dat | tail -10
+22127,843527    12863,078189
+22000,057816    12627,408745
+21873,782109    12597,187634
+21748,990765    12330,578000
+21625,656852    12463,445026
+21503,755470    12210,634432
+21383,261824    12430,004687
+21264,151239    12286,150327
+21146,400506    12443,697758
+21029,986489    12385,383357
+root@985c2a6163ad:/app# python3 -c "line = open('graphene.dat').readline(); print('Line:', repr(line)); parts = line.split(); print('Parts:', len(parts)); print
+('First part:', parts[0])"
+Line: '47183,554644\t19261,547207\n'
+Parts: 2
+First part: 47183,554644
+root@985c2a6163ad:/app# python3 -c "import sys; sys.path.insert(0, '.'); exec(open('parse.py').read())" 2>&1 | head -20
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import sys; sys.path.insert(0, '.'); exec(open('parse.py').read())
+                                         ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 83, in <module>
+  File "<string>", line 43, in main
+IndexError: index 0 is out of bounds for axis 0 with size 0
+root@985c2a6163ad:/app# sed -n '55,55p' graphene.dat
+28025,415801    16827,649805
+root@985c2a6163ad:/app# sed -n '1724,1724p' graphene.dat
+2640,901580     539,846610
+root@985c2a6163ad:/app# sed -n '2748,2748p' graphene.dat
+1926,158050     2630,531977
+root@985c2a6163ad:/app# sed -n '1315,1315p' graphene.dat
+3224,492700     781,374429
+root@985c2a6163ad:/app# sed -n '3194,3194p' graphene.dat
+1756,927008     4519,736817
+root@985c2a6163ad:/app# cat > fit.py << 'EOF'
+
+    with open('results.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    print('Results written to results.json')
+
+if __name__ == '__main__':
+    main()
+EOF
+> import numpy as np
+> from scipy import optimize
+> import json
+>
+> def parse_file(filename):
+>     wavenumbers = []
+>     counts = []
+>     with open(filename, 'r') as f:
+>         for line in f:
+>             line = line.strip()
+>             if not line:
+>                 continue
+>             # Split by whitespace to get two parts
+>             parts = line.split()
+>             if len(parts) != 2:
+>                 continue
+>             # Each part is a pair of numbers (wavenumber, count)
+>             for part in parts:
+>                 # Split by comma
+>                 subparts = part.split(',')
+>                 if len(subparts) != 2:
+>                     continue
+>                 wavenumbers.append(float(subparts[0]))
+>                 counts.append(float(subparts[1]))
+>     # wavenumbers and counts are interleaved: first wavenumber from first polarization, then second, etc.
+>     # We want to combine by wavenumber: sum of counts for each wavenumber.
+>     # Let's create a dictionary mapping wavenumber to total count.
+>     total_counts = {}
+>     for w, c in zip(wavenumbers, counts):
+>         total_counts[w] = total_counts.get(w, 0) + c
+>     # Convert to arrays
+>     wavenumbers = np.array(list(total_counts.keys()))
+>     counts = np.array(list(total_counts.values()))
+>     return wavenumbers, counts
+>
+> def lorentzian(x, x0, gamma, amp, offset):
+>     return offset + amp * gamma / ( (x - x0)**2 + gamma**2 )
+>
+> def main():
+>     wavenumbers, counts = parse_file('graphene.dat')
+>
+>     # Find indices for G and 2D peaks
+>     g_idx = np.where(np.abs(wavenumbers - 1580) < 0.01)[0]
+>     d_idx = np.where(np.abs(wavenumbers - 2700) < 0.01)[0]
+>
+>     # Initial guess for gamma (we can compute from the width of the peak by looking at the data.
+>     # For simplicity, we'll use 10.0.
+>     gamma_g = 10.0
+>     gamma_d = 10.0
+>
+>     # Fit G peak
+>     x0_g = wavenumbers[g_idx[0]]
+>     amp_g = counts[g_idx[0]]
+>     offset_g = 0.0
+>
+>     # Fit 2D peak
+>     x0_d = wavenumbers[d_idx[0]]
+>     amp_d = counts[d_idx[0]]
+>     offset_d = 0.0
+>
+>     # Fit both peaks together using initial guess
+>     initial = [x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d]
+>     def fit_both(wavenumbers, counts, x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d):
+>         return offset_g + amp_g * gamma_g / ( (wavenumbers - x0_g)**2 + gamma_g**2 ) + offset_d + amp_d * gamma_d / ( (wavenumbers - x0_d)**2 + gamma_d**2 )
+>     result, cov = optimize.curve_fit(fit_both, wavenumbers, counts, initial)
+>     x0_g, gamma_g, amp_g, offset_g, x0_d, gamma_d, amp_d, offset_d = result
+>
+>     print('G peak:', x0_g, gamma_g, amp_g, offset_g)
+>     print('2D peak:', x0_d, gamma_d, amp_d, offset_d)
+>
+>     # Write to results.json
+>     results = {
+>         'G': {
+>             'x0': float(x0_g),
+>             'gamma': float(gamma_g),
+>             'amplitude': float(amp_g),
+>             'offset': float(offset_g)
+>         },
+>         '2D': {
+>             'x0': float(x0_d),
+>             'gamma': float(gamma_d),
+>             'amplitude': float(amp_d),
+>             'offset': float(offset_d)
+>         }
+>     }
+>
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@985c2a6163ad:/app# python3 fit.py
+Traceback (most recent call last):
+  File "/app/fit.py", line 92, in <module>
+    main()
+    ~~~~^^
+  File "/app/fit.py", line 52, in main
+    x0_g = wavenumbers[g_idx[0]]
+                       ~~~~~^^^
+IndexError: index 0 is out of bounds for axis 0 with size 0
+root@985c2a6163ad:/app# python3 -c "
+> import sys
+> with open('graphene.dat') as f:
+>     for i, line in enumerate(f):
+>         if i < 5:
+>             print(repr(line))
+>             break
+> "
+'47183,554644\t19261,547207\n'
+root@985c2a6163ad:/app# python3 -c "
+> import sys
+> with open('graphene.dat') as f:
+>     wavenumbers = []
+>     counts = []
+>     for line in f:
+>         line = line.strip()
+>         if not line:
+>             continue
+>         parts = line.split()
+>         for part in parts:
+>             sub = part.split(',')
+>             if len(sub) == 2:
+>                 wavenumbers.append(float(sub[0]))
+>                 counts.append(float(sub[1]))
+>     print('Total wavenumbers:', len(wavenumbers))
+>     print('First 10:', wavenumbers[:10])
+>     print('Last 10:', wavenumbers[-10:])
+>     import numpy as np
+>     g_idx = np.where(np.abs(wavenumbers - 1580) < 0.01)[0]
+>     d_idx = np.where(np.abs(wavenumbers - 2700) < 0.01)[0]
+>     print('G idx:', g_idx)
+>     print('D idx:', d_idx)
+> "
+Total wavenumbers: 7130
+First 10: [47183.0, 19261.0, 46588.0, 19266.0, 46008.0, 19077.0, 45442.0, 19173.0, 44890.0, 19501.0]
+Last 10: [1649.0, 6062.0, 1649.0, 6005.0, 1649.0, 6009.0, 1648.0, 5911.0, 1648.0, 5950.0]
+Traceback (most recent call last):
+  File "<string>", line 20, in <module>
+    g_idx = np.where(np.abs(wavenumbers - 1580) < 0.01)[0]
+                            ~~~~~~~~~~~~^~~~~~
+TypeError: unsupported operand type(s) for -: 'list' and 'int'
+root@985c2a6163ad:/app# python3 -c "
+> import sys
+> with open('graphene.dat') as f:
+>     for i, line in enumerate(f):
+>         if i < 10:
+>             print(line.strip())
+>             break
+> "
+47183,554644    19261,547207
+root@985c2a6163ad:/app# python3 -c "
+> import sys
+> with open('graphene.dat') as f:
+>     wavenumbers = []
+>     counts = []
+>     for line in f:
+>         line = line.strip()
+>         if not line:
+>             continue
+>         parts = line.split()
+>         for part in parts:
+>             sub = part.split(',')
+>             if len(sub) == 2:
+>                 wavenumbers.append(float(sub[0]))
+>                 counts.append(float(sub[1]))
+>     print('Total wavenumbers:', len(wavenumbers))
+>     print('First 10:', wavenumbers[:10])
+>     print('Last 10:', wavenumbers[-10:])
+>     import numpy as np
+>     g_idx = np.where(np.abs(wavenumbers - 1580) < 0.01)[0]
+>     d_idx = np.where(np.abs(wavenumbers - 2700) < 0.01)[0]
+>     print('G idx:', g_idx)
+>     print('D idx:', d_idx)
+> "
+Total wavenumbers: 7130
+First 10: [47183.0, 19261.0, 46588.0, 19266.0, 46008.0, 19077.0, 45442.0, 19173.0, 44890.0, 19501.0]
+Last 10: [1649.0, 6062.0, 1649.0, 6005.0, 1649.0, 6009.0, 1648.0, 5911.0, 1648.0, 5950.0]
+Traceback (most recent call last):
+  File "<string>", line 20, in <module>
+    g_idx = np.where(np.abs(wavenumbers - 1580) < 0.01)[0]
+                            ~~~~~~~~~~~~^~~~~~
+TypeError: unsupported operand type(s) for -: 'list' and 'int'
+root@985c2a6163ad:/app# python3 -c "
+> import sys
+> with open('graphene.dat') as f:
+>     for i, line in enumerate(f):
+>         if '1580' in line or '2700' in line:
+>             line = line.strip()
+>             # Find the first space
+>             first_space = line.find(' ')
+>             if first_space != -1:
+>                 first_part = line[:first_space]
+>                 # Split by comma
+>                 sub = first_part.split(',')
+>                 if len(sub) == 2:
+>                     wavenumber = float(sub[0])
+>                     print(f'Line {i+1}: wavenumber = {wavenumber}')
+>             else:
+>                 print(f'Line {i+1}: no space')
+> "
+Line 55: no space
+Line 1315: no space
+Line 1724: no space
+Line 2748: no space
+Line 2932: no space
+Line 3194: no space
+root@985c2a6163ad:/app# python3 -c "
+> import sys
+> with open('graphene.dat') as f:
+>     lines = f.readlines()
+>     for i, line in enumerate(lines[:20]):
+>         print(line.strip())
+> "
+47183,554644    19261,547207
+46588,360019    19266,089699
+46008,191298    19077,996963
+45442,488736    19173,287322
+44890,718036    19501,518253
+44352,368927    19506,586203
+43826,959593    19752,431144
+43314,029137    19812,863021
+42813,138290    19678,348151
+42323,866373    19764,871128
+41845,813826    19360,099292
+41378,600916    19413,554878
+40921,863181    19626,191780
+40475,250679    19704,066336
+40038,430487    19495,727898
+39611,084116    19672,573559
+39192,908278    19538,763458
+38783,609488    19344,943112
+38382,908122    19510,307527
+37990,536178    19552,152695
+root@985c2a6163ad:/app#

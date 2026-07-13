@@ -1,0 +1,126 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@2153accfc7b8:/app/scripts# cd /app/scripts
+root@2153accfc7b8:/app/scripts# cat > test_rules.sh << 'EOF'
+> #!/bin/bash
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> AUTH_LOG="$LOG_DIR/auth.log"
+> HTTP_LOG="$LOG_DIR/http.log"
+>
+> if command -v jq >/dev/null 2>&1; then
+>     jq -r '.rules[] | "\(.id) \(.pattern) \(.threshold) \(.timeframe) \(.severity)"' "$RULES_FILE" > /tmp/rules.txt
+> fi
+>
+> while IFS= read -r rule_line; do
+>     rule_id=$(echo "$rule_line" | awk '{print $1}')
+>     rule_pattern=$(echo "$rule_line" | awk '{print $2}')
+>     auth_count=$(grep -c -E "$rule_pattern" "$AUTH_LOG")
+>     http_count=$(grep -c -E "$rule_pattern" "$HTTP_LOG")
+>     total=$((auth_count + http_count))
+>     echo "Rule: $rule_id, Pattern: $rule_pattern, Auth matches: $auth_count, Http matches: $http_count, Total: $total"
+>     if [[ $total -ge 0 ]]; then
+>         auth_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$AUTH_LOG" | grep -E "$rule_pattern" | sort -u)
+>         http_ips=$(grep -oEo "([0-9]{1,3}\.){3}[0-9]{1,3}" "$HTTP_LOG" | grep -E "$rule_pattern" | sort -u)
+>         echo "  Auth IPs: $auth_ips"
+>         echo "  Http IPs: $http_ips"
+>         combined=$(echo "$auth_ips" "$http_ips" | sort -u)
+>         echo "  Combined unique IPs: $combined"
+>     fi
+> done < /tmp/rules.txt
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x test_rules.sh
+root@2153accfc7b8:/app/scripts# ./test_rules.sh
+Rule: SSH-BRUTE-FORCE, Pattern: Failed, Auth matches: 8, Http matches: 0, Total: 8
+  Auth IPs:
+  Http IPs:
+  Combined unique IPs:
+Rule: WEB-SCAN, Pattern: GET, Auth matches: 0, Http matches: 11, Total: 11
+  Auth IPs:
+  Http IPs:
+  Combined unique IPs:
+Rule: INVALID-USER, Pattern: invalid, Auth matches: 2, Http matches: 0, Total: 2
+  Auth IPs:
+  Http IPs:
+  Combined unique IPs:
+Rule: SUDO-COMMAND, Pattern: sudo:.*COMMAND=, Auth matches: 3, Http matches: 0, Total: 3
+  Auth IPs:
+  Http IPs:
+  Combined unique IPs:
+root@2153accfc7b8:/app/scripts# cat > test_patterns.sh << 'EOF'
+> #!/bin/bash
+> LOG_DIR="/app/logs"
+> AUTH_LOG="$LOG_DIR/auth.log"
+> HTTP_LOG="$LOG_DIR/http.log"
+>
+> # SSH-BRUTE-FORCE
+> pattern="Failed password for"
+> echo "SSH-BRUTE-FORCE:"
+> grep -c -E "$pattern" "$AUTH_LOG"
+> grep -c -E "$pattern" "$HTTP_LOG"
+> # WEB-SCAN
+> pattern="GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php"
+> echo "WEB-SCAN:"
+> grep -c -E "$pattern" "$AUTH_LOG"
+> grep -c -E "$pattern" "$HTTP_LOG"
+> # INVALID-USER
+> pattern="invalid user"
+> echo "INVALID-USER:"
+> grep -c -E "$pattern" "$AUTH_LOG"
+> grep -c -E "$pattern" "$HTTP_LOG"
+> # SUDO-COMMAND
+> pattern="sudo:.*COMMAND="
+> echo "SUDO-COMMAND:"
+> grep -c -E "$pattern" "$AUTH_LOG"
+> grep -c -E "$pattern" "$HTTP_LOG"
+> EOF
+root@2153accfc7b8:/app/scripts# chmod +x test_patterns.sh
+root@2153accfc7b8:/app/scripts# ./test_patterns.sh
+SSH-BRUTE-FORCE:
+8
+0
+WEB-SCAN:
+0
+6
+INVALID-USER:
+2
+0
+SUDO-COMMAND:
+3
+0
+root@2153accfc7b8:/app/scripts# cd /app/scripts
+root@2153accfc7b8:/app/scripts# bash -x ./intrusion_detector.sh 2>&1 | head -30
++ set -e
++ LOG_DIR=/app/logs
++ RULES_FILE=/app/rules/detection_rules.json
++ AUTH_LOG=/app/logs/auth.log
++ HTTP_LOG=/app/logs/http.log
++ ALERT_OUTPUT=/app/alert.json
++ REPORT_OUTPUT=/app/report.json
++ RULES=()
++ RULE_ID=
++ RULE_PATTERN=
++ RULE_THRESHOLD=
++ RULE_TIMEFRAME=
++ RULE_SEVERITY=
++ detect
++ parse_rules /app/rules/detection_rules.json
++ local json_file=/app/rules/detection_rules.json
++ [[ ! -f /app/rules/detection_rules.json ]]
++ command -v jq
++ jq -r '.rules[] | "\(.id) \(.pattern) \(.threshold) \(.timeframe) \(.severity)"' /app/rules/detection_rules.json
++ IFS=
++ read -r rule_line
+++ echo 'SSH-BRUTE-FORCE Failed password for 5 60 high'
+++ awk '{print $1}'
++ rule_id=SSH-BRUTE-FORCE
+++ echo 'SSH-BRUTE-FORCE Failed password for 5 60 high'
+++ awk '{print $2}'
++ rule_pattern=Failed
+++ echo 'SSH-BRUTE-FORCE Failed password for 5 60 high'
+++ awk '{print $3}'
++ rule_threshold=password
+root@2153accfc7b8:/app/scripts#

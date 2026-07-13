@@ -1,0 +1,133 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+    return trainer, Noneroot@95302c980052:/app# ls -la /app/UPET/run_script
+total 88
+drwxr-xr-x  2 root root 4096 Jul 10 16:53 .
+drwxr-xr-x 12 root root 4096 Jul 10 16:53 ..
+-rw-r--r--  1 root root  607 Jul 10 16:53 run_boolq_bert.sh
+-rw-r--r--  1 root root  606 Jul 10 16:53 run_boolq_roberta.sh
+-rw-r--r--  1 root root  613 Jul 10 16:53 run_conll03_roberta.sh
+-rw-r--r--  1 root root  619 Jul 10 16:53 run_conll04_bert.sh
+-rw-r--r--  1 root root  615 Jul 10 16:53 run_conll04_roberta.sh
+-rw-r--r--  1 root root  614 Jul 10 16:53 run_conll05_roberta.sh
+-rw-r--r--  1 root root  614 Jul 10 16:53 run_conll12_bert.sh
+-rw-r--r--  1 root root  613 Jul 10 16:53 run_conll12_roberta.sh
+-rw-r--r--  1 root root  605 Jul 10 16:53 run_copa_bert.sh
+-rw-r--r--  1 root root  605 Jul 10 16:53 run_copa_roberta.sh
+-rw-r--r--  1 root root  618 Jul 10 16:53 run_ontonotes_bert.sh
+-rw-r--r--  1 root root  621 Jul 10 16:53 run_ontonotes_roberta.sh
+-rw-r--r--  1 root root  604 Jul 10 16:53 run_rte_bert.sh
+-rw-r--r--  1 root root  633 Jul 10 16:53 run_rte_roberta.sh
+-rw-r--r--  1 root root  565 Jul 10 16:53 run_squad_roberta.sh
+-rw-r--r--  1 root root  588 Jul 10 16:53 run_squad_v2_roberta.sh
+-rw-r--r--  1 root root  648 Jul 10 16:53 run_wic_bert.sh
+-rw-r--r--  1 root root  603 Jul 10 16:53 run_wic_roberta.sh
+-rw-r--r--  1 root root  604 Jul 10 16:53 run_wsc_bert.sh
+-rw-r--r--  1 root root  600 Jul 10 16:53 run_wsc_roberta.sh
+root@95302c980052:/app# cat /app/UPET/run_script/run_rte_roberta.sh 2>/dev/null || echo 'No bash script found'
+export TASK_NAME=superglue
+export DATASET_NAME=rte
+export CUDA_VISIBLE_DEVICES=7
+
+bs=32
+lr=5e-3
+dropout=0.1
+psl=128
+epoch=100
+
+python3 run.py \
+  --model_name_or_path /wjn/pre-trained-lm/roberta-large \
+  --task_name $TASK_NAME \
+  --dataset_name $DATASET_NAME \
+  --do_train \
+  --do_eval \
+  --max_seq_length 128 \
+  --per_device_train_batch_size $bs \
+  --learning_rate $lr \
+  --num_train_epochs $epoch \
+  --pre_seq_len $psl \
+  --output_dir checkpoints/$DATASET_NAME-roberta/ \
+  --overwrite_output_dir \
+  --hidden_dropout_prob $dropout \
+  --seed 11 \
+  --save_strategy no \
+  --evaluation_strategy epoch \
+  --head_prefix \
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/*.py 2>/dev/null
+root@95302c980052:/app# cat /app/UPET/training/trainer_base.py
+import logging
+import os
+from typing import Dict, OrderedDict
+
+from transformers import Trainer
+
+logger = logging.getLogger(__name__)
+
+_default_log_level = logging.INFO
+logger.setLevel(_default_log_level)
+
+class BaseTrainer(Trainer):
+    def __init__(self, *args, predict_dataset = None, test_key = "accuracy", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.predict_dataset = predict_dataset
+        self.test_key = test_key
+        self.best_metrics = OrderedDict({
+            "best_epoch": 0,
+            f"best_eval_{self.test_key}": 0,
+        })
+
+    def log_best_metrics(self):
+        self.log_metrics("best", self.best_metrics)
+        self.save_metrics("best", self.best_metrics, combined=False)
+
+
+
+    def _maybe_log_save_evaluate(self, tr_loss, model, trial, epoch, ignore_keys_for_eval):
+        if self.control.should_log:
+            logs: Dict[str, float] = {}
+
+
+            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+
+            # reset tr_loss to zero
+            tr_loss -= tr_loss
+
+            logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
+            logs["learning_rate"] = self._get_learning_rate()
+
+            self._total_loss_scalar += tr_loss_scalar
+            self._globalstep_last_logged = self.state.global_step
+            self.store_flos()
+
+            self.log(logs)
+
+        eval_metrics = None
+        if self.control.should_evaluate:
+            eval_metrics = self.evaluate(ignore_keys=ignore_keys_for_eval)
+            self._report_to_hp_search(trial, epoch, eval_metrics)
+            print("eval_metrics=", eval_metrics)
+            if eval_metrics["eval_"+self.test_key] > self.best_metrics["best_eval_"+self.test_key]:
+                self.best_metrics["best_epoch"] = epoch
+                self.best_metrics["best_eval_"+self.test_key] = eval_metrics["eval_"+self.test_key]
+
+                if self.predict_dataset is not None:
+                    if isinstance(self.predict_dataset, dict):
+                        for dataset_name, dataset in self.predict_dataset.items():
+                            _, _, test_metrics = self.predict(dataset, metric_key_prefix="test")
+                            self.best_metrics[f"best_test_{dataset_name}_{self.test_key}"] = test_metrics["test_"+self.test_key]
+                    else:
+                        _, _, test_metrics = self.predict(self.predict_dataset, metric_key_prefix="test")
+                        self.best_metrics["best_test_"+self.test_key] = test_metrics["test_"+self.test_key]
+
+            logger.info(f"***** Epoch {epoch}: Best results *****")
+            for key, value in self.best_metrics.items():
+                logger.info(f"{key} = {value}")
+            self.log(self.best_metrics)
+
+        if self.control.should_save:
+            self._save_checkpoint(model, trial, metrics=eval_metrics)
+            self.control = self.callback_handler.on_save(self.args, self.state, self.control)
+root@95302c980052:/app#

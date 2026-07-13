@@ -1,0 +1,134 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context to verify it can be loaded
+>     context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)  # Use SSLv23 which supports TLSv1.2
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     # Get the subject and dates using OpenSSL subprocess
+>     # Subject
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'],
+>                            capture_output=True, text=True)
+>     subject = result.stdout.strip()
+>     # Dates
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-dates'],
+>                            capture_output=True, text=True)
+>     dates = result.stdout.strip()
+>
+>     # Parse expiration date for validation
+>     # OpenSSL date format: "notBefore=2024-01-01 00:00:00 GMT, notAfter=2025-01-01 00:00:00 GMT"
+>     # Extract notAfter date
+>     not_after_str = dates.split('notAfter=')[1].split(',')[0].strip()
+>     try:
+>         expiration_date = datetime.strptime(not_after_str, '%Y-%m-%d %H:%M:%S %z')
+>     except ValueError:
+>         expiration_date = datetime.strptime(not_after_str, '%Y-%m-%d %H:%M:%S')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Print Common Name (extract from subject)
+>     # Subject format: "Subject: CN=dev-internal.company.local, O=DevOps Team, C=US"
+>     # We'll split by commas and take the first part after 'CN='
+>     # But we can also use OpenSSL to get Common Name directly
+>     result = subprocess.run(['openssl', 'x509', '-in', cert_path, '-noout', '-subject'],
+>                            capture_output=True, text=True)
+>     subject_lines = result.stdout.split('\n')
+>     common_name = None
+>     for line in subject_lines:
+>         if line.startswith(' CN='):
+>             common_name = line[4:].strip()
+>             break
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Dates: {dates}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:26: DeprecationWarning: ssl.PROTOCOL_TLS is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_SSLv23)  # Use SSLv23 which supports TLSv1.2
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 44, in verify_certificate
+    expiration_date = datetime.strptime(not_after_str, '%Y-%m-%d %H:%M:%S %z')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data 'Jul  7 17:16:53 2027 GMT' does not match format '%Y-%m-%d %H:%M:%S %z'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 80, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 46, in verify_certificate
+    expiration_date = datetime.strptime(not_after_str, '%Y-%m-%d %H:%M:%S')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data 'Jul  7 17:16:53 2027 GMT' does not match format '%Y-%m-%d %H:%M:%S'
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct
+root@8b6b3d06105a:/app# ls -la /app/ssl/
+total 20
+drwxr-xr-x 2 root root  104 Jul  7 17:16 .
+drwxr-xr-x 1 root root   50 Jul  7 17:16 ..
+-rw-r--r-- 1 root root 1253 Jul  7 17:16 server.crt
+-rw------- 1 root root 1704 Jul  7 17:16 server.key
+-rw-r--r-- 1 root root 2957 Jul  7 17:16 server.pem
+-rw-r--r-- 1 root root  219 Jul  7 17:16 verification.txt
+root@8b6b3d06105a:/app#

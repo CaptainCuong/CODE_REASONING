@@ -1,0 +1,63 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@fed6ca6445e8:/app# python3 download_model.py
+Model already exists at /app/model_cache/sentiment_model
+root@fed6ca6445e8:/app# ls -la /app/model_cache/
+total 0
+drwxr-xr-x 3 root root  37 Jul  7 16:15 .
+drwxr-xr-x 1 root root  62 Jul  7 16:14 ..
+drwxr-xr-x 2 root root 121 Jul  7 16:15 sentiment_model
+root@fed6ca6445e8:/app# cd /app
+root@fed6ca6445e8:/app# cat > sentiment_api.py << 'EOF'
+> from flask import Flask, request, json
+> import sys
+> sys.path.insert(0, '/app/model_cache')
+> from transformers import AutoModelForSequenceClassification, AutoTokenizer
+>
+> # Load the model and tokenizer
+> model = AutoModelForSequenceClassification.from_pretrained('/app/model_cache/sentiment_model')
+> tokenizer = AutoTokenizer.from_pretrained('/app/model_cache/sentiment_model')
+>
+> app = Flask(__name__)
+>
+> @app.route('/sentiment', methods=['POST'])
+> def sentiment_analysis():
+>     try:
+>         data = request.get_json()
+>         if 'text' not in data:
+>             return {'error': 'Missing text field'}, 400
+>         text = data['text']
+>         # Tokenize the text
+>         inputs = tokenizer(text, return_tensors='pt')
+>         # Get predictions
+>         outputs = model(inputs['input_ids'], attention_mask=inputs['attention_mask'])
+>         # Get the probability of positive sentiment (class 1)
+>         probabilities = outputs.logits
+>         prob_positive = probabilities[0][1].item()  # second class is positive
+>         prob_negative = 1 - prob_positive
+>         # Determine sentiment
+>         if prob_positive > 0.5:
+>             sentiment = 'positive'
+>         else:
+>             sentiment = 'negative'
+>         # Prepare response
+>         response = {
+>             'sentiment': sentiment,
+>             'confidence': {
+>                 'positive': float(prob_positive),
+>                 'negative': float(prob_negative)
+>             }
+>         }
+>         return response
+>     except Exception as e:
+>         return {'error': str(e)}, 500
+>
+> if __name__ == '__main__':
+>     app.run(host='0.0.0.0', port=5000, debug=False)
+> EOF
+root@fed6ca6445e8:/app# python3 sentiment_api.py &
+[1] 749
+root@fed6ca6445e8:/app#

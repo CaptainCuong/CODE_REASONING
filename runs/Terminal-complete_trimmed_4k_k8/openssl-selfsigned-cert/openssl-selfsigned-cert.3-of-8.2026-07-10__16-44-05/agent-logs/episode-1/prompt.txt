@@ -1,0 +1,104 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+root@09cec90a92a5:/app# mkdir -p /app/ssl
+root@09cec90a92a5:/app# cd /app/ssl
+root@09cec90a92a5:/app/ssl# which openssl
+/usr/bin/openssl
+root@09cec90a92a5:/app/ssl# openssl genrsa -out server.key 2048
+root@09cec90a92a5:/app/ssl# chmod 600 server.key
+root@09cec90a92a5:/app/ssl# cat > server.csr << 'EOF'
+> subject = /C=US/ST=CA/O=DevOps Team/CN=dev-internal.company.local
+> EOF
+root@09cec90a92a5:/app/ssl# openssl req -new -key server.key -out server.csr -config server.csr 2>&1 | head -20
+You are about to be asked to enter information that will be incorporated
+into your certificate request.
+What you are about to enter is what is called a Distinguished Name or a DN.
+There are quite a few fields but you can leave some blank
+For some fields there will be a default value,
+If you enter '.', the field will be left blank.
+-----
+Error: No objects specified in config file
+Error making certificate request
+root@09cec90a92a5:/app/ssl# openssl x509 -req -days 365 -in server.csr -CA /dev/null -CAkey server.key -out server.crt
+Unable to load certificate request input
+4007ED8EB5700000:error:0480006C:PEM routines:get_name:no start line:../crypto/pem/pem_lib.c:760:Expecting: CERTIFICATE REQUEST
+root@09cec90a92a5:/app/ssl# cat > server.pem << 'EOF'
+> server.key
+> server.crt
+> EOF
+root@09cec90a92a5:/app/ssl# cat > verification.txt << 'EOF'
+> Subject: $(openssl x509 -subject -in server.crt)
+> Validity: $(openssl x509 -dates -in server.crt)
+> Fingerprint: $(openssl x509 -fingerprint -sha256 -in server.crt | cut -d'=' -f2)
+> EOF
+root@09cec90a92a5:/app/ssl# cat > check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+>
+> def main():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if cert exists
+>     if not os.path.exists(cert_path):
+>         print('ERROR: Certificate file not found')
+>         sys.exit(1)
+>
+>     # Load certificate
+>     try:
+>         with open(cert_path, 'rb') as f:
+>             cert_data = f.read()
+>         cert = ssl.Certificate.from_bytes(cert_data)
+>     except Exception as e:
+>         print(f'ERROR: Failed to load certificate: {e}')
+>         sys.exit(1)
+>
+>     # Extract details
+>     common_name = cert.subject.get('commonName', '')
+>     # Validity dates
+>     try:
+>         validity = cert.validity
+>         not_before = validity.not_before
+>         not_after = validity.not_after
+>         # Convert to YYYY-MM-DD
+>         not_before_str = not_before.strftime('%Y-%m-%d')
+>         not_after_str = not_after.strftime('%Y-%m-%d')
+>     except Exception:
+>         # If dates are not available, try alternative
+>         try:
+>             not_before = validity.notBefore
+>             not_after = validity.notAfter
+>             not_before_str = not_before.strftime('%Y-%m-%d')
+>             not_after_str = not_after.strftime('%Y-%m-%d')
+>         except Exception:
+>             print('WARNING: Could not extract validity dates')
+>
+>     # SHA-256 fingerprint (optional)
+>     try:
+>         with open(cert_path, 'rb') as f:
+>             cert_bytes = f.read()
+>         fp = hashlib.sha256(cert_bytes).hexdigest()
+>         print(f'SHA-256 Fingerprint: {fp}')
+>     except Exception:
+>         print('WARNING: Could not compute SHA-256 fingerprint')
+>
+>     print(f'Common Name: {common_name}')
+>     print(f'Valid From: {not_before_str}')
+>     print(f'Valid Until: {not_after_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     import os
+>     import hashlib
+>     main()
+> EOF
+root@09cec90a92a5:/app/ssl# python3 check_cert.py
+ERROR: Certificate file not found
+root@09cec90a92a5:/app/ssl# cat verification.txt
+Subject: $(openssl x509 -subject -in server.crt)
+Validity: $(openssl x509 -dates -in server.crt)
+Fingerprint: $(openssl x509 -fingerprint -sha256 -in server.crt | cut -d'=' -f2)
+root@09cec90a92a5:/app/ssl#

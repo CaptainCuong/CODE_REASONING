@@ -1,0 +1,110 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@21ad6cbe7fbf:/app# cd /app
+root@21ad6cbe7fbf:/app# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR=/app/logs
+> RULES=/app/rules/detection_rules.json
+> OUTPUT_ALERT=/app/reports/alert.json
+> OUTPUT_REPORT=/app/reports/report.json
+>
+> # Parse rules
+> rules=()
+> rule_matches=()
+> rule_ips=()
+> rule_thresholds=()
+> rule_severities=()
+> rule_patterns=()
+>
+> while IFS= read -r line; do
+>     line=$(echo "$line" | jq -c '.')
+>     if [ -z "$line" ]; then continue
+>     fi
+>     rule_id=$(echo "$line" | jq -r '.id')
+>     pattern=$(echo "$line" | jq -r '.pattern')
+>     threshold=$(echo "$line" | jq -r '.threshold')
+>     severity=$(echo "$line" | jq -r '.severity')
+>     rules+=("$rule_id")
+>     rule_patterns+=("$pattern")
+>     rule_thresholds+=("$threshold")
+>     rule_severities+=("$severity")
+>     rule_matches+=("0")
+>     rule_ips+=("")
+>     # Initialize IPs list
+>     rule_ips[$rule_id]=""
+>     rule_matches[$rule_id]=0
+> done < "$RULES" | jq -r '.rules[]'
+>
+> # Process logs
+> for log in "$LOG_DIR/auth.log" "$LOG_DIR/http.log"; do
+>     while IFS= read -r line; do
+>         line=$(echo "$line" | tr '\n' ' ' | sed 's/  */ /g')
+>         for i in ${!rules[@]}; do
+>             if [[ $line =~ $rule_patterns[$i],i ]]; then
+>                 ((rule_matches[$i]++))
+>                 # Extract IP
+>                 # For auth.log, IP after 'from ' or in brackets
+>                 # For http.log, first field before dash
+>                 # We'll use grep to find IP pattern
+>                 ip=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}')
+>                 if [[ $ip ]]; then
+>                     # Deduplicate
+>                     if [[ -z ${rule_ips[$i]} ]]; then
+>                         rule_ips[$i]="$ip"
+>                     else
+>                         rule_ips[$i]="$rule_ips[$i], $ip"
+>                     fi
+>                 fi
+>                 break
+>             fi
+>         done
+>     done < "$log"
+> done
+>
+> # Generate alert and report
+> now=$(date -u +'%Y-%m-%dT%H:%M:%S.%f')
+>
+> alerts=()
+> events=()
+> for i in ${!rules[@]}; do
+>     if [ ${rule_matches[$i]} -ge ${rule_thresholds[$i]} ]; then
+>         alerts+=("
+>         {
+>             "id": "$rules[$i]",
+>             "severity": "$rule_severities[$i]",
+>             "matches": $rule_matches[$i],
+>             "ips": "$rule_ips[$i]"
+>         }
+>         ")
+>     fi
+>     events+=("
+>     {
+>         "id": "$rules[$i]",
+>         "severity": "$rule_severities[$i]",
+>         "matches": $rule_matches[$i],
+>         "ips": "$rule_ips[$i]"
+>     }
+>     ")
+>
+> echo '{
+>   "timestamp": "$now",
+>   "alerts": [
+>     '$ alerts[@]'
+>   ]
+> }' > "$OUTPUT_ALERT"
+> echo '{
+>   "timestamp": "$now",
+>   "events": [
+>     '$ events[@]'
+>   ],
+>   "statistics": {
+>     "rule_id": $rule_matches[$i]
+>   }
+> }' > "$OUTPUT_REPORT"
+> EOF
+root@21ad6cbe7fbf:/app#

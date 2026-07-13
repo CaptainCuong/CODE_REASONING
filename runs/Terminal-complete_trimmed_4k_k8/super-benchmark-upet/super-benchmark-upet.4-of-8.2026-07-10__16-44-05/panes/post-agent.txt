@@ -1,0 +1,1866 @@
+    #     evaluate(trainer)
+
+    # if training_args.do_predict:
+    #     predict(trainer, predict_dataset)
+
+   root@e6d9097663bb:/app/UPET# cd /app/UPET && python3 run.py --help 2>&1
+cat -n /app/UPET/run.py | tail -n 200
+Traceback (most recent call last):
+  File "/app/UPET/run.py", line 7, in <module>
+    import datasets
+ModuleNotFoundError: No module named 'datasets'
+root@e6d9097663bb:/app/UPET# cat -n /app/UPET/run.py | tail -n 200
+     1  import logging
+     2  import os
+     3  import sys
+     4  import numpy as np
+     5  from typing import Dict
+     6
+     7  import datasets
+     8  import transformers
+     9  from transformers import set_seed, Trainer
+    10  from transformers.trainer_utils import get_last_checkpoint
+    11
+    12  from arguments import get_args
+    13
+    14  from tasks.utils import *
+    15
+    16  os.environ["WANDB_DISABLED"] = "true"
+    17
+    18  logger = logging.getLogger(__name__)
+    19
+    20  def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    21      checkpoint = None
+    22      if resume_from_checkpoint is not None:
+    23          checkpoint = resume_from_checkpoint
+    24      elif last_checkpoint is not None:
+    25          checkpoint = last_checkpoint
+    26      train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    27      # trainer.save_model()，
+    28
+    29      try:
+    30          metrics = train_result.metrics
+    31
+    32          trainer.log_metrics("train", metrics)
+    33          trainer.save_metrics("train", metrics)
+    34          trainer.save_state()
+    35
+    36          trainer.log_best_metrics()
+    37      except:
+    38          pass
+    39
+    40  def evaluate(trainer):
+    41      logger.info("*** Evaluate ***")
+    42      metrics = trainer.evaluate()
+    43
+    44      trainer.log_metrics("eval", metrics)
+    45      trainer.save_metrics("eval", metrics)
+    46
+    47  def predict(trainer, predict_dataset=None):
+    48      if predict_dataset is None:
+    49          logger.info("No dataset is available for testing")
+    50
+    51      elif isinstance(predict_dataset, dict):
+    52
+    53          for dataset_name, d in predict_dataset.items():
+    54              logger.info("*** Predict: %s ***" % dataset_name)
+    55              predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+    56              predictions = np.argmax(predictions, axis=2)
+    57
+    58              trainer.log_metrics("predict", metrics)
+    59              trainer.save_metrics("predict", metrics)
+    60
+    61      else:
+    62          logger.info("*** Predict ***")
+    63          predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+    64          predictions = np.argmax(predictions, axis=2)
+    65
+    66          trainer.log_metrics("predict", metrics)
+    67          trainer.save_metrics("predict", metrics)
+    68
+    69  if __name__ == '__main__':
+    70
+    71      args = get_args()
+    72
+    73      _, data_args, training_args, semi_training_args, _ = args
+    74
+    75      logging.basicConfig(
+    76          format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    77          datefmt="%m/%d/%Y %H:%M:%S",
+    78          handlers=[logging.StreamHandler(sys.stdout)],
+    79      )
+    80
+    81      log_level = training_args.get_process_log_level()
+    82      logger.setLevel(log_level)
+    83      datasets.utils.logging.set_verbosity(log_level)
+    84      transformers.utils.logging.set_verbosity(log_level)
+    85      transformers.utils.logging.enable_default_handler()
+    86      transformers.utils.logging.enable_explicit_format()
+    87
+    88      # Log on each process the small summary:
+    89      logger.warning(
+    90          f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+    91          + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    92      )
+    93      logger.info(f"Training/evaluation parameters {training_args}")
+    94
+    95
+    96      if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+    97          os.mkdir("checkpoints")
+    98
+    99      if data_args.task_name.lower() == "superglue":
+   100          assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+   101          from tasks.superglue.get_trainer import get_trainer
+   102
+   103      elif data_args.task_name.lower() == "glue":
+   104          assert data_args.dataset_name.lower() in GLUE_DATASETS
+   105          from tasks.glue.get_trainer import get_trainer
+   106
+   107      elif data_args.task_name.lower() == "ner":
+   108          assert data_args.dataset_name.lower() in NER_DATASETS
+   109          from tasks.ner.get_trainer import get_trainer
+   110
+   111      elif data_args.task_name.lower() == "srl":
+   112          assert data_args.dataset_name.lower() in SRL_DATASETS
+   113          from tasks.srl.get_trainer import get_trainer
+   114
+   115      elif data_args.task_name.lower() == "qa":
+   116          assert data_args.dataset_name.lower() in QA_DATASETS
+   117          from tasks.qa.get_trainer import get_trainer
+   118
+   119      elif data_args.task_name.lower() == "other_cls":
+   120          assert data_args.dataset_name.lower() in OTHER_DATASETS
+   121          from tasks.other_cls.get_trainer import get_trainer
+   122
+   123      else:
+   124          raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+   125
+   126      set_seed(training_args.seed)
+   127
+   128      trainer, predict_dataset = get_trainer(args)
+   129
+   130      last_checkpoint = None
+   131      if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+   132          last_checkpoint = get_last_checkpoint(training_args.output_dir)
+   133          if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+   134              raise ValueError(
+   135                  f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+   136                  "Use --overwrite_output_dir to overcome."
+   137              )
+   138          elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+   139              logger.info(
+   140                  f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+   141                  "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+   142              )
+   143
+   144
+   145      if training_args.do_train:
+   146          train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+   147
+   148      # if training_args.do_eval:
+   149      #     evaluate(trainer)
+   150
+   151      # if training_args.do_predict:
+   152      #     predict(trainer, predict_dataset)
+   153
+   154     root@e6d9097663bb:/app/UPET# wc -l /app/UPET/run.py
+153 /app/UPET/run.py
+root@e6d9097663bb:/app/UPET# cat /app/UPET/run.py
+import logging
+import os
+import sys
+import numpy as np
+from typing import Dict
+
+import datasets
+import transformers
+from transformers import set_seed, Trainer
+from transformers.trainer_utils import get_last_checkpoint
+
+from arguments import get_args
+
+from tasks.utils import *
+
+os.environ["WANDB_DISABLED"] = "true"
+
+logger = logging.getLogger(__name__)
+
+def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    checkpoint = None
+    if resume_from_checkpoint is not None:
+        checkpoint = resume_from_checkpoint
+    elif last_checkpoint is not None:
+        checkpoint = last_checkpoint
+    train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    # trainer.save_model()，
+
+    try:
+        metrics = train_result.metrics
+
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
+
+        trainer.log_best_metrics()
+    except:
+        pass
+
+def evaluate(trainer):
+    logger.info("*** Evaluate ***")
+    metrics = trainer.evaluate()
+
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
+
+def predict(trainer, predict_dataset=None):
+    if predict_dataset is None:
+        logger.info("No dataset is available for testing")
+
+    elif isinstance(predict_dataset, dict):
+
+        for dataset_name, d in predict_dataset.items():
+            logger.info("*** Predict: %s ***" % dataset_name)
+            predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+            predictions = np.argmax(predictions, axis=2)
+
+            trainer.log_metrics("predict", metrics)
+            trainer.save_metrics("predict", metrics)
+
+    else:
+        logger.info("*** Predict ***")
+        predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+        predictions = np.argmax(predictions, axis=2)
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
+
+if __name__ == '__main__':
+
+    args = get_args()
+
+    _, data_args, training_args, semi_training_args, _ = args
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    datasets.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
+
+
+    if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+        os.mkdir("checkpoints")
+
+    if data_args.task_name.lower() == "superglue":
+        assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+        from tasks.superglue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "glue":
+        assert data_args.dataset_name.lower() in GLUE_DATASETS
+        from tasks.glue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "ner":
+        assert data_args.dataset_name.lower() in NER_DATASETS
+        from tasks.ner.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "srl":
+        assert data_args.dataset_name.lower() in SRL_DATASETS
+        from tasks.srl.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "qa":
+        assert data_args.dataset_name.lower() in QA_DATASETS
+        from tasks.qa.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "other_cls":
+        assert data_args.dataset_name.lower() in OTHER_DATASETS
+        from tasks.other_cls.get_trainer import get_trainer
+
+    else:
+        raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+
+    set_seed(training_args.seed)
+
+    trainer, predict_dataset = get_trainer(args)
+
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+
+    if training_args.do_train:
+        train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+
+    # if training_args.do_eval:
+    #     evaluate(trainer)
+
+    # if training_args.do_predict:
+    #     predict(trainer, predict_dataset)
+
+   root@e6d9097663bb:/app/UPET# cat /app/UPET/run.py | head -n 153
+import logging
+import os
+import sys
+import numpy as np
+from typing import Dict
+
+import datasets
+import transformers
+from transformers import set_seed, Trainer
+from transformers.trainer_utils import get_last_checkpoint
+
+from arguments import get_args
+
+from tasks.utils import *
+
+os.environ["WANDB_DISABLED"] = "true"
+
+logger = logging.getLogger(__name__)
+
+def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    checkpoint = None
+    if resume_from_checkpoint is not None:
+        checkpoint = resume_from_checkpoint
+    elif last_checkpoint is not None:
+        checkpoint = last_checkpoint
+    train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    # trainer.save_model()，
+
+    try:
+        metrics = train_result.metrics
+
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
+
+        trainer.log_best_metrics()
+    except:
+        pass
+
+def evaluate(trainer):
+    logger.info("*** Evaluate ***")
+    metrics = trainer.evaluate()
+
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
+
+def predict(trainer, predict_dataset=None):
+    if predict_dataset is None:
+        logger.info("No dataset is available for testing")
+
+    elif isinstance(predict_dataset, dict):
+
+        for dataset_name, d in predict_dataset.items():
+            logger.info("*** Predict: %s ***" % dataset_name)
+            predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+            predictions = np.argmax(predictions, axis=2)
+
+            trainer.log_metrics("predict", metrics)
+            trainer.save_metrics("predict", metrics)
+
+    else:
+        logger.info("*** Predict ***")
+        predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+        predictions = np.argmax(predictions, axis=2)
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
+
+if __name__ == '__main__':
+
+    args = get_args()
+
+    _, data_args, training_args, semi_training_args, _ = args
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    datasets.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
+
+
+    if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+        os.mkdir("checkpoints")
+
+    if data_args.task_name.lower() == "superglue":
+        assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+        from tasks.superglue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "glue":
+        assert data_args.dataset_name.lower() in GLUE_DATASETS
+        from tasks.glue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "ner":
+        assert data_args.dataset_name.lower() in NER_DATASETS
+        from tasks.ner.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "srl":
+        assert data_args.dataset_name.lower() in SRL_DATASETS
+        from tasks.srl.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "qa":
+        assert data_args.dataset_name.lower() in QA_DATASETS
+        from tasks.qa.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "other_cls":
+        assert data_args.dataset_name.lower() in OTHER_DATASETS
+        from tasks.other_cls.get_trainer import get_trainer
+
+    else:
+        raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+
+    set_seed(training_args.seed)
+
+    trainer, predict_dataset = get_trainer(args)
+
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+
+    if training_args.do_train:
+        train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+
+    # if training_args.do_eval:
+    #     evaluate(trainer)
+
+    # if training_args.do_predict:
+    #     predict(trainer, predict_dataset)
+
+root@e6d9097663bb:/app/UPET# cat /app/UPET/run.py | head -n 153
+import logging
+import os
+import sys
+import numpy as np
+from typing import Dict
+
+import datasets
+import transformers
+from transformers import set_seed, Trainer
+from transformers.trainer_utils import get_last_checkpoint
+
+from arguments import get_args
+
+from tasks.utils import *
+
+os.environ["WANDB_DISABLED"] = "true"
+
+logger = logging.getLogger(__name__)
+
+def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    checkpoint = None
+    if resume_from_checkpoint is not None:
+        checkpoint = resume_from_checkpoint
+    elif last_checkpoint is not None:
+        checkpoint = last_checkpoint
+    train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    # trainer.save_model()，
+
+    try:
+        metrics = train_result.metrics
+
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
+
+        trainer.log_best_metrics()
+    except:
+        pass
+
+def evaluate(trainer):
+    logger.info("*** Evaluate ***")
+    metrics = trainer.evaluate()
+
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
+
+def predict(trainer, predict_dataset=None):
+    if predict_dataset is None:
+        logger.info("No dataset is available for testing")
+
+    elif isinstance(predict_dataset, dict):
+
+        for dataset_name, d in predict_dataset.items():
+            logger.info("*** Predict: %s ***" % dataset_name)
+            predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+            predictions = np.argmax(predictions, axis=2)
+
+            trainer.log_metrics("predict", metrics)
+            trainer.save_metrics("predict", metrics)
+
+    else:
+        logger.info("*** Predict ***")
+        predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+        predictions = np.argmax(predictions, axis=2)
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
+
+if __name__ == '__main__':
+
+    args = get_args()
+
+    _, data_args, training_args, semi_training_args, _ = args
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    datasets.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
+
+
+    if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+        os.mkdir("checkpoints")
+
+    if data_args.task_name.lower() == "superglue":
+        assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+        from tasks.superglue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "glue":
+        assert data_args.dataset_name.lower() in GLUE_DATASETS
+        from tasks.glue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "ner":
+        assert data_args.dataset_name.lower() in NER_DATASETS
+        from tasks.ner.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "srl":
+        assert data_args.dataset_name.lower() in SRL_DATASETS
+        from tasks.srl.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "qa":
+        assert data_args.dataset_name.lower() in QA_DATASETS
+        from tasks.qa.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "other_cls":
+        assert data_args.dataset_name.lower() in OTHER_DATASETS
+        from tasks.other_cls.get_trainer import get_trainer
+
+    else:
+        raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+
+    set_seed(training_args.seed)
+
+    trainer, predict_dataset = get_trainer(args)
+
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+
+    if training_args.do_train:
+        train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+
+    # if training_args.do_eval:
+    #     evaluate(trainer)
+
+    # if training_args.do_predict:
+    #     predict(trainer, predict_dataset)
+
+root@e6d9097663bb:/app/UPET# cat /app/UPET/run.py
+import logging
+import os
+import sys
+import numpy as np
+from typing import Dict
+
+import datasets
+import transformers
+from transformers import set_seed, Trainer
+from transformers.trainer_utils import get_last_checkpoint
+
+from arguments import get_args
+
+from tasks.utils import *
+
+os.environ["WANDB_DISABLED"] = "true"
+
+logger = logging.getLogger(__name__)
+
+def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    checkpoint = None
+    if resume_from_checkpoint is not None:
+        checkpoint = resume_from_checkpoint
+    elif last_checkpoint is not None:
+        checkpoint = last_checkpoint
+    train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    # trainer.save_model()，
+
+    try:
+        metrics = train_result.metrics
+
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
+
+        trainer.log_best_metrics()
+    except:
+        pass
+
+def evaluate(trainer):
+    logger.info("*** Evaluate ***")
+    metrics = trainer.evaluate()
+
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
+
+def predict(trainer, predict_dataset=None):
+    if predict_dataset is None:
+        logger.info("No dataset is available for testing")
+
+    elif isinstance(predict_dataset, dict):
+
+        for dataset_name, d in predict_dataset.items():
+            logger.info("*** Predict: %s ***" % dataset_name)
+            predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+            predictions = np.argmax(predictions, axis=2)
+
+            trainer.log_metrics("predict", metrics)
+            trainer.save_metrics("predict", metrics)
+
+    else:
+        logger.info("*** Predict ***")
+        predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+        predictions = np.argmax(predictions, axis=2)
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
+
+if __name__ == '__main__':
+
+    args = get_args()
+
+    _, data_args, training_args, semi_training_args, _ = args
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    datasets.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
+
+
+    if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+        os.mkdir("checkpoints")
+
+    if data_args.task_name.lower() == "superglue":
+        assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+        from tasks.superglue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "glue":
+        assert data_args.dataset_name.lower() in GLUE_DATASETS
+        from tasks.glue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "ner":
+        assert data_args.dataset_name.lower() in NER_DATASETS
+        from tasks.ner.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "srl":
+        assert data_args.dataset_name.lower() in SRL_DATASETS
+        from tasks.srl.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "qa":
+        assert data_args.dataset_name.lower() in QA_DATASETS
+        from tasks.qa.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "other_cls":
+        assert data_args.dataset_name.lower() in OTHER_DATASETS
+        from tasks.other_cls.get_trainer import get_trainer
+
+    else:
+        raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+
+    set_seed(training_args.seed)
+
+    trainer, predict_dataset = get_trainer(args)
+
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+
+    if training_args.do_train:
+        train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+
+    # if training_args.do_eval:
+    #     evaluate(trainer)
+
+    # if training_args.do_predict:
+    #     predict(trainer, predict_dataset)
+
+   root@e6d9097663bb:/app/UPET# cat /app/UPET/arguments.py
+from enum import Enum
+import argparse
+import dataclasses
+from dataclasses import dataclass, field
+from typing import Optional
+
+from transformers import HfArgumentParser, TrainingArguments
+
+from tasks.utils import *
+
+
+@dataclass
+class DataTrainingArguments:
+    """
+    Arguments pertaining to what data we are going to input our model for training and eval.
+
+    Using `HfArgumentParser` we can turn this class
+    into argparse arguments to be able to specify them on
+    the command line.training_args
+    """
+    task_name: str = field(
+        metadata={
+            "help": "The name of the task to train on: " + ", ".join(TASKS),
+            "choices": TASKS
+        },
+    )
+    dataset_name: str = field(
+        metadata={
+            "help": "The name of the dataset to use: " + ", ".join(DATASETS),
+            "choices": DATASETS
+        }
+    )
+    # add by wjn
+    num_examples_per_label: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Randomly sampling k-shot examples for each label "
+        },
+    )
+    dataset_config_name: Optional[str] = field(
+        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
+    )
+    max_seq_length: int = field(
+        default=128,
+        metadata={
+            "help": "The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    overwrite_cache: bool = field(
+        default=False, metadata={"help": "Overwrite the cached preprocessed datasets or not."}
+    )
+    pad_to_max_length: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to pad all samples to `max_seq_length`. "
+            "If False, will pad the samples dynamically when batching to the maximum length in the batch."
+        },
+    )
+    max_train_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of training examples to this "
+            "value if set."
+        },
+    )
+    max_eval_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
+            "value if set."
+        },
+    )
+    max_predict_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of prediction examples to this "
+            "value if set."
+        },
+    )
+    train_file: Optional[str] = field(
+        default=None, metadata={"help": "A csv or a json file containing the training data."}
+    )
+    validation_file: Optional[str] = field(
+        default=None, metadata={"help": "A csv or a json file containing the validation data."}
+    )
+    test_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "A csv or a json file containing the test data."}
+    )
+    template_id: Optional[int] = field(
+        default=0,
+        metadata={
+            "help": "The specific prompt string to use"
+        }
+    )
+
+
+@dataclass
+class ModelArguments:
+    """
+    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
+    """
+    model_name_or_path: str = field(
+        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
+    )
+    config_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
+    )
+    tokenizer_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
+    )
+    cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
+    )
+    use_fast_tokenizer: bool = field(
+        default=True,
+        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
+    )
+    model_revision: str = field(
+        default="main",
+        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
+    )
+    use_auth_token: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
+            "with private models)."
+        },
+    )
+    use_pe: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use parameter-efficient settings. If true, that means fix the parameters of the backbone, and only"
+            "tune the new initialized modules (e.g., adapter, prefix, ptuning, etc.)"
+        }
+    )
+    head_prefix: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Head-tuning Prefix (P-tuning v2) during training"
+        }
+    )
+    prompt_prefix: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Prompt-tuning Prefix (P-tuning v2) during training"
+        }
+    )
+    head_only: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Head Fine-tuning during training (w/o. any new modules)"
+        }
+    )
+    prompt_only: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Prompt Fine-tuning during training (w/o. any new modules)"
+        }
+    )
+    head_ptuning: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Head-tuning P-tuning during training (w. parameter-efficient)"
+        }
+    )
+    prompt_ptuning: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Prompt-tuning P-tuning during training (w. parameter-efficient)"
+        }
+    )
+    head_adapter: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Head-tuning Adapter tuning during training (w. parameter-efficient)"
+        }
+    )
+    prompt_adapter: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Prompt-tuning Adapter tuning during training (w. parameter-efficient)"
+        }
+    )
+    adapter_choice: str = field(
+        default="LiST",
+        metadata={"help": "The choice of adapter, list, lora, houlsby."},
+    )
+    adapter_dim: int = field(
+        default=128,
+        metadata={"help": "The hidden size of adapter. default is 128."},
+    )
+    pre_seq_len: int = field(
+        default=4,
+        metadata={
+            "help": "The length of prompt"
+        }
+    )
+    prefix_projection: bool = field(
+        default=False,
+        metadata={
+            "help": "Apply a two-layer MLP head over the prefix embeddings"
+        }
+    )
+    prefix_hidden_size: int = field(
+        default=512,
+        metadata={
+            "help": "The hidden size of the MLP projection head in Prefix Encoder if prefix projection is used"
+        }
+    )
+    hidden_dropout_prob: float = field(
+        default=0.1,
+        metadata={
+            "help": "The dropout probability used in the models"
+        }
+    )
+
+
+@dataclass
+class SemiSupervisedArguments:
+    use_semi: bool = field(
+        default=False, metadata={"help": "If true, the training process will be transformed into self-training framework."}
+    )
+    unlabeled_data_num: int = field(
+        default=-1,
+        metadata={
+            "help": "The total number of unlabeled data. If set -1 means all the training data (expect of few-shot labeled data)"
+        }
+    )
+    unlabeled_data_batch_size: int = field(
+        default=16,
+        metadata={
+            "help": "The number of unlabeled data in one batch."
+        }
+    )
+    pseudo_sample_num_or_ratio: float = field(
+        default=0.1,
+        metadata={
+            "help": "The number / ratio of pseudo-labeled data sampling. For example, if have 1000 unlabeled data, 0.1 / 100 means sampling 100 pseduo-labeled d
+ata."
+        }
+    )
+    teacher_training_epoch: int = field(
+        default=10,
+        metadata={
+            "help": "The epoch number of teacher training at the beginning of self-training."
+        }
+    )
+    teacher_tuning_epoch: int = field(
+        default=10,
+        metadata={
+            "help": "The epoch number of teacher tuning in each self-training iteration."
+        }
+    )
+    student_training_epoch: int = field(
+        default=16,
+        metadata={
+            "help": "The epoch number of student training in each self-training iteration."
+        }
+    )
+    student_learning_rate: float = field(
+        default=1e-5,
+        metadata={
+            "help": "The learning rate of student training in each self-training iteration."
+        }
+    )
+    self_training_epoch: int = field(
+        default=30,
+        metadata={
+            "help": "The number of teacher-student iteration ."
+        }
+    )
+    # self-training过程中，unlabeled data会先采样一个子集，因此student模型学习的样本数量只有不到1024个
+    # post_student_train设置后，即允许在self-training后，选择最佳的teacher模型，并在全部的unlabeled data上打标和mc dropout
+    # 此时student模型将会在更多的样本上训练（样本数量不超过20k）
+    post_student_train: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train a student model on large pseudo-labeled data after self-training iteration"
+        }
+    )
+    student_pre_seq_len: int = field(
+        default=4,
+        metadata={
+            "help": "The length of prompt"
+        }
+    )
+
+
+
+
+
+@dataclass
+class QuestionAnwseringArguments:
+    n_best_size: int = field(
+        default=20,
+        metadata={"help": "The total number of n-best predictions to generate when looking for an answer."},
+    )
+    max_answer_length: int = field(
+        default=30,
+        metadata={
+            "help": "The maximum length of an answer that can be generated. This is needed because the start "
+            "and end predictions are not conditioned on one another."
+        },
+    )
+    version_2_with_negative: bool = field(
+        default=False, metadata={"help": "If true, some of the examples do not have an answer."}
+    )
+    null_score_diff_threshold: float = field(
+        default=0.0,
+        metadata={
+            "help": "The threshold used to select the null answer: if the best answer has a score that is less than "
+            "the score of the null answer minus this threshold, the null answer is selected for this example. "
+            "Only useful when `version_2_with_negative=True`."
+        },
+    )
+
+
+
+
+def get_args():
+    """Parse all the args."""
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments, SemiSupervisedArguments, QuestionAnwseringArguments))
+
+    args = parser.parse_args_into_dataclasses()
+
+    return argsroot@e6d9097663bb:/app/UPET# cd /app/UPET && python3 run.py --help 2>&1
+Traceback (most recent call last):
+  File "/app/UPET/run.py", line 7, in <module>
+    import datasets
+ModuleNotFoundError: No module named 'datasets'
+root@e6d9097663bb:/app/UPET# pip install -r /app/UPET/requirements.txt
+Collecting datasets==1.15.1
+  Using cached datasets-1.15.1-py3-none-any.whl (290 kB)
+Collecting numpy==1.19.2
+  Using cached numpy-1.19.2.zip (7.3 MB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... error
+  error: subprocess-exited-with-error
+
+  × Preparing metadata (pyproject.toml) did not run successfully.
+  │ exit code: 1
+  ╰─> [53 lines of output]
+      Running from numpy source directory.
+      setup.py:470: UserWarning: Unrecognized setuptools command, proceeding with generating Cython sources and expanding templates
+        run_build = parse_setuppy_commands()
+
+      Error compiling Cython file:
+      ------------------------------------------------------------
+      ...
+              for i in range(1, RK_STATE_LEN):
+                  self.rng_state.key[i] = val[i]
+              self.rng_state.pos = i
+
+              self._bitgen.state = &self.rng_state
+              self._bitgen.next_uint64 = &mt19937_uint64
+                                         ^
+      ------------------------------------------------------------
+      _mt19937.pyx:138:35: Cannot assign type 'uint64_t (*)(void *) except? -1LL nogil' to 'uint64_t (*)(void *) noexcept nogil'. Exception values are incompati
+ble. Suggest adding 'noexcept' to the type of the value being assigned.
+      Processing numpy/random/_bounded_integers.pxd.in
+      Processing numpy/random/_mt19937.pyx
+      Traceback (most recent call last):
+        File "/tmp/pip-install-tmk7bfbn/numpy_bbec11308a994108837c9437cf69c184/tools/cythonize.py", line 235, in <module>
+          main()
+        File "/tmp/pip-install-tmk7bfbn/numpy_bbec11308a994108837c9437cf69c184/tools/cythonize.py", line 231, in main
+          find_process_files(root_dir)
+        File "/tmp/pip-install-tmk7bfbn/numpy_bbec11308a994108837c9437cf69c184/tools/cythonize.py", line 222, in find_process_files
+          process(root_dir, fromfile, tofile, function, hash_db)
+        File "/tmp/pip-install-tmk7bfbn/numpy_bbec11308a994108837c9437cf69c184/tools/cythonize.py", line 188, in process
+          processor_function(fromfile, tofile)
+        File "/tmp/pip-install-tmk7bfbn/numpy_bbec11308a994108837c9437cf69c184/tools/cythonize.py", line 77, in process_pyx
+          subprocess.check_call(
+        File "/usr/local/lib/python3.10/subprocess.py", line 369, in check_call
+          raise CalledProcessError(retcode, cmd)
+      subprocess.CalledProcessError: Command '['/usr/local/bin/python3.10', '-m', 'cython', '-3', '--fast-fail', '-o', '_mt19937.c', '_mt19937.pyx']' returned n
+on-zero exit status 1.
+      Cythonizing sources
+      Traceback (most recent call last):
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 353, in <module>
+          main()
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 335, in main
+          json_out['return_val'] = hook(**hook_input['kwargs'])
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 149, in prepare_metadata_for_build_wheel
+          return hook(metadata_directory, config_settings)
+        File "/tmp/pip-build-env-0397owt0/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 157, in prepare_metadata_for_build_wheel
+          self.run_setup()
+        File "/tmp/pip-build-env-0397owt0/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 248, in run_setup
+          super(_BuildMetaLegacyBackend,
+        File "/tmp/pip-build-env-0397owt0/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 142, in run_setup
+          exec(compile(code, __file__, 'exec'), locals())
+        File "setup.py", line 499, in <module>
+          setup_package()
+        File "setup.py", line 479, in setup_package
+          generate_cython()
+        File "setup.py", line 274, in generate_cython
+          raise RuntimeError("Running cythonize failed!")
+      RuntimeError: Running cythonize failed!
+      [end of output]
+
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+error: metadata-generation-failed
+
+× Encountered error while generating package metadata.
+╰─> See above for output.
+
+note: This is an issue with the package mentioned above, not pip.
+hint: See above for details.
+
+[notice] A new release of pip is available: 23.0.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@e6d9097663bb:/app/UPET# find /app/UPET -name '*.py' -o -name '*.txt' -o -name '*.md' | head -20
+/app/UPET/PT-Retrieval/README.md
+/app/UPET/PT-Retrieval/beir_eval/__init__.py
+/app/UPET/PT-Retrieval/beir_eval/evaluate_dpr_on_beir.py
+/app/UPET/PT-Retrieval/beir_eval/models.py
+/app/UPET/PT-Retrieval/calibration/calibration_beir.py
+/app/UPET/PT-Retrieval/calibration/calibration_ece_openqa.py
+/app/UPET/PT-Retrieval/calibration/calibration_plot_openqa.py
+/app/UPET/PT-Retrieval/calibration/utils.py
+/app/UPET/PT-Retrieval/colbert/colbert/__init__.py
+/app/UPET/PT-Retrieval/colbert/colbert/beir_eval.py
+/app/UPET/PT-Retrieval/colbert/colbert/data_prep.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/__init__.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/load_model.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/loaders.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/metrics.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/ranking.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/ranking_logger.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/slow.py
+/app/UPET/PT-Retrieval/colbert/colbert/filter_model.py
+/app/UPET/PT-Retrieval/colbert/colbert/index.py
+find: ‘standard output’: Broken pipe
+find: write error
+root@e6d9097663bb:/app/UPET# cat -n /app/UPET/run.py | tail -n 200
+     1  import logging
+     2  import os
+     3  import sys
+     4  import numpy as np
+     5  from typing import Dict
+     6
+     7  import datasets
+     8  import transformers
+     9  from transformers import set_seed, Trainer
+    10  from transformers.trainer_utils import get_last_checkpoint
+    11
+    12  from arguments import get_args
+    13
+    14  from tasks.utils import *
+    15
+    16  os.environ["WANDB_DISABLED"] = "true"
+    17
+    18  logger = logging.getLogger(__name__)
+    19
+    20  def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    21      checkpoint = None
+    22      if resume_from_checkpoint is not None:
+    23          checkpoint = resume_from_checkpoint
+    24      elif last_checkpoint is not None:
+    25          checkpoint = last_checkpoint
+    26      train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    27      # trainer.save_model()，
+    28
+    29      try:
+    30          metrics = train_result.metrics
+    31
+    32          trainer.log_metrics("train", metrics)
+    33          trainer.save_metrics("train", metrics)
+    34          trainer.save_state()
+    35
+    36          trainer.log_best_metrics()
+    37      except:
+    38          pass
+    39
+    40  def evaluate(trainer):
+    41      logger.info("*** Evaluate ***")
+    42      metrics = trainer.evaluate()
+    43
+    44      trainer.log_metrics("eval", metrics)
+    45      trainer.save_metrics("eval", metrics)
+    46
+    47  def predict(trainer, predict_dataset=None):
+    48      if predict_dataset is None:
+    49          logger.info("No dataset is available for testing")
+    50
+    51      elif isinstance(predict_dataset, dict):
+    52
+    53          for dataset_name, d in predict_dataset.items():
+    54              logger.info("*** Predict: %s ***" % dataset_name)
+    55              predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+    56              predictions = np.argmax(predictions, axis=2)
+    57
+    58              trainer.log_metrics("predict", metrics)
+    59              trainer.save_metrics("predict", metrics)
+    60
+    61      else:
+    62          logger.info("*** Predict ***")
+    63          predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+    64          predictions = np.argmax(predictions, axis=2)
+    65
+    66          trainer.log_metrics("predict", metrics)
+    67          trainer.save_metrics("predict", metrics)
+    68
+    69  if __name__ == '__main__':
+    70
+    71      args = get_args()
+    72
+    73      _, data_args, training_args, semi_training_args, _ = args
+    74
+    75      logging.basicConfig(
+    76          format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    77          datefmt="%m/%d/%Y %H:%M:%S",
+    78          handlers=[logging.StreamHandler(sys.stdout)],
+    79      )
+    80
+    81      log_level = training_args.get_process_log_level()
+    82      logger.setLevel(log_level)
+    83      datasets.utils.logging.set_verbosity(log_level)
+    84      transformers.utils.logging.set_verbosity(log_level)
+    85      transformers.utils.logging.enable_default_handler()
+    86      transformers.utils.logging.enable_explicit_format()
+    87
+    88      # Log on each process the small summary:
+    89      logger.warning(
+    90          f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+    91          + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    92      )
+    93      logger.info(f"Training/evaluation parameters {training_args}")
+    94
+    95
+    96      if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+    97          os.mkdir("checkpoints")
+    98
+    99      if data_args.task_name.lower() == "superglue":
+   100          assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+   101          from tasks.superglue.get_trainer import get_trainer
+   102
+   103      elif data_args.task_name.lower() == "glue":
+   104          assert data_args.dataset_name.lower() in GLUE_DATASETS
+   105          from tasks.glue.get_trainer import get_trainer
+   106
+   107      elif data_args.task_name.lower() == "ner":
+   108          assert data_args.dataset_name.lower() in NER_DATASETS
+   109          from tasks.ner.get_trainer import get_trainer
+   110
+   111      elif data_args.task_name.lower() == "srl":
+   112          assert data_args.dataset_name.lower() in SRL_DATASETS
+   113          from tasks.srl.get_trainer import get_trainer
+   114
+   115      elif data_args.task_name.lower() == "qa":
+   116          assert data_args.dataset_name.lower() in QA_DATASETS
+   117          from tasks.qa.get_trainer import get_trainer
+   118
+   119      elif data_args.task_name.lower() == "other_cls":
+   120          assert data_args.dataset_name.lower() in OTHER_DATASETS
+   121          from tasks.other_cls.get_trainer import get_trainer
+   122
+   123      else:
+   124          raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+   125
+   126      set_seed(training_args.seed)
+   127
+   128      trainer, predict_dataset = get_trainer(args)
+   129
+   130      last_checkpoint = None
+   131      if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+   132          last_checkpoint = get_last_checkpoint(training_args.output_dir)
+   133          if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+   134              raise ValueError(
+   135                  f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+   136                  "Use --overwrite_output_dir to overcome."
+   137              )
+   138          elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+   139              logger.info(
+   140                  f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+   141                  "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+   142              )
+   143
+   144
+   145      if training_args.do_train:
+   146          train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+   147
+   148      # if training_args.do_eval:
+   149      #     evaluate(trainer)
+   150
+   151      # if training_args.do_predict:
+   152      #     predict(trainer, predict_dataset)
+   153
+   154     root@e6d9097663bb:/app/UPET# cat /app/UPET/run.py
+import logging
+import os
+import sys
+import numpy as np
+from typing import Dict
+
+import datasets
+import transformers
+from transformers import set_seed, Trainer
+from transformers.trainer_utils import get_last_checkpoint
+
+from arguments import get_args
+
+from tasks.utils import *
+
+os.environ["WANDB_DISABLED"] = "true"
+
+logger = logging.getLogger(__name__)
+
+def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    checkpoint = None
+    if resume_from_checkpoint is not None:
+        checkpoint = resume_from_checkpoint
+    elif last_checkpoint is not None:
+        checkpoint = last_checkpoint
+    train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    # trainer.save_model()，
+
+    try:
+        metrics = train_result.metrics
+
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
+
+        trainer.log_best_metrics()
+    except:
+        pass
+
+def evaluate(trainer):
+    logger.info("*** Evaluate ***")
+    metrics = trainer.evaluate()
+
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
+
+def predict(trainer, predict_dataset=None):
+    if predict_dataset is None:
+        logger.info("No dataset is available for testing")
+
+    elif isinstance(predict_dataset, dict):
+
+        for dataset_name, d in predict_dataset.items():
+            logger.info("*** Predict: %s ***" % dataset_name)
+            predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+            predictions = np.argmax(predictions, axis=2)
+
+            trainer.log_metrics("predict", metrics)
+            trainer.save_metrics("predict", metrics)
+
+    else:
+        logger.info("*** Predict ***")
+        predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+        predictions = np.argmax(predictions, axis=2)
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
+
+if __name__ == '__main__':
+
+    args = get_args()
+
+    _, data_args, training_args, semi_training_args, _ = args
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    datasets.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
+
+
+    if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+        os.mkdir("checkpoints")
+
+    if data_args.task_name.lower() == "superglue":
+        assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+        from tasks.superglue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "glue":
+        assert data_args.dataset_name.lower() in GLUE_DATASETS
+        from tasks.glue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "ner":
+        assert data_args.dataset_name.lower() in NER_DATASETS
+        from tasks.ner.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "srl":
+        assert data_args.dataset_name.lower() in SRL_DATASETS
+        from tasks.srl.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "qa":
+        assert data_args.dataset_name.lower() in QA_DATASETS
+        from tasks.qa.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "other_cls":
+        assert data_args.dataset_name.lower() in OTHER_DATASETS
+        from tasks.other_cls.get_trainer import get_trainer
+
+    else:
+        raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+
+    set_seed(training_args.seed)
+
+    trainer, predict_dataset = get_trainer(args)
+
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+
+    if training_args.do_train:
+        train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+
+    # if training_args.do_eval:
+    #     evaluate(trainer)
+
+    # if training_args.do_predict:
+    #     predict(trainer, predict_dataset)
+
+   root@e6d9097663bb:/app/UPET# ls -la /app/UPET/model/
+total 472
+drwxr-xr-x  3 root root   4096 Jul 10 16:56 .
+drwxr-xr-x 12 root root   4096 Jul 10 16:56 ..
+drwxr-xr-x  2 root root     53 Jul 10 16:56 __pycache__
+-rw-r--r--  1 root root  57189 Jul 10 16:56 deberta.py
+-rw-r--r--  1 root root  64503 Jul 10 16:56 debertaV2.py
+-rw-r--r--  1 root root  30871 Jul 10 16:56 head_for_question_answering.py
+-rw-r--r--  1 root root  40718 Jul 10 16:56 head_for_sequence_classification.py
+-rw-r--r--  1 root root  26795 Jul 10 16:56 head_for_token_classification.py
+-rw-r--r--  1 root root  11896 Jul 10 16:56 loss.py
+-rw-r--r--  1 root root  48269 Jul 10 16:56 model_adaptation.py
+-rw-r--r--  1 root root  27223 Jul 10 16:56 multiple_choice.py
+-rw-r--r--  1 root root   4480 Jul 10 16:56 parameter_freeze.py
+-rw-r--r--  1 root root   1461 Jul 10 16:56 prefix_encoder.py
+-rw-r--r--  1 root root 125597 Jul 10 16:56 prompt_for_sequence_classification.py
+-rw-r--r--  1 root root  16661 Jul 10 16:56 utils.py
+root@e6d9097663bb:/app/UPET# pip install -r /app/UPET/requirements.txt
+Collecting datasets==1.15.1
+  Using cached datasets-1.15.1-py3-none-any.whl (290 kB)
+Collecting numpy==1.19.2
+  Using cached numpy-1.19.2.zip (7.3 MB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... error
+  error: subprocess-exited-with-error
+
+  × Preparing metadata (pyproject.toml) did not run successfully.
+  │ exit code: 1
+  ╰─> [53 lines of output]
+      Running from numpy source directory.
+      setup.py:470: UserWarning: Unrecognized setuptools command, proceeding with generating Cython sources and expanding templates
+        run_build = parse_setuppy_commands()
+
+      Error compiling Cython file:
+      ------------------------------------------------------------
+      ...
+              for i in range(1, RK_STATE_LEN):
+                  self.rng_state.key[i] = val[i]
+              self.rng_state.pos = i
+
+              self._bitgen.state = &self.rng_state
+              self._bitgen.next_uint64 = &mt19937_uint64
+                                         ^
+      ------------------------------------------------------------
+      _mt19937.pyx:138:35: Cannot assign type 'uint64_t (*)(void *) except? -1LL nogil' to 'uint64_t (*)(void *) noexcept nogil'. Exception values are incompati
+ble. Suggest adding 'noexcept' to the type of the value being assigned.
+      Processing numpy/random/_bounded_integers.pxd.in
+      Processing numpy/random/_mt19937.pyx
+      Traceback (most recent call last):
+        File "/tmp/pip-install-ya5992_4/numpy_d16446784a7545aabe45665ab299e6dd/tools/cythonize.py", line 235, in <module>
+          main()
+        File "/tmp/pip-install-ya5992_4/numpy_d16446784a7545aabe45665ab299e6dd/tools/cythonize.py", line 231, in main
+          find_process_files(root_dir)
+        File "/tmp/pip-install-ya5992_4/numpy_d16446784a7545aabe45665ab299e6dd/tools/cythonize.py", line 222, in find_process_files
+          process(root_dir, fromfile, tofile, function, hash_db)
+        File "/tmp/pip-install-ya5992_4/numpy_d16446784a7545aabe45665ab299e6dd/tools/cythonize.py", line 188, in process
+          processor_function(fromfile, tofile)
+        File "/tmp/pip-install-ya5992_4/numpy_d16446784a7545aabe45665ab299e6dd/tools/cythonize.py", line 77, in process_pyx
+          subprocess.check_call(
+        File "/usr/local/lib/python3.10/subprocess.py", line 369, in check_call
+          raise CalledProcessError(retcode, cmd)
+      subprocess.CalledProcessError: Command '['/usr/local/bin/python3.10', '-m', 'cython', '-3', '--fast-fail', '-o', '_mt19937.c', '_mt19937.pyx']' returned n
+on-zero exit status 1.
+      Cythonizing sources
+      Traceback (most recent call last):
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 353, in <module>
+          main()
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 335, in main
+          json_out['return_val'] = hook(**hook_input['kwargs'])
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 149, in prepare_metadata_for_build_wheel
+          return hook(metadata_directory, config_settings)
+        File "/tmp/pip-build-env-ig2q1dw8/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 157, in prepare_metadata_for_build_wheel
+          self.run_setup()
+        File "/tmp/pip-build-env-ig2q1dw8/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 248, in run_setup
+          super(_BuildMetaLegacyBackend,
+        File "/tmp/pip-build-env-ig2q1dw8/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 142, in run_setup
+          exec(compile(code, __file__, 'exec'), locals())
+        File "setup.py", line 499, in <module>
+          setup_package()
+        File "setup.py", line 479, in setup_package
+          generate_cython()
+        File "setup.py", line 274, in generate_cython
+          raise RuntimeError("Running cythonize failed!")
+      RuntimeError: Running cythonize failed!
+      [end of output]
+
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+error: metadata-generation-failed
+
+× Encountered error while generating package metadata.
+╰─> See above for output.
+
+note: This is an issue with the package mentioned above, not pip.
+hint: See above for details.
+
+[notice] A new release of pip is available: 23.0.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@e6d9097663bb:/app/UPET# cat /app/UPET/requirements.txt
+datasets==1.15.1
+numpy==1.19.2
+tqdm==4.62.3
+transformers==4.11.3
+seqeval==1.2.2
+root@e6d9097663bb:/app/UPET# pip install --upgrade pip
+Requirement already satisfied: pip in /usr/local/lib/python3.10/site-packages (23.0.1)
+Collecting pip
+  Downloading pip-26.1.2-py3-none-any.whl (1.8 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 44.7 MB/s eta 0:00:00
+Installing collected packages: pip
+  Attempting uninstall: pip
+    Found existing installation: pip 23.0.1
+    Uninstalling pip-23.0.1:
+      Successfully uninstalled pip-23.0.1
+Successfully installed pip-26.1.2
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a v
+irtual environment instead: https://pip.pypa.io/warnings/venv
+root@e6d9097663bb:/app/UPET# pip install numpy==1.26.0
+Requirement already satisfied: numpy==1.26.0 in /usr/local/lib/python3.10/site-packages (1.26.0)
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you a
+re doing and want to suppress this warning.
+root@e6d9097663bb:/app/UPET# pip install -r /app/UPET/requirements.txt
+Collecting datasets==1.15.1 (from -r /app/UPET/requirements.txt (line 1))
+  Downloading datasets-1.15.1-py3-none-any.whl.metadata (19 kB)
+Collecting numpy==1.19.2 (from -r /app/UPET/requirements.txt (line 2))
+  Downloading numpy-1.19.2.zip (7.3 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 7.3/7.3 MB 120.7 MB/s  0:00:00
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Preparing metadata (pyproject.toml) ... error
+  error: subprocess-exited-with-error
+
+  × Preparing metadata (pyproject.toml) did not run successfully.
+  │ exit code: 1
+  ╰─> [53 lines of output]
+      Running from numpy source directory.
+      setup.py:470: UserWarning: Unrecognized setuptools command, proceeding with generating Cython sources and expanding templates
+        run_build = parse_setuppy_commands()
+
+      Error compiling Cython file:
+      ------------------------------------------------------------
+      ...
+              for i in range(1, RK_STATE_LEN):
+                  self.rng_state.key[i] = val[i]
+              self.rng_state.pos = i
+
+              self._bitgen.state = &self.rng_state
+              self._bitgen.next_uint64 = &mt19937_uint64
+                                         ^
+      ------------------------------------------------------------
+      _mt19937.pyx:138:35: Cannot assign type 'uint64_t (*)(void *) except? -1LL nogil' to 'uint64_t (*)(void *) noexcept nogil'. Exception values are incompati
+ble. Suggest adding 'noexcept' to the type of the value being assigned.
+      Processing numpy/random/_bounded_integers.pxd.in
+      Processing numpy/random/_mt19937.pyx
+      Traceback (most recent call last):
+        File "/tmp/pip-install-iy_5y3ck/numpy_b8e37fc94f654191ac4f767cd7529245/tools/cythonize.py", line 235, in <module>
+          main()
+        File "/tmp/pip-install-iy_5y3ck/numpy_b8e37fc94f654191ac4f767cd7529245/tools/cythonize.py", line 231, in main
+          find_process_files(root_dir)
+        File "/tmp/pip-install-iy_5y3ck/numpy_b8e37fc94f654191ac4f767cd7529245/tools/cythonize.py", line 222, in find_process_files
+          process(root_dir, fromfile, tofile, function, hash_db)
+        File "/tmp/pip-install-iy_5y3ck/numpy_b8e37fc94f654191ac4f767cd7529245/tools/cythonize.py", line 188, in process
+          processor_function(fromfile, tofile)
+        File "/tmp/pip-install-iy_5y3ck/numpy_b8e37fc94f654191ac4f767cd7529245/tools/cythonize.py", line 77, in process_pyx
+          subprocess.check_call(
+        File "/usr/local/lib/python3.10/subprocess.py", line 369, in check_call
+          raise CalledProcessError(retcode, cmd)
+      subprocess.CalledProcessError: Command '['/usr/local/bin/python3.10', '-m', 'cython', '-3', '--fast-fail', '-o', '_mt19937.c', '_mt19937.pyx']' returned n
+on-zero exit status 1.
+      Cythonizing sources
+      Traceback (most recent call last):
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 389, in <module>
+          main()
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 373, in main
+          json_out["return_val"] = hook(**hook_input["kwargs"])
+        File "/usr/local/lib/python3.10/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 175, in prepare_metadata_for_build_wheel
+          return hook(metadata_directory, config_settings)
+        File "/tmp/pip-build-env-gokneb3u/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 157, in prepare_metadata_for_build_wheel
+          self.run_setup()
+        File "/tmp/pip-build-env-gokneb3u/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 248, in run_setup
+          super(_BuildMetaLegacyBackend,
+        File "/tmp/pip-build-env-gokneb3u/overlay/lib/python3.10/site-packages/setuptools/build_meta.py", line 142, in run_setup
+          exec(compile(code, __file__, 'exec'), locals())
+        File "setup.py", line 499, in <module>
+          setup_package()
+        File "setup.py", line 479, in setup_package
+          generate_cython()
+        File "setup.py", line 274, in generate_cython
+          raise RuntimeError("Running cythonize failed!")
+      RuntimeError: Running cythonize failed!
+      [end of output]
+
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+error: metadata-generation-failed
+
+× Encountered error while generating package metadata.
+╰─> numpy
+
+note: This is an issue with the package mentioned above, not pip.
+hint: See above for details.
+root@e6d9097663bb:/app/UPET# pip install --upgrade pip
+Requirement already satisfied: pip in /usr/local/lib/python3.10/site-packages (26.1.2)
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you a
+re doing and want to suppress this warning.
+root@e6d9097663bb:/app/UPET# pip install --break-system-packages --only-binary :all: numpy==1.26.0
+Requirement already satisfied: numpy==1.26.0 in /usr/local/lib/python3.10/site-packages (1.26.0)
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you a
+re doing and want to suppress this warning.
+root@e6d9097663bb:/app/UPET# pip install --break-system-packages datasets tqdm transformers seqeval
+Collecting datasets
+  Downloading datasets-5.0.0-py3-none-any.whl.metadata (23 kB)
+Requirement already satisfied: tqdm in /usr/local/lib/python3.10/site-packages (4.66.4)
+Requirement already satisfied: transformers in /usr/local/lib/python3.10/site-packages (4.40.2)
+Collecting seqeval
+  Downloading seqeval-1.2.2.tar.gz (43 kB)
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... done
+  Installing backend dependencies ... done
+  Preparing metadata (pyproject.toml) ... done
+Requirement already satisfied: filelock in /usr/local/lib/python3.10/site-packages (from datasets) (3.29.7)
+Requirement already satisfied: numpy>=1.17 in /usr/local/lib/python3.10/site-packages (from datasets) (1.26.0)
+Collecting pyarrow>=21.0.0 (from datasets)
+  Downloading pyarrow-25.0.0-cp310-cp310-manylinux_2_28_x86_64.whl.metadata (3.0 kB)
+Collecting dill<0.4.2,>=0.3.0 (from datasets)
+  Downloading dill-0.4.1-py3-none-any.whl.metadata (10 kB)
+Requirement already satisfied: pandas in /usr/local/lib/python3.10/site-packages (from datasets) (2.0.3)
+Collecting requests>=2.32.2 (from datasets)
+  Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+Collecting httpx<1.0.0 (from datasets)
+  Downloading httpx-0.28.1-py3-none-any.whl.metadata (7.1 kB)
+Collecting xxhash (from datasets)
+  Downloading xxhash-3.8.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (15 kB)
+Collecting multiprocess<0.70.20 (from datasets)
+  Downloading multiprocess-0.70.19-py310-none-any.whl.metadata (7.5 kB)
+Requirement already satisfied: fsspec<=2026.4.0,>=2023.1.0 in /usr/local/lib/python3.10/site-packages (from fsspec[http]<=2026.4.0,>=2023.1.0->datasets) (2023.6
+.0)
+Requirement already satisfied: huggingface-hub<2.0,>=0.25.0 in /usr/local/lib/python3.10/site-packages (from datasets) (0.36.2)
+Requirement already satisfied: packaging in /usr/local/lib/python3.10/site-packages (from datasets) (26.2)
+Requirement already satisfied: pyyaml>=5.1 in /usr/local/lib/python3.10/site-packages (from datasets) (6.0.3)
+Collecting aiohttp!=4.0.0a0,!=4.0.0a1 (from fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading aiohttp-3.14.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (8.3 kB)
+Collecting anyio (from httpx<1.0.0->datasets)
+  Downloading anyio-4.14.1-py3-none-any.whl.metadata (4.6 kB)
+Requirement already satisfied: certifi in /usr/local/lib/python3.10/site-packages (from httpx<1.0.0->datasets) (2026.6.17)
+Collecting httpcore==1.* (from httpx<1.0.0->datasets)
+  Downloading httpcore-1.0.9-py3-none-any.whl.metadata (21 kB)
+Requirement already satisfied: idna in /usr/local/lib/python3.10/site-packages (from httpx<1.0.0->datasets) (3.18)
+Collecting h11>=0.16 (from httpcore==1.*->httpx<1.0.0->datasets)
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Requirement already satisfied: hf-xet<2.0.0,>=1.1.3 in /usr/local/lib/python3.10/site-packages (from huggingface-hub<2.0,>=0.25.0->datasets) (1.5.1)
+Requirement already satisfied: typing-extensions>=3.7.4.3 in /usr/local/lib/python3.10/site-packages (from huggingface-hub<2.0,>=0.25.0->datasets) (4.16.0)
+Requirement already satisfied: regex!=2019.12.17 in /usr/local/lib/python3.10/site-packages (from transformers) (2023.12.25)
+Requirement already satisfied: tokenizers<0.20,>=0.19 in /usr/local/lib/python3.10/site-packages (from transformers) (0.19.1)
+Requirement already satisfied: safetensors>=0.4.1 in /usr/local/lib/python3.10/site-packages (from transformers) (0.8.0)
+Requirement already satisfied: scikit-learn>=0.21.3 in /usr/local/lib/python3.10/site-packages (from seqeval) (1.7.2)
+Collecting aiohappyeyeballs>=2.5.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading aiohappyeyeballs-2.7.1-py3-none-any.whl.metadata (5.9 kB)
+Collecting aiosignal>=1.4.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading aiosignal-1.4.0-py3-none-any.whl.metadata (3.7 kB)
+Collecting async-timeout<6.0,>=4.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading async_timeout-5.0.1-py3-none-any.whl.metadata (5.1 kB)
+Collecting attrs>=17.3.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading attrs-26.1.0-py3-none-any.whl.metadata (8.8 kB)
+Collecting frozenlist>=1.1.1 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading frozenlist-1.8.0-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (20 kB)
+Collecting multidict<7.0,>=4.5 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading multidict-6.7.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (5.3 kB)
+Collecting propcache>=0.2.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading propcache-0.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (16 kB)
+Collecting yarl<2.0,>=1.17.0 (from aiohttp!=4.0.0a0,!=4.0.0a1->fsspec[http]<=2026.4.0,>=2023.1.0->datasets)
+  Downloading yarl-1.24.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (94 kB)
+Requirement already satisfied: charset_normalizer<4,>=2 in /usr/local/lib/python3.10/site-packages (from requests>=2.32.2->datasets) (3.4.9)
+Requirement already satisfied: urllib3<3,>=1.26 in /usr/local/lib/python3.10/site-packages (from requests>=2.32.2->datasets) (2.0.7)
+Requirement already satisfied: scipy>=1.8.0 in /usr/local/lib/python3.10/site-packages (from scikit-learn>=0.21.3->seqeval) (1.11.4)
+Requirement already satisfied: joblib>=1.2.0 in /usr/local/lib/python3.10/site-packages (from scikit-learn>=0.21.3->seqeval) (1.5.3)
+Requirement already satisfied: threadpoolctl>=3.1.0 in /usr/local/lib/python3.10/site-packages (from scikit-learn>=0.21.3->seqeval) (3.6.0)
+Collecting exceptiongroup>=1.0.2 (from anyio->httpx<1.0.0->datasets)
+  Downloading exceptiongroup-1.3.1-py3-none-any.whl.metadata (6.7 kB)
+Requirement already satisfied: python-dateutil>=2.8.2 in /usr/local/lib/python3.10/site-packages (from pandas->datasets) (2.9.0.post0)
+Requirement already satisfied: pytz>=2020.1 in /usr/local/lib/python3.10/site-packages (from pandas->datasets) (2026.2)
+Requirement already satisfied: tzdata>=2022.1 in /usr/local/lib/python3.10/site-packages (from pandas->datasets) (2026.3)
+Requirement already satisfied: six>=1.5 in /usr/local/lib/python3.10/site-packages (from python-dateutil>=2.8.2->pandas->datasets) (1.17.0)
+Downloading datasets-5.0.0-py3-none-any.whl (555 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 555.1/555.1 kB 107.4 MB/s  0:00:00
+Downloading dill-0.4.1-py3-none-any.whl (120 kB)
+Downloading httpx-0.28.1-py3-none-any.whl (73 kB)
+Downloading httpcore-1.0.9-py3-none-any.whl (78 kB)
+Downloading multiprocess-0.70.19-py310-none-any.whl (134 kB)
+Downloading aiohttp-3.14.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (1.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.7/1.7 MB 275.2 MB/s  0:00:00
+Downloading async_timeout-5.0.1-py3-none-any.whl (6.2 kB)
+Downloading multidict-6.7.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (243 kB)
+Downloading yarl-1.24.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (106 kB)
+Downloading aiohappyeyeballs-2.7.1-py3-none-any.whl (15 kB)
+Downloading aiosignal-1.4.0-py3-none-any.whl (7.5 kB)
+Downloading attrs-26.1.0-py3-none-any.whl (67 kB)
+Downloading frozenlist-1.8.0-cp310-cp310-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (219 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading propcache-0.5.2-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (60 kB)
+Downloading pyarrow-25.0.0-cp310-cp310-manylinux_2_28_x86_64.whl (50.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 50.1/50.1 MB 505.9 MB/s  0:00:00
+Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+Downloading anyio-4.14.1-py3-none-any.whl (124 kB)
+Downloading exceptiongroup-1.3.1-py3-none-any.whl (16 kB)
+Downloading xxhash-3.8.1-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (217 kB)
+Building wheels for collected packages: seqeval
+  Building wheel for seqeval (pyproject.toml) ... done
+  Created wheel for seqeval: filename=seqeval-1.2.2-py3-none-any.whl size=16250 sha256=935cf1c7ecf465aa5d2457f51a49574e64142c36ec36c5260f03ad8dbe1c4659
+  Stored in directory: /root/.cache/pip/wheels/1a/67/4a/ad4082dd7dfc30f2abfe4d80a2ed5926a506eb8a972b4767fa
+Successfully built seqeval
+Installing collected packages: xxhash, requests, pyarrow, propcache, multidict, h11, frozenlist, exceptiongroup, dill, attrs, async-timeout, aiohappyeyeballs, y
+arl, multiprocess, httpcore, anyio, aiosignal, seqeval, httpx, aiohttp, datasets
+  Attempting uninstall: requests
+    Found existing installation: requests 2.31.0
+    Uninstalling requests-2.31.0:
+      Successfully uninstalled requests-2.31.0
+Successfully installed aiohappyeyeballs-2.7.1 aiohttp-3.14.1 aiosignal-1.4.0 anyio-4.14.1 async-timeout-5.0.1 attrs-26.1.0 datasets-5.0.0 dill-0.4.1 exceptiongr
+oup-1.3.1 frozenlist-1.8.0 h11-0.16.0 httpcore-1.0.9 httpx-0.28.1 multidict-6.7.1 multiprocess-0.70.19 propcache-0.5.2 pyarrow-25.0.0 requests-2.34.2 seqeval-1.
+2.2 xxhash-3.8.1 yarl-1.24.2
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you a
+re doing and want to suppress this warning.
+root@e6d9097663bb:/app/UPET# cd /app/UPET && python3 run.py --help 2>&1 | head -30
+Traceback (most recent call last):
+  File "/app/UPET/run.py", line 12, in <module>
+    from arguments import get_args
+  File "/app/UPET/arguments.py", line 9, in <module>
+    from tasks.utils import *
+  File "/app/UPET/tasks/utils.py", line 1, in <module>
+    from tasks.glue.dataset import task_to_keys as glue_tasks
+  File "/app/UPET/tasks/glue/dataset.py", line 5, in <module>
+    from datasets.load import load_dataset, load_metric
+ImportError: cannot import name 'load_metric' from 'datasets.load' (/usr/local/lib/python3.10/site-packages/datasets/load.py)
+root@e6d9097663bb:/app/UPET#

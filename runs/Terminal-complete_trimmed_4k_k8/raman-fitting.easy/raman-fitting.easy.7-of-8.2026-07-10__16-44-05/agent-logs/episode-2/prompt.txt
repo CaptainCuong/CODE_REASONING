@@ -1,0 +1,88 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@643ba31915ab:/app# pip3 install numpy scipy 2>&1 | tail -5
+python3 -c "import numpy, scipy; print('Libraries installed successfully')"
+wc -l /app/graphene.dat
+tail -20 /app/graphene.dat
+cat > /app/fit.py << 'EOF'
+import numpy as np
+import scipy
+from scipy import stats
+import json
+
+def fit_peak(x, y, peak_index):
+    """Fit a single peak to the data."""
+    # We'll use scipy's curvefit with a custom function.
+    # Function: y = offset + amplitude * (gamma / ( (x - x0)^2 + gamma^2 ))
+    def lorentzian(x, x0, gamma, amplitude, offset):
+        return offset + amplitude * (gamma / ( (x - x0)**2 + gamma**2 ))
+
+    # Initial guess: we can use the peak index to approximate.
+    # We'll find the index of the peak.
+    peak_idx = np.argmax(y)
+
+    # Initial guess for x0
+    x0 = x[peak_idx]
+    # Initial guess for gamma (width) - we can use a fixed value, but better to estimate.
+    # We'll set gamma to a small value and then fit.
+    # Initial guess for amplitude (peak height)
+    amp = y[peak_idx]
+    # Initial guess for offset (average background)
+    offset = np.mean(y)
+
+    # Use scipy.curvefit to refine.
+    params, _ = scipy.curvefit(lorentzian, x, y, [x0, 0.01, amp, offset], maxfev=1000)
+
+    return {
+        'x0': params[0],
+        'gamma': params[1],
+        'amplitude': params[2],
+        'offset': params[3]
+    }
+
+# Load data
+x = []
+y = []
+with open('/app/graphene.dat', 'r') as f:
+    for line in f:
+        line = line.strip()
+        if line:
+            parts = line.split()
+            if len(parts) >= 2:
+                x.append(float(parts[0]))
+                y.append(float(parts[1]))
+
+x = np.array(x)
+y = np.array(y)
+
+# Fit G peak (around 1580)
+g_peak = fit_peak(x, y, 0)  # index 0 because G is lower wavenumber
+# Fit 2D peak (around 2700)
+two_d_peak = fit_peak(x, y, 1)  # index 1 because 2D is higher wavenumber
+
+# Prepare results
+results = {
+    'G': {
+        'x0': g_peak['x0'],
+        'gamma': g_peak['gamma'],
+        'amplitude': g_peak['amplitude'],
+        'offset': g_peak['offset']
+    },
+    '2D': {
+        'x0': two_d_peak['x0'],
+        'gamma': two_d_peak['gamma'],
+        'amplitude': two_d_peak['amplitude'],
+        'offset': two_d_peak['offset']
+    }
+}
+
+# Write to file
+with open('/app/results.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+print('Results written to results.json')
+EOF
+

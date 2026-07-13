@@ -1,0 +1,149 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@5e943d0efea6:/app# cat > examine_coord.py << 'EOF'
+> import sys
+> sys.path.insert(0, '/usr/local/lib/python3.9/dist-packages')
+> from astropy.modeling.separable import _coord_matrix
+> import inspect
+> print(inspect.getsource(_coord_matrix))
+> EOF
+root@5e943d0efea6:/app# python3 examine_coord.py
+def _coord_matrix(model, pos, noutp):
+    """
+    Create an array representing inputs and outputs of a simple model.
+
+    The array has a shape (noutp, model.n_inputs).
+
+    Parameters
+    ----------
+    model : `astropy.modeling.Model`
+        model
+    pos : str
+        Position of this model in the expression tree.
+        One of ['left', 'right'].
+    noutp : int
+        Number of outputs of the compound model of which the input model
+        is a left or right child.
+
+    """
+    if isinstance(model, Mapping):
+        axes = []
+        for i in model.mapping:
+            axis = np.zeros((model.n_inputs,))
+            axis[i] = 1
+            axes.append(axis)
+        m = np.vstack(axes)
+        mat = np.zeros((noutp, model.n_inputs))
+        if pos == "left":
+            mat[: model.n_outputs, : model.n_inputs] = m
+        else:
+            mat[-model.n_outputs :, -model.n_inputs :] = m
+        return mat
+    if not model.separable:
+        # this does not work for more than 2 coordinates
+        mat = np.zeros((noutp, model.n_inputs))
+        if pos == "left":
+            mat[: model.n_outputs, : model.n_inputs] = 1
+        else:
+            mat[-model.n_outputs :, -model.n_inputs :] = 1
+    else:
+        mat = np.zeros((noutp, model.n_inputs))
+
+        for i in range(model.n_inputs):
+            mat[i, i] = 1
+        if pos == "right":
+            mat = np.roll(mat, (noutp - model.n_outputs))
+    return mat
+
+cat > compare_nested.py << 'EOF'
+from astropy.modeling import models as m
+import numpy as np
+
+# Case 3: nested
+nested = m.Pix2Sky_TAN() & (m.Linear1D(10) & m.Linear1D(5))
+# Case 2: flat
+flat = m.Pix2Sky_TAN() & m.Linear1D(10) & m.Linear1D(5)
+
+print('Nested model:')
+print('  Inputs:', nested.inputs)
+print('  Outputs:', nested.outputs)
+print('  Input transformations:', nested.input_transformations)
+print('  Output transformations:', nested.output_transformations)
+print('  Number of components:', len(nested._components))
+print('  Model set size:', nested._model_set_size)
+print('  Separability matrix:')
+print(separability_matrix(nested))
+print()
+print('Flat model:')
+print('  Inputs:', flat.inputs)
+print('  Outputs:', flat.outputs)
+print('  Input transformations:', flat.input_transformations)
+print('  Output transformations:', flat.output_transformations)
+print('  Number of components:', len(flat._components))
+print('  Model set size:', flat._model_set_size)
+print('  Separability matrix:')
+print(separability_matrix(flat))
+print()
+# Check if any internal difference
+print('Are inputs equal?', list(nested.inputs) == list(flat.inputs))
+print('Are outputs equal?', list(nested.outputs) == list(flat.outputs))
+print('Are input transformations equal?', nested.input_transformations == flat.input_transformations)
+print('Are output transformations equal?', nested.output_transformations == flat.output_transformations)
+print('Are components equal?', nested._components == flat._components)
+print('Are model set sizes equal?', nested._model_set_size == flat._model_set_size)
+print('Are model set indices equal?', nested._model_set_indices == flat._model_set_indices)
+print('Are model set names equal?', nested._model_set_names == flat._model_set_names)
+EOF
+root@5e943d0efea6:/app# cat > compare_nested.py << 'EOF'
+> from astropy.modeling import models as m
+> import numpy as np
+>
+> # Case 3: nested
+> nested = m.Pix2Sky_TAN() & (m.Linear1D(10) & m.Linear1D(5))
+> # Case 2: flat
+> flat = m.Pix2Sky_TAN() & m.Linear1D(10) & m.Linear1D(5)
+>
+> print('Nested model:')
+> print('  Inputs:', nested.inputs)
+> print('  Outputs:', nested.outputs)
+> print('  Input transformations:', nested.input_transformations)
+> print('  Output transformations:', nested.output_transformations)
+> print('  Number of components:', len(nested._components))
+> print('  Model set size:', nested._model_set_size)
+> print('  Separability matrix:')
+> print(separability_matrix(nested))
+> print()
+> print('Flat model:')
+> print('  Inputs:', flat.inputs)
+> print('  Outputs:', flat.outputs)
+> print('  Input transformations:', flat.input_transformations)
+> print('  Output transformations:', flat.output_transformations)
+> print('  Number of components:', len(flat._components))
+> print('  Model set size:', flat._model_set_size)
+> print('  Separability matrix:')
+> print(separability_matrix(flat))
+> print()
+> # Check if any internal difference
+> print('Are inputs equal?', list(nested.inputs) == list(flat.inputs))
+> print('Are outputs equal?', list(nested.outputs) == list(flat.outputs))
+> print('Are input transformations equal?', nested.input_transformations == flat.input_transformations)
+> print('Are output transformations equal?', nested.output_transformations == flat.output_transformations)
+> print('Are components equal?', nested._components == flat._components)
+> print('Are model set sizes equal?', nested._model_set_size == flat._model_set_size)
+> print('Are model set indices equal?', nested._model_set_indices == flat._model_set_indices)
+> print('Are model set names equal?', nested._model_set_names == flat._model_set_names)
+> EOF
+root@5e943d0efea6:/app# python3 compare_nested.py
+Nested model:
+  Inputs: ('x', 'y', 'x0', 'x1')
+  Outputs: ('phi', 'theta', 'y0', 'y1')
+Traceback (most recent call last):
+  File "/app/compare_nested.py", line 12, in <module>
+    print('  Input transformations:', nested.input_transformations)
+  File "/usr/local/lib/python3.9/site-packages/astropy/modeling/core.py", line 3402, in __getattr__
+    raise AttributeError(f'Attribute "{name}" not found')
+AttributeError: Attribute "input_transformations" not found
+root@5e943d0efea6:/app#

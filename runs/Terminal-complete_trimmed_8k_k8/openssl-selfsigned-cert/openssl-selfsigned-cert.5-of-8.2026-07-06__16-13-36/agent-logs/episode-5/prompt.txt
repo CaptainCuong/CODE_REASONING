@@ -1,0 +1,112 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@8b6b3d06105a:/app# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> from datetime import datetime
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.crt'
+>     key_path = '/app/ssl/server.key'
+>
+>     # Check if files exist
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Certificate file not found: {cert_path}')
+>         sys.exit(1)
+>
+>     try:
+>         with open(key_path, 'r') as f:
+>             key_data = f.read()
+>     except FileNotFoundError:
+>         print(f'ERROR: Private key file not found: {key_path}')
+>         sys.exit(1)
+>
+>     # Load certificate into SSL context
+>     context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)  # Use TLSv1.2
+>     context.load_cert_chain(cert_path, key_path)
+>
+>     cert = context.get_certificate()
+>     subject = cert.get_subject()
+>     common_name = subject.get('CN')
+>
+>     # Get dates (notBefore, notAfter) from cert
+>     not_before = cert.get_not_before()
+>     not_after = cert.get_not_after()
+>
+>     # Parse dates using datetime.strptime with OpenSSL format
+>     # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'
+>     # Use format: '%b %d %H:%M:%S %Y %z'
+>     try:
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %z')
+>     except ValueError:
+>         # Try without timezone
+>         expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y')
+>
+>     # Current date
+>     now = datetime.now()
+>
+>     # Verify certificate is not expired
+>     if expiration_date < now:
+>         print('ERROR: Certificate is expired')
+>         sys.exit(1)
+>
+>     # Extract expiration date string in YYYY-MM-DD format
+>     expiration_str = expiration_date.strftime('%Y-%m-%d')
+>
+>     # Print details
+>     print(f'Subject: {subject}')
+>     print(f'Not Before: {not_before}')
+>     print(f'Not After: {not_after}')
+>     print(f'Common Name: {common_name}')
+>     print(f'Expiration Date: {expiration_str}')
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@8b6b3d06105a:/app# chmod +x /app/check_cert.py
+root@8b6b3d06105a:/app# python3 /app/check_cert.py
+/app/check_cert.py:26: DeprecationWarning: ssl.PROTOCOL_TLSv1_2 is deprecated
+  context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)  # Use TLSv1.2
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 66, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 29, in verify_certificate
+    cert = context.get_certificate()
+           ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'SSLContext' object has no attribute 'get_certificate'
+root@8b6b3d06105a:/app# echo $?
+1
+root@8b6b3d06105a:/app# # Also test that verification.txt exists and contains correct info
+root@8b6b3d06105a:/app# cat /app/ssl/verification.txt
+subject=C = US, O = DevOps Team, CN = dev-internal.company.local
+---
+notBefore=Jul  7 17:16:53 2026 GMT
+notAfter=Jul  7 17:16:53 2027 GMT
+---
+SHA1 Fingerprint=5E:82:DA:03:3E:A4:D8:A2:1A:5C:F6:D8:49:A1:69:DA:DF:D5:A9:05
+root@8b6b3d06105a:/app# # Ensure permissions are correct (server.key should be 600)
+root@8b6b3d06105a:/app# ls -l /app/ssl/server.key
+-rw------- 1 root root 1704 Jul  7 17:16 /app/ssl/server.key
+root@8b6b3d06105a:/app# # Verify that server.pem contains both key and cert
+root@8b6b3d06105a:/app# head -5 /app/ssl/server.pem
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC+ShGOINFxDGvL
+XGBuMljnN45DHwXfkoPp4nASKhmEQ0URsGtOmYuetBnIHjUZ5jhprPUHRdCREC4x
+H6iX5PXYYXUYU5UCvgb3PRFkOa+wYuMJ0rYA5uQjCjYivIqjD+v4NJO4Yley09ho
+54CerKeQNFKl48ek7I0CWMXr2j4PW7iVVhwdhdwKqEtXcS8GzBMkvCxo1Q4079r1
+root@8b6b3d06105a:/app# tail -5 /app/ssl/server.pem
+U2F7Yql+ZYv5zQmNY4UjOxhOOs/uoUeWjlThdmaW6KPxqFI336ImkURz6uefbjGW
+Es0IB+2FCWEJcwzHh1rJ+F0t65l+5J9wZqX54ursNGoY2lpIntefPqSgBzTT45YB
+iRgBz8qixcfH+cc+707wNzAVgFFw4PGK4aeSDtazs/jpxUlJrtoRsbVx7WHE/mBt
+NgOiy2uI/XY5cbkRaEt/2EKUf2P0
+-----END CERTIFICATE-----
+root@8b6b3d06105a:/app#

@@ -1,0 +1,112 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@41626f833e6f:/app# dpkg -l | grep -E 'python3-numpy|python3-scipy'
+ii  python3-numpy                 1:1.24.2-1+deb12u1        amd64        Fast array facility to the Python 3 language
+ii  python3-scipy                 1.10.1-2                  amd64        scientific tools for Python 3
+root@41626f833e6f:/app# apt-get install -y python3-numpy python3-scipy
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+python3-numpy is already the newest version (1:1.24.2-1+deb12u1).
+python3-scipy is already the newest version (1.10.1-2).
+0 upgraded, 0 newly installed, 0 to remove and 35 not upgraded.
+root@41626f833e6f:/app# python3 -c "import numpy; import scipy; print('OK')"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import numpy; import scipy; print('OK')
+    ^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'numpy'
+root@41626f833e6f:/app# cat > /app/fit3.py << 'EOF'
+> import numpy as np
+> import json
+> from scipy.optimize import minimize
+>
+> def lorenzian(x, x0, gamma, amp, off):
+>     return amp / (1 + (x - x0)**2 / gamma**2) + off
+>
+> def read_data(filename):
+>     with open(filename, 'r') as f:
+>         lines = f.readlines()
+>     data = []
+>     for line in lines:
+>         line = line.strip()
+>         if line:
+>             x, y = map(float, line.split(','))
+>             data.append((x, y))
+>     return np.array(data, dtype=np.float64).T
+>
+> def fit_two_lorentzians(x, y):
+>     # Find local maxima
+>     max_indices = np.where(np.diff(np.append([False], np.abs(np.diff(y)) > np.abs(np.diff(y)[1:]))))
+>     peak1_idx = max_indices[0]
+>     peak2_idx = max_indices[1]
+>     x1 = x[peak1_idx]
+>     y1 = y[peak1_idx]
+>     x2 = x[peak2_idx]
+>     y2 = y[peak2_idx]
+>     # We'll fit each peak with a function that has the same parameters but different x0.
+>     # We'll use a combined model: y = amp1 / (1 + (x - x01)^2 / gamma1^2) + off1 + amp2 / (1 + (x - x02)^2 / gamma2^2) + off2
+>     # But that's more complex. Simpler: fit each peak separately and combine.
+>     # We'll do two separate fits and then combine.
+>     # We'll do a single fit with a function that returns two values? Not possible.
+>     # Let's use scipy.curvefit with a function that returns two values? We can make the function return a tuple.
+>     # But scipy expects a scalar.
+>     # We'll instead use a combined model: y = f1(x) + f2(x)
+>     # We'll define a function that returns two values and then use least squares.
+>     # We'll do a different approach: use scipy.linalg.lstsq to fit a line of coefficients.
+>     # Since we know the shape, we can fit with a simple linear regression on the data.
+>     # But the peaks are non-linear.
+>     # Let's use the fact that the two peaks are independent and we already have approximate positions.
+>     # We'll use the initial guess and then refine using scipy.optimize.minimize.
+>     # We'll define a function that returns the residual sum of squares.
+>     # We'll do that.
+>     # We'll create a function that takes parameters and returns y.
+>     # We'll then minimize the residual.
+>     # We'll also add bounds.
+>     # Let's do that.
+>     # We'll create a function that returns the combined model.
+>     # We'll also add offset.
+>     # We'll assume the two peaks are not overlapping.
+>     # We'll do:
+>     # y = amp1 / (1 + (x - x01)^2 / gamma1^2) + offset1 + amp2 / (1 + (x - x02)^2 / gamma2^2) + offset2
+>     # That's four parameters.
+>     # We'll fit using scipy.curvefit with a function that returns a single value.
+>     # We'll create a function that returns the sum of the two peaks.
+>     def model(x, amp1, x01, gamma1, offset1, amp2, x02, gamma2, offset2):
+>         return amp1 / (1 + (x - x01)**2 / gamma1**2) + offset1 + amp2 / (1 + (x - x02)**2 / gamma2**2) + offset2
+>     # Initial guess
+>     initial = [y1, x1, 10, y1, y2, x2, 10, y2]
+>     result = minimize(lambda p: np.sum((model(x, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]) - y)**2), initial)
+>     return result.x
+>
+> def main():
+>     x, y = read_data('/app/graphene.dat')
+>     print('Data shape:', x.shape)
+>     params = fit_two_lorentzians(x, y)
+>     print('Params:', params)
+>     # params = [amp1, x01, gamma1, offset1, amp2, x02, gamma2, offset2]
+>     results = {
+>         'G': {
+>             'x0': float(params[1]),
+>             'gamma': float(params[2]),
+>             'amplitude': float(params[0]),
+>             'offset': float(params[3])
+>         },
+>         '2D': {
+>             'x0': float(params[5]),
+>             'gamma': float(params[6]),
+>             'amplitude': float(params[4]),
+>             'offset': float(params[7])
+>         }
+>     }
+>     with open('/app/results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@41626f833e6f:/app#

@@ -1,0 +1,236 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@778003c21c51:/app# cd /app
+root@778003c21c51:/app# cat > /app/intrusion_detector.sh << 'EOF'
+ocal pattern="${rule_patterns[$idx]}"
+   > #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> AUTH_LOG="$LOG_DIR/auth.log"
+> HTTP_LOG="$LOG_DIR/http.log"
+> ALERT_JSON="/app/reports/alert.json"
+> REPORT_JSON="/app/reports/report.json"
+>
+> # Helper function to parse timestamp to ISO-8601
+> timestamp_to_iso() {
+>     local ts="$1"
+>     if [[ $ts == *" Apr "* ]]; then
+>         # Format: Apr 10 08:12:33
+>         local month=$(echo "$ts" | cut -d' ' -f1 | tr '[:upper:]' '[:lower:]')
+>         local day=$(echo "$ts" | cut -d' ' -f2)
+>         local time=$(echo "$ts" | cut -d' ' -f3)
+>         # Use date command with format %b %d %H:%M:%S
+>         date -Iseconds -d "$month $day $time" 2>/dev/null || echo "$ts"
+>     else
+>         # Already ISO-like? Use as is
+>         echo "$ts"
+>     fi
+> }
+>
+> # Read rules into array
+> read_rules() {
+>     local rules_file="$1"
+>     local -n rules_array="$2"
+>     local -n rule_ids="$3"
+>     local -n rule_severities="$4"
+>     local -n rule_patterns="$5"
+>     local -n rule_thresholds="$6"
+>     local -n rule_timeframes="$7"
+>
+>     # Use python to parse JSON and extract fields
+>     python3 -c "
+> import json
+> with open('$rules_file') as f:
+>     data = json.load(f)
+>     for rule in data['rules']:
+>         rules_array.append(rule['id'])
+>         rule_ids.append(rule['id'])
+>         rule_severities.append(rule['severity'])
+>         rule_patterns.append(rule['pattern'])
+>         rule_thresholds.append(rule['threshold'])
+>         rule_timeframes.append(rule['timeframe'])
+>     print('Rules loaded:', len(rules_array))
+> " 2>/dev/null || echo "Failed to load rules"
+> }
+>
+> # Parse timestamps from logs
+> parse_logs() {
+>     local log_file="$1"
+>     local -n timestamps="$2"
+>     local -n ips="$3"
+>     local -n lines="$4"
+>
+>     while IFS= read -r line; do
+>         timestamps+=("$line")
+>         # Extract IP
+>         if [[ "$log_file" == "$AUTH_LOG" ]]; then
+>             # auth.log: 'Apr 10 08:12:33 server sshd[1234]: Accepted publickey for admin from 192.168.1.5'
+>             ip=$(echo "$line" | grep -oEo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+>         else
+>             # http.log: '192.168.1.5 - - [10/Apr/2023:08:30:42 +0000] "GET /index.html HTTP/1.1" 200 4523'
+>             ip=$(echo "$line" | grep -oEo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+>         fi
+>         if [[ -n "$ip" ]]; then
+>             ips+=("$ip")
+>         fi
+>         lines+=("$line")
+>     done < "$log_file"
+> }
+>
+> # Main detection
+> main() {
+>     # Read rules
+>     local -a rule_ids
+>     local -a rule_severities
+>     local -a rule_patterns
+>     local -a rule_thresholds
+>     local -a rule_timeframes
+>     read_rules "$RULES_FILE" rule_ids rule_severities rule_patterns rule_thresholds rule_timeframes
+>
+>     # Parse logs
+>     local -a auth_timestamps
+>     local -a auth_ips
+>     local -a auth_lines
+>     parse_logs "$AUTH_LOG" auth_timestamps auth_ips auth_lines
+>
+>     local -a http_timestamps
+>     local -a http_ips
+>     local -a http_lines
+>     parse_logs "$HTTP_LOG" http_timestamps http_ips http_lines
+>
+>     # Combine all lines, timestamps, IPs
+>     local -a all_timestamps=()
+>     local -a all_ips=()
+>     local -a all_lines=()
+>     while [[ ${#auth_lines[@]} -gt 0 ]]; do
+>         all_timestamps+=("${auth_timestamps[0]}")
+>         all_ips+=("${auth_ips[0]}")
+>         all_lines+=("${auth_lines[0]}")
+>         auth_timestamps=(${auth_timestamps[@]:1})
+>         auth_ips=(${auth_ips[@]:1})
+>         auth_lines=(${auth_lines[@]:1})
+>     done
+>     while [[ ${#http_lines[@]} -gt 0 ]]; do
+>         all_timestamps+=("${http_timestamps[0]}")
+>         all_ips+=("${http_ips[0]}")
+>         all_lines+=("${http_lines[0]}")
+>         http_timestamps=(${http_timestamps[@]:1})
+>         http_ips=(${http_ips[@]:1})
+>         http_lines=(${http_lines[@]:1})
+>     done
+>
+>     # Convert timestamps to ISO-8601 and store in associative array
+>     declare -A ts_to_iso
+>     for ts in "${all_timestamps[@]}"; do
+>         ts_to_iso["$ts"]=$(timestamp_to_iso "$ts")
+>     done
+>
+>     # For each rule, count matches and collect IPs within timeframe
+>     local -a rule_results
+>     for idx in "${!rule_ids[@]}"; do
+>         local rule_id="${rule_ids[$idx]}"
+>         local pattern="${rule_patterns[$idx]}"
+>         local threshold="${rule_thresholds[$idx]}"
+>         local timeframe="${rule_timeframes[$idx]}"
+>
+>         # Count matches
+>         local matches=0
+>         local ips_set=""
+>         for line in "${all_lines[@]}"; do
+>             if [[ $line =~ $pattern ]]; then
+>                 ((matches++))
+>                 # Get IP of this line
+>                 local line_ip
+>                 if [[ $line =~ "Accepted publickey" ]]; then
+>                     line_ip=$(echo "$line" | grep -oEo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+>                 elif [[ $line =~ "Failed password" ]]; then
+>                     line_ip=$(echo "$line" | grep -oEo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+>                 elif [[ $line =~ "sudo:" ]]; then
+>                     line_ip=$(echo "$line" | grep -oEo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+>                 else
+>                     # http.log: extract IP from line
+>                     line_ip=$(echo "$line" | grep -oEo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+>                 fi
+>                 if [[ -n "$line_ip" ]]; then
+>                     if [[ -z "$ips_set" ]]; then
+>                         ips_set="$line_ip"
+>                     else
+>                         ips_set="$ips_set,$line_ip"
+>                     fi
+>                 fi
+>             fi
+>         done
+>
+>         # Remove duplicate IPs
+>         local unique_ips=$(echo "$ips_set" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+>
+>         # Check if matches >= threshold (and timeframe? We'll ignore timeframe for now, but we could implement)
+>         if [[ $matches -ge $threshold ]]; then
+>             rule_results+=("$rule_id:$rule_severities[$idx]:$matches:$unique_ips")
+>         fi
+>     done
+>
+>     # Prepare alert.json
+>     local -a alerts
+>     for res in "${rule_results[@]}"; do
+>         local rule_id=${res%%:*}
+>         local severity=${res#*:}
+>         local matches=${res#*:*}
+>         local ips=${res#*:*:}
+>         alerts+=("\"$rule_id\":\"$severity\",\"matches\":$matches,\"ips\":\"$ips\"")
+>     done
+>
+>     local timestamp=$(date +%Y-%m-%dT%H:%M:%SZ)
+>     cat > "$ALERT_JSON" << EOL
+> {
+>   "timestamp": "$timestamp",
+>   "alerts": [
+>     $(echo "${alerts[@]}" | tr '\n' ' ' | sed 's/, $//')
+>   ]
+> }
+> EOL
+>
+>     # Prepare report.json
+>     local -a events
+>     for res in "${rule_results[@]}"; do
+>         local rule_id=${res%%:*}
+>         local severity=${res#*:}
+>         local matches=${res#*:*}
+>         local ips=${res#*:*:}
+>         events+=("\"$rule_id\":\"$severity\",\"matches\":$matches,\"ips\":\"$ips\"")
+>     done
+>
+>     local statistics=""
+>     for res in "${rule_results[@]}"; do
+>         local rule_id=${res%%:*}
+>         local matches=${res#*:*}
+>         statistics="$statistics\"$rule_id\":$matches"
+>     done
+>
+>     cat > "$REPORT_JSON" << EOL
+> {
+>   "timestamp": "$timestamp",
+>   "events": [
+>     $(echo "${events[@]}" | tr '\n' ' ' | sed 's/, $//')
+>   ],
+>   "statistics": {
+>     $(echo $statistics | sed 's/^/    /')
+>   }
+> }
+> EOL
+>
+> echo "Detection complete. Alert saved to $ALERT_JSON, Report saved to $REPORT_JSON"
+> EOF
+root@778003c21c51:/app# chmod +x /app/intrusion_detector.sh
+root@778003c21c51:/app# /app/intrusion_detector.sh
+/app/intrusion_detector.sh: line 220: syntax error: unexpected end of file
+root@778003c21c51:/app# cat /app/reports/alert.json
+cat: /app/reports/alert.json: No such file or directory
+root@778003c21c51:/app# cat /app/reports/report.json
+cat: /app/reports/report.json: No such file or directory
+root@778003c21c51:/app#

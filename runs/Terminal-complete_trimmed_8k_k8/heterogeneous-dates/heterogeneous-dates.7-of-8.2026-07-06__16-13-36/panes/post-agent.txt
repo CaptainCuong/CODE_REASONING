@@ -1,0 +1,265 @@
+root@1fcfe7e776b4:/app# ls -la
+total 8
+drwxr-xr-x 1 root root  77 Jun 24 11:01 .
+drwxr-xr-x 1 root root  57 Jul  7 17:35 ..
+-rw-rw-r-- 1 root root 121 Jun 24 11:01 daily_temp_sf_high.csv
+-rw-rw-r-- 1 root root 184 Jun 24 11:01 daily_temp_sf_low.csv
+root@1fcfe7e776b4:/app# head -5 daily_temp_sf_high.csv
+date,temperature
+2025-04-19,64
+2025-04-20,63
+2025-04-21,70
+2025-04-22,66
+root@1fcfe7e776b4:/app# head -5 daily_temp_sf_low.csv
+date,temperature
+04/19/2025 06:00:00,48
+04/20/2025 06:00:00,52
+04-23-2025 06:00:00,52
+04-22-2025 06:00:00,48
+root@1fcfe7e776b4:/app# wc -l daily_temp_sf_high.csv
+7 daily_temp_sf_high.csv
+root@1fcfe7e776b4:/app# wc -l daily_temp_sf_low.csv
+7 daily_temp_sf_low.csv
+root@1fcfe7e776b4:/app# cat daily_temp_sf_high.csv
+date,temperature
+2025-04-19,64
+2025-04-20,63
+2025-04-21,70
+2025-04-22,66
+2025-04-23,57
+2025-04-24,55
+2025-04-25,57root@1fcfe7e776b4:/app# cat daily_temp_sf_low.csv
+date,temperature
+04/19/2025 06:00:00,48
+04/20/2025 06:00:00,52
+04-23-2025 06:00:00,52
+04-22-2025 06:00:00,48
+04-24-2025 06:00:00,52
+04-21-2025 06:00:00,48
+04-25-2025 06:00:00,52root@1fcfe7e776b4:/app# python3 -c "
+> import csv
+> from datetime import datetime
+>
+> high = []
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         high.append((row['date'], int(row['temperature'])))
+>
+> low = []
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         # parse MM/DD/YYYY HH:MM:SS
+>         dt = datetime.strptime(row['date'], '%m/%d/%Y %H:%M:%S')
+>         low.append((dt.strftime('%Y-%m-%d'), int(row['temperature'])))
+>
+> # Pair by index (assuming same order)
+> diffs = []
+> for (high_date, high_temp), (low_date, low_temp) in zip(high, low):
+>     if high_date == low_date:
+>         diff = high_temp - low_temp
+>         diffs.append(diff)
+>     else:
+>         print(f'Date mismatch: high {high_date} vs low {low_date}')
+>
+> avg = sum(diffs) / len(diffs) if diffs else 0
+> print(f'Differences: {diffs}')
+> print(f'Average: {avg}')
+> with open('avg_temp.txt', 'w') as out:
+>     out.write(str(avg))
+> "
+Traceback (most recent call last):
+  File "<string>", line 16, in <module>
+    dt = datetime.strptime(row['date'], '%m/%d/%Y %H:%M:%S')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data '04-23-2025 06:00:00' does not match format '%m/%d/%Y %H:%M:%S'
+root@1fcfe7e776b4:/app# cat avg_temp.txt
+cat: avg_temp.txt: No such file or directory
+root@1fcfe7e776b4:/app# cat > compute_avg.py << 'EOF'
+> import csv
+> from datetime import datetime
+>
+> # High temperatures
+> high = {}
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         date_str = row['date']
+>         temp = int(row['temperature'])
+>         # date_str is YYYY-MM-DD
+>         high[date_str] = temp
+>
+> # Low temperatures
+> low = {}
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         date_str = row['date']
+>         temp = int(row['temperature'])
+>         # Try parsing with two formats
+>         formats = ['%m/%d/%Y %H:%M:%S', '%m-%d-%Y %H:%M:%S']
+>         parsed = None
+>         for fmt in formats:
+>             try:
+>                 dt = datetime.strptime(date_str, fmt)
+>                 parsed = dt.strftime('%Y-%m-%d')
+>                 break
+>             except ValueError:
+>                 continue
+>         if parsed is None:
+>             print(f'Warning: Could not parse date {date_str}')
+>             continue
+>         low[parsed] = temp
+>
+> print('High dates:', list(high.keys()))
+> print('Low dates:', list(low.keys()))
+>
+> # Compute differences
+> diffs = []
+> for h_date, h_temp in high.items():
+>     if h_date in low:
+>         l_temp = low[h_date]
+>         diff = h_temp - l_temp
+>         diffs.append(diff)
+>         print(f'Date {h_date}: high {h_temp}, low {l_temp}, diff {diff}')
+>     else:
+>         print(f'Warning: No low temperature for date {h_date}')
+>
+> if diffs:
+>     avg = sum(diffs) / len(diffs)
+>     print(f'Differences: {diffs}')
+>     print(f'Average: {avg}')
+>     with open('avg_temp.txt', 'w') as out:
+>         out.write(str(avg))
+> else:
+>     print('No matching dates')
+> EOF
+root@1fcfe7e776b4:/app# python3 compute_avg.py
+High dates: ['2025-04-19', '2025-04-20', '2025-04-21', '2025-04-22', '2025-04-23', '2025-04-24', '2025-04-25']
+Low dates: ['2025-04-19', '2025-04-20', '2025-04-23', '2025-04-22', '2025-04-24', '2025-04-21', '2025-04-25']
+Date 2025-04-19: high 64, low 48, diff 16
+Date 2025-04-20: high 63, low 52, diff 11
+Date 2025-04-21: high 70, low 48, diff 22
+Date 2025-04-22: high 66, low 48, diff 18
+Date 2025-04-23: high 57, low 52, diff 5
+Date 2025-04-24: high 55, low 52, diff 3
+Date 2025-04-25: high 57, low 52, diff 5
+Differences: [16, 11, 22, 18, 5, 3, 5]
+Average: 11.428571428571429
+root@1fcfe7e776b4:/app# cat avg_temp.txt
+11.428571428571429root@1fcfe7e776b4:/app# od -c avg_temp.txt
+0000000   1   1   .   4   2   8   5   7   1   4   2   8   5   7   1   4
+0000020   2   9
+0000022
+root@1fcfe7e776b4:/app# wc -c avg_temp.txt
+18 avg_temp.txt
+root@1fcfe7e776b4:/app# python3 -c "
+> import csv
+> from datetime import datetime
+> high = {}
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         high[row['date']] = int(row['temperature'])
+> low = {}
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         dt = datetime.strptime(row['date'], '%m/%d/%Y %H:%M:%S')
+>         low[dt.strftime('%Y-%m-%d')] = int(row['temperature'])
+> diffs = [high[d] - low[d] for d in high if d in low]
+> avg = sum(diffs)/len(diffs)
+> print('Diffs:', diffs)
+> print('Avg:', avg)
+> print('Avg rounded:', round(avg, 2))
+> "
+Traceback (most recent call last):
+  File "<string>", line 13, in <module>
+    dt = datetime.strptime(row['date'], '%m/%d/%Y %H:%M:%S')
+  File "/usr/local/lib/python3.13/_strptime.py", line 676, in _strptime_datetime
+    tt, fraction, gmtoff_fraction = _strptime(data_string, format)
+                                    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/_strptime.py", line 455, in _strptime
+    raise ValueError("time data %r does not match format %r" %
+                     (data_string, format))
+ValueError: time data '04-23-2025 06:00:00' does not match format '%m/%d/%Y %H:%M:%S'
+root@1fcfe7e776b4:/app# cat > verify.py << 'EOF'
+> import csv
+> from datetime import datetime
+>
+> high = {}
+> with open('daily_temp_sf_high.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         high[row['date']] = int(row['temperature'])
+>
+> low = {}
+> with open('daily_temp_sf_low.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         date_str = row['date']
+>         temp = int(row['temperature'])
+>         formats = ['%m/%d/%Y %H:%M:%S', '%m-%d-%Y %H:%M:%S']
+>         parsed = None
+>         for fmt in formats:
+>             try:
+>                 dt = datetime.strptime(date_str, fmt)
+>                 parsed = dt.strftime('%Y-%m-%d')
+>                 break
+>             except ValueError:
+>                 continue
+>         if parsed is None:
+>             print(f'Warning: Could not parse {date_str}')
+>             continue
+>         low[parsed] = temp
+>
+> print('High dates:', list(high.keys()))
+> print('Low dates:', list(low.keys()))
+>
+> # Check for missing dates
+> missing = set(high.keys()) - set(low.keys())
+> if missing:
+>     print(f'Missing low dates for high dates: {missing}')
+> else:
+>     print('All high dates have low dates.')
+>
+> # Compute differences
+> diffs = []
+> for h_date, h_temp in high.items():
+>     l_temp = low[h_date]
+>     diff = h_temp - l_temp
+>     diffs.append((h_date, h_temp, l_temp, diff))
+>
+> print('Differences:')
+> for d in diffs:
+>     print(f'{d[0]}: high {d[1]}, low {d[2]}, diff {d[3]}')
+>
+> avg = sum(d[3] for d in diffs) / len(diffs)
+> print(f'Average: {avg}')
+>
+> # Read avg_temp.txt
+> with open('avg_temp.txt', 'r') as f:
+>     content = f.read().strip()
+> print(f'Content of avg_temp.txt: {content}')
+> EOF
+root@1fcfe7e776b4:/app# python3 verify.py
+High dates: ['2025-04-19', '2025-04-20', '2025-04-21', '2025-04-22', '2025-04-23', '2025-04-24', '2025-04-25']
+Low dates: ['2025-04-19', '2025-04-20', '2025-04-23', '2025-04-22', '2025-04-24', '2025-04-21', '2025-04-25']
+All high dates have low dates.
+Differences:
+2025-04-19: high 64, low 48, diff 16
+2025-04-20: high 63, low 52, diff 11
+2025-04-21: high 70, low 48, diff 22
+2025-04-22: high 66, low 48, diff 18
+2025-04-23: high 57, low 52, diff 5
+2025-04-24: high 55, low 52, diff 3
+2025-04-25: high 57, low 52, diff 5
+Average: 11.428571428571429
+Content of avg_temp.txt: 11.428571428571429
+root@1fcfe7e776b4:/app#

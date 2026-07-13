@@ -1,0 +1,79 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@047798bca257:/app# python3 -c "import requests; r = requests.post('http://localhost:5000/sentiment', json={'text': 'hello'}); print(r.json())"
+{'error': "'SequenceClassifierOutput' object has no attribute 'probs'"}
+root@047798bca257:/app# cat app.py
+from flask import Flask, request, json
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import sys
+import os
+
+# Load the model and tokenizer from cache
+model_path = '/app/model_cache/sentiment_model'
+model = AutoModelForSequenceClassification.from_pretrained(model_path)
+tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+app = Flask(__name__)
+
+@app.route('/sentiment', methods=['POST'])
+def sentiment():
+    try:
+        data = request.json
+        text = data.get('text', '')
+        if not text:
+            return {'error': 'No text provided'}, 400
+        # Tokenize and predict
+        inputs = tokenizer(text, return_tensors='pt')
+        outputs = model(**inputs)
+        # Get probabilities from logits
+        logits = outputs.logits
+        # Convert to probabilities (softmax)
+        import torch
+        probs = torch.softmax(logits, dim=1)
+        positive_prob = probs[0].item()
+        negative_prob = probs[1].item()
+        # Determine sentiment
+        if positive_prob > negative_prob:
+            sentiment = 'positive'
+            confidence = {'positive': positive_prob, 'negative': negative_prob}
+        else:
+            sentiment = 'negative'
+            confidence = {'positive': positive_prob, 'negative': negative_prob}
+        return {'sentiment': sentiment, 'confidence': confidence}
+    except Exception as e:
+        return {'error': str(e)}, 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=False)
+[2]+  Exit 1                  nohup python3 app.py > /dev/null 2>&1
+root@047798bca257:/app# python3 -c "import psutil; for p in psutil.process_iter(): try: if p.name() == 'python3': p.kill() except: pass"
+  File "<string>", line 1
+    import psutil; for p in psutil.process_iter(): try: if p.name() == 'python3': p.kill() except: pass
+                   ^^^
+SyntaxError: invalid syntax
+root@047798bca257:/app# python3 -c "
+> from flask import Flask, request, json
+> from transformers import AutoModelForSequenceClassification, AutoTokenizer
+> import sys
+> import os
+>
+> model_path = '/app/model_cache/sentiment_model'
+> model = AutoModelForSequenceClassification.from_pretrained(model_path)
+> tokenizer = AutoTokenizer.from_pretrained(model_path)
+>
+> # Test the model
+> text = 'I love programming and deep learning. This is an amazing experience!'
+> inputs = tokenizer(text, return_tensors='pt')
+> outputs = model(**inputs)
+> logits = outputs.logits
+> import torch
+> probs = torch.softmax(logits, dim=1)
+> positive_prob = probs[0].item()
+> negative_prob = probs[1].item()
+> print('Probabilities:', positive_prob, negative_prob)
+> print('Sentiment:', 'positive' if positive_prob > negative_prob else 'negative')
+> "
+

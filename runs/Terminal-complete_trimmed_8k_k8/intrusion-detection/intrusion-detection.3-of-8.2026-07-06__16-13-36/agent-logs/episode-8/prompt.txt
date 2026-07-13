@@ -1,0 +1,72 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@9c19dc05eb46:/app# cd /app
+root@9c19dc05eb46:/app# RULES=$(jq -r '.rules[] | "\(.id):\(.pattern):\(.threshold):\(.severity)"' /app/rules/detection_rules.json)
+root@9c19dc05eb46:/app# echo "$RULES" | wc -l
+4
+root@9c19dc05eb46:/app# echo "$RULES" | head -5
+SSH-BRUTE-FORCE:Failed password for:5:high
+WEB-SCAN:GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php:3:medium
+INVALID-USER:invalid user:2:low
+SUDO-COMMAND:sudo:.*COMMAND=:1:info
+root@9c19dc05eb46:/app# echo "$RULES" | tail -5
+SSH-BRUTE-FORCE:Failed password for:5:high
+WEB-SCAN:GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php:3:medium
+INVALID-USER:invalid user:2:low
+SUDO-COMMAND:sudo:.*COMMAND=:1:info
+root@9c19dc05eb46:/app# while IFS=: read -r a b c d; do echo "$a"; done <<< "$RULES"
+SSH-BRUTE-FORCE
+WEB-SCAN
+INVALID-USER
+SUDO-COMMAND
+root@9c19dc05eb46:/app# cat > /app/debug.sh << 'EOF'
+> #!/bin/bash
+> RULES=$(jq -r '.rules[] | "\(.id):\(.pattern):\(.threshold):\(.severity)"' /app/rules/detection_rules.json)
+> while IFS=: read -r a b c d; do
+>     echo "Line: $a"
+>     echo "Pattern: $b"
+>     echo "Threshold: $c"
+>     echo "Severity: $d"
+>     AUTH_COUNT=$(grep -c "$b" /app/logs/auth.log)
+>     HTTP_COUNT=$(grep -c "$b" /app/logs/http.log)
+>     total=$((AUTH_COUNT + HTTP_COUNT))
+>     echo "Matches: $total"
+>     AUTH_IPS=$(grep "$b" /app/logs/auth.log | grep -oEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u)
+>     HTTP_IPS=$(grep "$b" /app/logs/http.log | grep -oEo '[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}' | sort -u)
+>     ALL_IPS=$(echo "$AUTH_IPS $HTTP_IPS" | tr ' ' '\n' | sort -u)
+>     echo "IPs: $ALL_IPS"
+> done <<< "$RULES"
+> EOF
+root@9c19dc05eb46:/app# chmod +x /app/debug.sh
+root@9c19dc05eb46:/app# ./debug.sh
+Line: SSH-BRUTE-FORCE
+Pattern: Failed password for
+Threshold: 5
+Severity: high
+Matches: 8
+IPs:
+198.51.100.23
+45.32.67.89
+Line: WEB-SCAN
+Pattern: GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php
+Threshold: 3
+Severity: medium
+Matches: 0
+IPs:
+Line: INVALID-USER
+Pattern: invalid user
+Threshold: 2
+Severity: low
+Matches: 2
+IPs:
+198.51.100.23
+Line: SUDO-COMMAND
+Pattern: sudo
+Threshold: .*COMMAND=
+Severity: 1:info
+Matches: 3
+IPs:
+root@9c19dc05eb46:/app#

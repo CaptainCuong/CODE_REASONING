@@ -1,0 +1,138 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@95302c980052:/app# ls -la /app/UPET/tasks
+total 16
+drwxr-xr-x  8 root root  153 Jul 10 16:53 .
+drwxr-xr-x 12 root root 4096 Jul 10 16:53 ..
+-rw-r--r--  1 root root 6148 Jul 10 16:53 .DS_Store
+drwxr-xr-x  2 root root   58 Jul 10 16:53 glue
+drwxr-xr-x  3 root root   78 Jul 10 16:53 ner
+drwxr-xr-x  2 root root   58 Jul 10 16:53 other_cls
+drwxr-xr-x  2 root root   81 Jul 10 16:53 qa
+drwxr-xr-x  3 root root   78 Jul 10 16:53 srl
+drwxr-xr-x  2 root root  107 Jul 10 16:53 superglue
+-rw-r--r--  1 root root 1456 Jul 10 16:53 utils.py
+root@95302c980052:/app# find /app/UPET -type f -name '*.py' | grep -v 'test' | grep -v 'run_script' | grep -v 'colbert' | grep -v 'beir_eval' | grep -v 'calibra
+tion' | head -20
+/app/UPET/PT-Retrieval/convert_openqa_data.py
+/app/UPET/PT-Retrieval/dense_retriever.py
+/app/UPET/PT-Retrieval/download_data.py
+/app/UPET/PT-Retrieval/dpr/__init__.py
+/app/UPET/PT-Retrieval/dpr/data/__init__.py
+/app/UPET/PT-Retrieval/dpr/data/qa_validation.py
+/app/UPET/PT-Retrieval/dpr/data/qasper_reader.py
+/app/UPET/PT-Retrieval/dpr/data/reader_data.py
+/app/UPET/PT-Retrieval/dpr/indexer/faiss_indexers.py
+/app/UPET/PT-Retrieval/dpr/models/__init__.py
+/app/UPET/PT-Retrieval/dpr/models/biencoder.py
+/app/UPET/PT-Retrieval/dpr/models/hf_led.py
+/app/UPET/PT-Retrieval/dpr/models/hf_models.py
+/app/UPET/PT-Retrieval/dpr/models/prefix.py
+/app/UPET/PT-Retrieval/dpr/models/reader.py
+/app/UPET/PT-Retrieval/dpr/options.py
+/app/UPET/PT-Retrieval/dpr/utils/__init__.py
+/app/UPET/PT-Retrieval/dpr/utils/data_utils.py
+/app/UPET/PT-Retrieval/dpr/utils/dist_utils.py
+/app/UPET/PT-Retrieval/dpr/utils/model_utils.py
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/*.py 2>/dev/null
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/tasks/*.py 2>/dev/null
+root@95302c980052:/app# cat /app/UPET/tasks/other_cls/get_trainer.py
+import logging
+import os
+import random
+import sys
+
+from transformers import (
+    AutoConfig,
+    AutoTokenizer,
+)
+
+from model.utils import get_model, TaskType
+from tasks.other_cls.dataset import OtherCLSDataset
+from training.trainer_base import BaseTrainer
+from training.self_trainer import SelfTrainer
+
+logger = logging.getLogger(__name__)
+
+def get_trainer(args):
+    model_args, data_args, training_args, semi_training_args, _ = args
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_args.model_name_or_path,
+        use_fast=model_args.use_fast_tokenizer,
+        revision=model_args.model_revision,
+    )
+
+    # add by wjn check if use prompt template
+    use_prompt = False
+    if model_args.prompt_prefix or model_args.prompt_ptuning or model_args.prompt_adapter or model_args.prompt_only:
+        use_prompt = True
+
+    dataset = OtherCLSDataset(tokenizer, data_args, training_args, semi_training_args=semi_training_args, use_prompt=use_prompt)
+
+    data_args.label_word_list = None # add by wjn
+    if use_prompt:
+        data_args.label_word_list = dataset.label_word_list # add by wjn
+
+    if training_args.do_train:
+        for index in random.sample(range(len(dataset.train_dataset)), 3):
+            logger.info(f"Sample {index} of the training set: {dataset.train_dataset[index]}.")
+
+    if not dataset.is_regression:
+        config = AutoConfig.from_pretrained(
+            model_args.model_name_or_path,
+            num_labels=dataset.num_labels,
+            label2id=dataset.label2id,
+            id2label=dataset.id2label,
+            finetuning_task=data_args.dataset_name,
+            revision=model_args.model_revision,
+        )
+    else:
+        config = AutoConfig.from_pretrained(
+            model_args.model_name_or_path,
+            num_labels=dataset.num_labels,
+            finetuning_task=data_args.dataset_name,
+            revision=model_args.model_revision,
+        )
+
+    model = get_model(data_args, model_args, TaskType.SEQUENCE_CLASSIFICATION, config)
+
+    # Initialize our Trainer
+
+    if semi_training_args.use_semi:
+        model_args.pre_seq_len = semi_training_args.student_pre_seq_len
+        student_model = get_model(data_args, model_args, TaskType.SEQUENCE_CLASSIFICATION, config)
+        trainer = SelfTrainer(
+            teacher_base_model=model,
+            student_base_model=student_model,
+            training_args=training_args,
+            semi_training_args=semi_training_args,
+            train_dataset=dataset.train_dataset if training_args.do_train else None,
+            unlabeled_dataset=dataset.unlabeled_dataset,
+            eval_dataset=dataset.eval_dataset if training_args.do_eval else None,
+            compute_metrics=dataset.compute_metrics,
+            tokenizer=tokenizer,
+            teacher_data_collator=dataset.data_collator,
+            student_data_collator=dataset.data_collator,
+            test_key=dataset.test_key,
+            task_type="cls",
+            num_classes=len(dataset.label2id),
+        )
+
+        return trainer, None
+
+    trainer = BaseTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset.train_dataset if training_args.do_train else None,
+        eval_dataset=dataset.eval_dataset if training_args.do_eval else None,
+        compute_metrics=dataset.compute_metrics,
+        tokenizer=tokenizer,
+        data_collator=dataset.data_collator,
+        test_key=dataset.test_key,
+    )
+
+    return trainer, Noneroot@95302c980052:/app#

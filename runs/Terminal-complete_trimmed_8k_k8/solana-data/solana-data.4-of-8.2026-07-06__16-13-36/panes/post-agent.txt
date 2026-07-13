@@ -1,0 +1,1748 @@
+root@0638fd780d9a:/app# ls -la
+total 0
+drwxr-xr-x 2 root root  6 Mar 28  2025 .
+drwxr-xr-x 1 root root 57 Jul  7 22:18 ..
+root@0638fd780d9a:/app# python3 --version
+Python 3.13.1
+root@0638fd780d9a:/app# pip3 list 2>/dev/null | head -20
+Package Version
+------- -------
+pip     24.3.1
+root@0638fd780d9a:/app# pip3 install flask solana-rpc
+Collecting flask
+  Downloading flask-3.1.3-py3-none-any.whl.metadata (3.2 kB)
+ERROR: Could not find a version that satisfies the requirement solana-rpc (from versions: none)
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+ERROR: No matching distribution found for solana-rpc
+root@0638fd780d9a:/app# mkdir -p /app/server
+root@0638fd780d9a:/app# cd /app/server
+root@0638fd780d9a:/app/server# cat > server.py << 'EOF'
+dumps({'error': str(e)})
+
+# /transaction/<signature>
+@app.route('/transaction/<signature>')
+def transaction_details(signature):
+    try:
+        transaction = Transaction.from_signature(signature)
+        tx_data = transaction.to_dict()
+        # Convert some fields
+        tx_data['signature'] = transaction.signature
+        tx_data['slot'] = transaction.slot
+        tx_data['block_time'] = transaction.timestamp
+        tx_data['success'] = transaction.is_success
+        tx_data['fee'] = transaction.fee
+        # Token transfers
+        token_transfers = []
+        for transfer in transaction.token_transfers:
+            token_transfers.append({
+                'account': transfer.account.to_string(),
+                'mint': transfer.mint.to_string(),
+                'amount': str(transfer.amount)
+            })
+        tx_data['token_transfers'] = token_transfers
+        return json.dumps(tx_data)
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+# /account/<address>
+@app.route('/account/<address>')
+def account_details(address):
+    try:
+        account = Account(address)
+        account_data = account.to_dict()
+        return json.dumps(account_data)
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+# /program/<program_id>/accounts
+@app.route('/program/<program_id>/accounts')
+def program_accounts(program_id, limit=10, offset=0):
+    try:
+        program = Program(program_id)
+        accounts = program.get_accounts(limit, offset)
+        result = {
+            'program_id': program_id,
+            'total_accounts': len(accounts),
+            'limit': limit,
+            'offset': offset,
+            'accounts': []
+        }
+        for account in accounts:
+            account_info = account.to_dict()
+            result['accounts'].append(account_info)
+        return json.dumps(result)
+    except Exception as e:
+        return json.dumps({'error': str(e)})
+
+if __name__ == '__main__':
+    app.run(port=5000, debug=True)
+EOF
+> import json
+> import sys
+> from flask import Flask, request, abort
+> from solana.rpc import client as rpc_client
+> from solana.rpc.commitment import Commitment
+> from solana.rpc.api import Namespace
+> from solana import Solana
+> from solana.account import Account
+> from solana.block import Block
+> from solana.signature import Signature
+> from solana.transaction import Transaction
+> from solana.token import Token
+> from solana.token_account import TokenAccount
+> from solana.program import Program
+> from solana.pubkey import Pubkey
+>
+> # Set up Solana client
+> solana = Solana('https://rpc.mainnet-beta.solana.com', timeout=10)
+>
+> app = Flask(__name__)
+>
+> # Helper function to get network status
+> def get_network_status():
+>     try:
+>         status = solana.status()
+>         # Extract network, current slot, node count, version
+>         network = status['network']
+>         current_slot = status['current_slot']
+>         node_count = status['node_count']
+>         version = status['version']
+>         return {
+>             'status': 'online',
+>             'network': network,
+>             'current_slot': current_slot,
+>             'node_count': node_count,
+>             'version': version
+>         }
+>     except Exception as e:
+>         return {'error': str(e)}
+>
+> # /status endpoint
+> @app.route('/status')
+> def status():
+>     status_data = get_network_status()
+>     if 'error' in status_data:
+>         return json.dumps({'error': status_data['error']})
+>     return json.dumps(status_data)
+>
+> # /block/<slot_number>
+> @app.route('/block/<int:slot_number>')
+> def block_details(slot_number):
+>     try:
+>         block = Block(slot_number)
+>         block_data = block.to_dict()
+>         # Convert some fields to JSON-serializable
+>         block_data['block_hash'] = block.block_hash
+>         block_data['parent_slot'] = block.parent_slot
+>         block_data['previous_block_hash'] = block.previous_block_hash
+>         block_data['block_height'] = block.height
+>         block_data['block_time'] = block.timestamp
+>         return json.dumps(block_data)
+>     except Exception as e:
+>         return json.dumps({'error': str(e)})
+>
+> # /transaction/<signature>
+> @app.route('/transaction/<signature>')
+> def transaction_details(signature):
+>     try:
+>         transaction = Transaction.from_signature(signature)
+>         tx_data = transaction.to_dict()
+>         # Convert some fields
+>         tx_data['signature'] = transaction.signature
+>         tx_data['slot'] = transaction.slot
+>         tx_data['block_time'] = transaction.timestamp
+>         tx_data['success'] = transaction.is_success
+>         tx_data['fee'] = transaction.fee
+>         # Token transfers
+>         token_transfers = []
+>         for transfer in transaction.token_transfers:
+>             token_transfers.append({
+>                 'account': transfer.account.to_string(),
+>                 'mint': transfer.mint.to_string(),
+>                 'amount': str(transfer.amount)
+>             })
+>         tx_data['token_transfers'] = token_transfers
+>         return json.dumps(tx_data)
+>     except Exception as e:
+>         return json.dumps({'error': str(e)})
+>
+> # /account/<address>
+> @app.route('/account/<address>')
+> def account_details(address):
+>     try:
+>         account = Account(address)
+>         account_data = account.to_dict()
+>         return json.dumps(account_data)
+>     except Exception as e:
+>         return json.dumps({'error': str(e)})
+>
+> # /program/<program_id>/accounts
+> @app.route('/program/<program_id>/accounts')
+> def program_accounts(program_id, limit=10, offset=0):
+>     try:
+>         program = Program(program_id)
+>         accounts = program.get_accounts(limit, offset)
+>         result = {
+>             'program_id': program_id,
+>             'total_accounts': len(accounts),
+>             'limit': limit,
+>             'offset': offset,
+>             'accounts': []
+>         }
+>         for account in accounts:
+>             account_info = account.to_dict()
+>             result['accounts'].append(account_info)
+>         return json.dumps(result)
+>     except Exception as e:
+>         return json.dumps({'error': str(e)})
+>
+> if __name__ == '__main__':
+>     app.run(port=5000, debug=True)
+> EOF
+root@0638fd780d9a:/app/server# pip3 install solana
+Collecting solana
+  Downloading solana-0.40.0-py3-none-any.whl.metadata (5.3 kB)
+Collecting aiolimiter>=1.1.0 (from solana)
+  Downloading aiolimiter-1.2.1-py3-none-any.whl.metadata (4.5 kB)
+Collecting construct-typing<0.8.0,>=0.6.2 (from solana)
+  Downloading construct_typing-0.7.0-py3-none-any.whl.metadata (8.4 kB)
+Collecting httpx2>=2.4.0 (from httpx2[http2]>=2.4.0->solana)
+  Downloading httpx2-2.5.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting pydantic>=2.13.4 (from solana)
+  Downloading pydantic-2.13.4-py3-none-any.whl.metadata (109 kB)
+Collecting solders<0.28,>=0.23 (from solana)
+  Downloading solders-0.27.1-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (3.7 kB)
+Collecting typing-extensions>=4.5.0 (from solana)
+  Downloading typing_extensions-4.16.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting websockets>=14.0 (from solana)
+  Downloading websockets-16.0-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl.metadata (6.8 kB)
+Collecting construct==2.10.70 (from construct-typing<0.8.0,>=0.6.2->solana)
+  Downloading construct-2.10.70-py3-none-any.whl.metadata (4.2 kB)
+Collecting anyio (from httpx2>=2.4.0->httpx2[http2]>=2.4.0->solana)
+  Downloading anyio-4.14.1-py3-none-any.whl.metadata (4.6 kB)
+Collecting httpcore2==2.5.0 (from httpx2>=2.4.0->httpx2[http2]>=2.4.0->solana)
+  Downloading httpcore2-2.5.0-py3-none-any.whl.metadata (24 kB)
+Collecting idna>=3.18 (from httpx2>=2.4.0->httpx2[http2]>=2.4.0->solana)
+  Downloading idna-3.18-py3-none-any.whl.metadata (6.1 kB)
+Collecting truststore>=0.10 (from httpx2>=2.4.0->httpx2[http2]>=2.4.0->solana)
+  Downloading truststore-0.10.4-py3-none-any.whl.metadata (4.4 kB)
+Collecting h11>=0.16 (from httpcore2==2.5.0->httpx2>=2.4.0->httpx2[http2]>=2.4.0->solana)
+  Downloading h11-0.16.0-py3-none-any.whl.metadata (8.3 kB)
+Collecting h2<5,>=3 (from httpx2[http2]>=2.4.0->solana)
+  Downloading h2-4.3.0-py3-none-any.whl.metadata (5.1 kB)
+Collecting annotated-types>=0.6.0 (from pydantic>=2.13.4->solana)
+  Downloading annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting pydantic-core==2.46.4 (from pydantic>=2.13.4->solana)
+  Downloading pydantic_core-2.46.4-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.6 kB)
+Collecting typing-inspection>=0.4.2 (from pydantic>=2.13.4->solana)
+  Downloading typing_inspection-0.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting jsonalias==0.1.1 (from solders<0.28,>=0.23->solana)
+  Downloading jsonalias-0.1.1-py3-none-any.whl.metadata (469 bytes)
+Collecting hyperframe<7,>=6.1 (from h2<5,>=3->httpx2[http2]>=2.4.0->solana)
+  Downloading hyperframe-6.1.0-py3-none-any.whl.metadata (4.3 kB)
+Collecting hpack<5,>=4.1 (from h2<5,>=3->httpx2[http2]>=2.4.0->solana)
+  Downloading hpack-4.2.0-py3-none-any.whl.metadata (3.3 kB)
+Downloading solana-0.40.0-py3-none-any.whl (48 kB)
+Downloading aiolimiter-1.2.1-py3-none-any.whl (6.7 kB)
+Downloading construct_typing-0.7.0-py3-none-any.whl (24 kB)
+Downloading construct-2.10.70-py3-none-any.whl (63 kB)
+Downloading httpx2-2.5.0-py3-none-any.whl (76 kB)
+Downloading httpcore2-2.5.0-py3-none-any.whl (80 kB)
+Downloading pydantic-2.13.4-py3-none-any.whl (472 kB)
+Downloading pydantic_core-2.46.4-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.1/2.1 MB 222.5 MB/s eta 0:00:00
+Downloading solders-0.27.1-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (12.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 12.7/12.7 MB 170.3 MB/s eta 0:00:00
+Downloading jsonalias-0.1.1-py3-none-any.whl (1.3 kB)
+Downloading typing_extensions-4.16.0-py3-none-any.whl (45 kB)
+Downloading websockets-16.0-cp313-cp313-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (184 kB)
+Downloading annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Downloading h2-4.3.0-py3-none-any.whl (61 kB)
+Downloading idna-3.18-py3-none-any.whl (65 kB)
+Downloading truststore-0.10.4-py3-none-any.whl (18 kB)
+Downloading typing_inspection-0.4.2-py3-none-any.whl (14 kB)
+Downloading anyio-4.14.1-py3-none-any.whl (124 kB)
+Downloading h11-0.16.0-py3-none-any.whl (37 kB)
+Downloading hpack-4.2.0-py3-none-any.whl (34 kB)
+Downloading hyperframe-6.1.0-py3-none-any.whl (13 kB)
+Installing collected packages: websockets, typing-extensions, truststore, jsonalias, idna, hyperframe, hpack, h11, construct, annotated-types, aiolimiter, typin
+g-inspection, solders, pydantic-core, httpcore2, h2, construct-typing, anyio, pydantic, httpx2, solana
+Successfully installed aiolimiter-1.2.1 annotated-types-0.7.0 anyio-4.14.1 construct-2.10.70 construct-typing-0.7.0 h11-0.16.0 h2-4.3.0 hpack-4.2.0 httpcore2-2.
+5.0 httpx2-2.5.0 hyperframe-6.1.0 idna-3.18 jsonalias-0.1.1 pydantic-2.13.4 pydantic-core-2.46.4 solana-0.40.0 solders-0.27.1 truststore-0.10.4 typing-extension
+s-4.16.0 typing-inspection-0.4.2 websockets-16.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you ar
+e doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# cat > server.py << 'EOF'
+> import json
+> import sys
+> from flask import Flask, request
+> from solana import Solana
+> from solana.rpc import client as rpc_client
+> from solana.account import Account
+> from solana.block import Block
+> from solana.signature import Signature
+> from solana.transaction import Transaction
+> from solana.token import Token
+> from solana.token_account import TokenAccount
+> from solana.program import Program
+> from solana.pubkey import Pubkey
+>
+> # Set up Solana client
+> solana = Solana('https://rpc.mainnet-beta.solana.com', timeout=10)
+>
+> app = Flask(__name__)
+>
+> # Helper function to get network status
+> def get_network_status():
+>     try:
+>         status = solana.status()
+>         # Extract network, current slot, node count, version
+>         network = status['network']
+>         current_slot = status['current_slot']
+>         node_count = status['node_count']
+>         version = status['version']
+>         return {
+>             'status': 'online',
+>             'network': network,
+>             'current_slot': current_slot,
+>             'node_count': node_count,
+>             'version': version
+>         }
+>     except Exception as e:
+>         return {'error': str(e)}
+>
+> # /status endpoint
+> @app.route('/status')
+> def status():
+>     status_data = get_network_status()
+>     if 'error' in status_data:
+>         return json.dumps({'error': status_data['error']})
+>     return json.dumps(status_data)
+>
+> # /block/<slot_number>
+> @app.route('/block/<int:slot_number>')
+> def block_details(slot_number):
+>     try:
+>         block = Block(slot_number)
+>         block_data = block.to_dict()
+>         # Convert some fields to JSON-serializable
+>         block_data['block_hash'] = block.block_hash
+>         block_data['parent_slot'] = block.parent_slot
+>         block_data['previous_block_hash'] = block.previous_block_hash
+>         block_data['block_height'] = block.height
+>         block_data['block_time'] = block.timestamp
+>         return json.dumps(block_data)
+>     except Exception as e:
+>         return json.dumps({'error': str(e)})
+>
+> # /transaction/<signature>
+> @app.route('/transaction/<signature>')
+> def transaction_details(signature):
+>     try:
+>         transaction = Transaction.from_signature(signature)
+>         tx_data = transaction.to_dict()
+>         # Convert some fields
+>         tx_data['signature'] = transaction.signature
+>         tx_data['slot'] = transaction.slot
+>         tx_data['block_time'] = transaction.timestamp
+>         tx_data['success'] = transaction.is_success
+>         tx_data['fee'] = transaction.fee
+>         # Token transfers
+>         token_transfers = []
+>         for transfer in transaction.token_transfers:
+>             token_transfers.append({
+>                 'account': transfer.account.to_string(),
+>                 'mint': transfer.mint.to_string(),
+>                 'amount': str(transfer.amount)
+>             })
+>         tx_data['token_transfers'] = token_transfers
+>         return json.dumps(tx_data)
+>     except Exception as e:
+>         return json.dumps({'error': str(e)})
+>
+> # /account/<address>
+> @app.route('/account/<address>')
+> def account_details(address):
+>     try:
+>         account = Account(address)
+>         account_data = account.to_dict()
+>         return json.dumps(account_data)
+>     except Exception as e:
+>         return json.dumps({'error': str(e)})
+>
+> # /program/<program_id>/accounts
+> @app.route('/program/<program_id>/accounts')
+> def program_accounts(program_id, limit=10, offset=0):
+>     try:
+>         program = Program(program_id)
+>         accounts = program.get_accounts(limit, offset)
+>         result = {
+>             'program_id': program_id,
+>             'total_accounts': len(accounts),
+>             'limit': limit,
+>             'offset': offset,
+>             'accounts': []
+>         }
+>         for account in accounts:
+>             account_info = account.to_dict()
+>             result['accounts'].append(account_info)
+>         return json.dumps(result)
+>     except Exception as e:
+>         return json.dumps({'error': str(e)})
+>
+> if __name__ == '__main__':
+>     app.run(port=5000, debug=True)
+> EOF
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# wc -l server.py
+119 server.py
+root@0638fd780d9a:/app/server# head -30 server.py
+import json
+import sys
+from flask import Flask, request
+from solana import Solana
+from solana.rpc import client as rpc_client
+from solana.account import Account
+from solana.block import Block
+from solana.signature import Signature
+from solana.transaction import Transaction
+from solana.token import Token
+from solana.token_account import TokenAccount
+from solana.program import Program
+from solana.pubkey import Pubkey
+
+# Set up Solana client
+solana = Solana('https://rpc.mainnet-beta.solana.com', timeout=10)
+
+app = Flask(__name__)
+
+# Helper function to get network status
+def get_network_status():
+    try:
+        status = solana.status()
+        # Extract network, current slot, node count, version
+        network = status['network']
+        current_slot = status['current_slot']
+        node_count = status['node_count']
+        version = status['version']
+        return {
+            'status': 'online',
+root@0638fd780d9a:/app/server# python3 server.py
+Traceback (most recent call last):
+  File "/app/server/server.py", line 3, in <module>
+    from flask import Flask, request
+ModuleNotFoundError: No module named 'flask'
+root@0638fd780d9a:/app/server# pip3 install flask
+Collecting flask
+  Using cached flask-3.1.3-py3-none-any.whl.metadata (3.2 kB)
+Collecting blinker>=1.9.0 (from flask)
+  Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+Collecting click>=8.1.3 (from flask)
+  Downloading click-8.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting itsdangerous>=2.2.0 (from flask)
+  Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+Collecting jinja2>=3.1.2 (from flask)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting markupsafe>=2.1.1 (from flask)
+  Downloading markupsafe-3.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+Collecting werkzeug>=3.1.0 (from flask)
+  Downloading werkzeug-3.1.8-py3-none-any.whl.metadata (4.0 kB)
+Downloading flask-3.1.3-py3-none-any.whl (103 kB)
+Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+Downloading click-8.4.2-py3-none-any.whl (119 kB)
+Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+Downloading werkzeug-3.1.8-py3-none-any.whl (226 kB)
+Installing collected packages: markupsafe, itsdangerous, click, blinker, werkzeug, jinja2, flask
+Successfully installed blinker-1.9.0 click-8.4.2 flask-3.1.3 itsdangerous-2.2.0 jinja2-3.1.6 markupsafe-3.0.3 werkzeug-3.1.8
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you ar
+e doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@0638fd780d9a:/app/server# cat server.py | grep -n 'dumps'
+44:        return json.dumps({'error': status_data['error']})
+45:    return json.dumps(status_data)
+59:        return json.dumps(block_data)
+61:        return json.dumps({'error': str(e)})
+84:        return json.dumps(tx_data)
+86:        return json.dumps({'error': str(e)})
+94:        return json.dumps(account_data)
+96:        return json.dumps({'error': str(e)})
+114:        return json.dumps(result)
+116:        return json.dumps({'error': str(e)})
+root@0638fd780d9a:/app/server# sed -i '/^dumps/d' server.py
+root@0638fd780d9a:/app/server# python3 -m py_compile server.py
+root@0638fd780d9a:/app/server# python3 server.py
+Traceback (most recent call last):
+  File "/app/server/server.py", line 4, in <module>
+    from solana import Solana
+ImportError: cannot import name 'Solana' from 'solana' (/usr/local/lib/python3.13/site-packages/solana/__init__.py)
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# python3 -c "import solana; print([x for x in dir(solana) if not x.startswith('_')])"
+['sys']
+root@0638fd780d9a:/app/server# python3 -c "from solana import *; print([x for x in dir() if not x.startswith('_')])"
+['sys']
+root@0638fd780d9a:/app/server# python3 -c "import solana; print(solana.__version__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import solana; print(solana.__version__)
+                         ^^^^^^^^^^^^^^^^^^
+AttributeError: module 'solana' has no attribute '__version__'
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# python3 -c "import solana; print(solana.__file__)"
+/usr/local/lib/python3.13/site-packages/solana/__init__.py
+root@0638fd780d9a:/app/server# ls -la $(python3 -c "import solana; print(solana.__file__)" | cut -d'/' -f2-)
+ls: cannot access 'usr/local/lib/python3.13/site-packages/solana/__init__.py': No such file or directory
+root@0638fd780d9a:/app/server# find $(python3 -c "import solana; print(solana.__file__)" | cut -d'/' -f2-) -type f -name '*.py' | head -20
+find: ‘usr/local/lib/python3.13/site-packages/solana/__init__.py’: No such file or directory
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# ls -la $(python3 -c "import solana; print(solana.__file__)" | cut -d'/' -f1-2)/solana/
+ls: cannot access '/usr/solana/': No such file or directory
+root@0638fd780d9a:/app/server# find $(python3 -c "import solana; print(solana.__file__)" | cut -d'/' -f1-2)/solana/ -type f 2>/dev/null | head -30
+root@0638fd780d9a:/app/server# pip3 install solana-rpc
+ERROR: Could not find a version that satisfies the requirement solana-rpc (from versions: none)
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+ERROR: No matching distribution found for solana-rpc
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# python3 -c "import solders; print(solders.__version__)" 2>/dev/null || echo 'solders not installed'
+0.27.1
+root@0638fd780d9a:/app/server# pip3 install solders
+Requirement already satisfied: solders in /usr/local/lib/python3.13/site-packages (0.27.1)
+Requirement already satisfied: typing-extensions>=4.2.0 in /usr/local/lib/python3.13/site-packages (from solders) (4.16.0)
+Requirement already satisfied: jsonalias==0.1.1 in /usr/local/lib/python3.13/site-packages (from solders) (0.1.1)
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you ar
+e doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# cat > explore.py << 'EOF'
+> import solders
+> from solders import jsonrpc
+> from solders.jsonrpc import Connection
+> import sys
+>
+> c = Connection('https://rpc.mainnet-beta.solana.com')
+> print('Connection established')
+>
+> # Get network status
+> status = c.get_status()
+> print('Status:', status)
+>
+> # Get block
+> block = c.get_block(123456)
+> print('Block:', block)
+>
+> # Get transaction
+> trans = c.get_transaction('signature')
+> print('Transaction:', trans)
+>
+> # Get account
+> account = c.get_account('address')
+> print('Account:', account)
+>
+> # Get program accounts
+> program = c.get_program_accounts('program_id', limit=10, offset=0)
+> print('Program accounts:', program)
+> EOF
+root@0638fd780d9a:/app/server# python3 explore.py
+Traceback (most recent call last):
+  File "/app/server/explore.py", line 2, in <module>
+    from solders import jsonrpc
+ImportError: cannot import name 'jsonrpc' from 'solders' (/usr/local/lib/python3.13/site-packages/solders/__init__.py)
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# python3 -c "import solders; print([x for x in dir(solders) if not x.startswith('_')])"
+['account', 'account_decoder', 'address_lookup_table_account', 'clock', 'commitment_config', 'compute_budget', 'epoch_info', 'epoch_rewards', 'epoch_schedule',
+'errors', 'hash', 'instruction', 'keypair', 'litesvm', 'message', 'null_signer', 'presigner', 'pubkey', 'rent', 'rpc', 'signature', 'slot_history', 'solders', '
+stake_history', 'system_program', 'sysvar', 'token', 'transaction', 'transaction_metadata', 'transaction_status']
+root@0638fd780d9a:/app/server# python3 -c "import solders; print(solders.__all__)" 2>/dev/null || echo 'no __all__'
+['account', 'account_decoder', 'address_lookup_table_account', 'commitment_config', 'errors', 'hash', 'instruction', 'keypair', 'message', 'null_signer', 'presi
+gner', 'pubkey', 'signature', 'token', 'transaction', 'transaction_status', 'system_program', 'sysvar', 'rpc', 'litesvm', 'transaction_metadata']
+root@0638fd780d9a:/app/server# python3 -c "import solders.json; print(dir(solders.json))"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import solders.json; print(dir(solders.json))
+    ^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'solders.json'
+root@0638fd780d9a:/app/server# python3 -c "import solders.jsonrpc; print(dir(solders.jsonrpc))"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import solders.jsonrpc; print(dir(solders.jsonrpc))
+    ^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'solders.jsonrpc'
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# python3 -c "import solders.rpc; print([x for x in dir(solders.rpc) if not x.startswith('_')])"
+[]
+root@0638fd780d9a:/app/server# python3 -c "import solders.rpc; print(solders.rpc.__all__)" 2>/dev/null || echo 'no __all__'
+no __all__
+root@0638fd780d9a:/app/server# python3 -c "from solders.rpc import Connection; print(dir(Connection))"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from solders.rpc import Connection; print(dir(Connection))
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ImportError: cannot import name 'Connection' from 'solders.rpc' (/usr/local/lib/python3.13/site-packages/solders/rpc/__init__.py)
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# ls -la /usr/local/lib/python3.13/site-packages/solders/
+total 39796
+drwxr-xr-x 5 root root     4096 Jul  7 22:19 .
+drwxr-xr-x 1 root root     4096 Jul  7 22:19 ..
+-rw-r--r-- 1 root root     1369 Jul  7 22:19 __init__.py
+drwxr-xr-x 2 root root     4096 Jul  7 22:19 __pycache__
+-rw-r--r-- 1 root root       80 Jul  7 22:19 account.py
+-rw-r--r-- 1 root root      176 Jul  7 22:19 account_decoder.py
+-rw-r--r-- 1 root root     1207 Jul  7 22:19 address_lookup_table_account.py
+-rw-r--r-- 1 root root     2792 Jul  7 22:19 clock.py
+-rw-r--r-- 1 root root      106 Jul  7 22:19 commitment_config.py
+-rw-r--r-- 1 root root      491 Jul  7 22:19 compute_budget.py
+-rw-r--r-- 1 root root       56 Jul  7 22:19 epoch_info.py
+-rw-r--r-- 1 root root       62 Jul  7 22:19 epoch_rewards.py
+-rw-r--r-- 1 root root       64 Jul  7 22:19 epoch_schedule.py
+-rw-r--r-- 1 root root      148 Jul  7 22:19 errors.py
+-rw-r--r-- 1 root root       80 Jul  7 22:19 hash.py
+-rw-r--r-- 1 root root      132 Jul  7 22:19 instruction.py
+-rw-r--r-- 1 root root       52 Jul  7 22:19 keypair.py
+-rw-r--r-- 1 root root    11934 Jul  7 22:19 litesvm.py
+-rw-r--r-- 1 root root      404 Jul  7 22:19 message.py
+-rw-r--r-- 1 root root       58 Jul  7 22:19 null_signer.py
+-rw-r--r-- 1 root root       56 Jul  7 22:19 presigner.py
+-rw-r--r-- 1 root root       50 Jul  7 22:19 pubkey.py
+-rw-r--r-- 1 root root        0 Jul  7 22:19 py.typed
+-rw-r--r-- 1 root root      320 Jul  7 22:19 rent.py
+drwxr-xr-x 3 root root      166 Jul  7 22:19 rpc
+-rw-r--r-- 1 root root       56 Jul  7 22:19 signature.py
+-rw-r--r-- 1 root root       98 Jul  7 22:19 slot_history.py
+-rwxr-xr-x 1 root root 40350952 Jul  7 22:19 solders.abi3.so
+-rw-r--r-- 1 root root   238978 Jul  7 22:19 solders.pyi
+-rw-r--r-- 1 root root      102 Jul  7 22:19 stake_history.py
+-rw-r--r-- 1 root root    23344 Jul  7 22:19 system_program.py
+-rw-r--r-- 1 root root     1669 Jul  7 22:19 sysvar.py
+drwxr-xr-x 3 root root      101 Jul  7 22:19 token
+-rw-r--r-- 1 root root      440 Jul  7 22:19 transaction.py
+-rw-r--r-- 1 root root      488 Jul  7 22:19 transaction_metadata.py
+-rw-r--r-- 1 root root     2909 Jul  7 22:19 transaction_status.py
+root@0638fd780d9a:/app/server# find /usr/local/lib/python3.13/site-packages/solders/ -type f -name '*.py' | head -30
+/usr/local/lib/python3.13/site-packages/solders/epoch_info.py
+/usr/local/lib/python3.13/site-packages/solders/sysvar.py
+/usr/local/lib/python3.13/site-packages/solders/transaction_status.py
+/usr/local/lib/python3.13/site-packages/solders/address_lookup_table_account.py
+/usr/local/lib/python3.13/site-packages/solders/epoch_schedule.py
+/usr/local/lib/python3.13/site-packages/solders/signature.py
+/usr/local/lib/python3.13/site-packages/solders/keypair.py
+/usr/local/lib/python3.13/site-packages/solders/commitment_config.py
+/usr/local/lib/python3.13/site-packages/solders/instruction.py
+/usr/local/lib/python3.13/site-packages/solders/clock.py
+/usr/local/lib/python3.13/site-packages/solders/null_signer.py
+/usr/local/lib/python3.13/site-packages/solders/epoch_rewards.py
+/usr/local/lib/python3.13/site-packages/solders/rpc/responses.py
+/usr/local/lib/python3.13/site-packages/solders/rpc/requests.py
+/usr/local/lib/python3.13/site-packages/solders/rpc/filter.py
+/usr/local/lib/python3.13/site-packages/solders/rpc/config.py
+/usr/local/lib/python3.13/site-packages/solders/rpc/__init__.py
+/usr/local/lib/python3.13/site-packages/solders/rpc/errors.py
+/usr/local/lib/python3.13/site-packages/solders/compute_budget.py
+/usr/local/lib/python3.13/site-packages/solders/transaction.py
+/usr/local/lib/python3.13/site-packages/solders/stake_history.py
+/usr/local/lib/python3.13/site-packages/solders/message.py
+/usr/local/lib/python3.13/site-packages/solders/hash.py
+/usr/local/lib/python3.13/site-packages/solders/account.py
+/usr/local/lib/python3.13/site-packages/solders/token/associated.py
+/usr/local/lib/python3.13/site-packages/solders/token/state.py
+/usr/local/lib/python3.13/site-packages/solders/token/__init__.py
+/usr/local/lib/python3.13/site-packages/solders/litesvm.py
+/usr/local/lib/python3.13/site-packages/solders/presigner.py
+/usr/local/lib/python3.13/site-packages/solders/rent.py
+root@0638fd780d9a:/app/server# grep -r 'Connection' /usr/local/lib/python3.13/site-packages/solders/ -r 2>/dev/null | head -20
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# cat /usr/local/lib/python3.13/site-packages/solders/rpc/requests.py
+from typing import Sequence, Union
+
+from ..solders import (
+    AccountSubscribe,
+    AccountUnsubscribe,
+    BlockSubscribe,
+    BlockUnsubscribe,
+    GetAccountInfo,
+    GetBalance,
+    GetBlock,
+    GetBlockCommitment,
+    GetBlockHeight,
+    GetBlockProduction,
+    GetBlocks,
+    GetBlocksWithLimit,
+    GetBlockTime,
+    GetClusterNodes,
+    GetEpochInfo,
+    GetEpochSchedule,
+    GetFeeForMessage,
+    GetFirstAvailableBlock,
+    GetGenesisHash,
+    GetHealth,
+    GetHighestSnapshotSlot,
+    GetIdentity,
+    GetInflationGovernor,
+    GetInflationRate,
+    GetInflationReward,
+    GetLargestAccounts,
+    GetLatestBlockhash,
+    GetLeaderSchedule,
+    GetMaxRetransmitSlot,
+    GetMaxShredInsertSlot,
+    GetMinimumBalanceForRentExemption,
+    GetMultipleAccounts,
+    GetProgramAccounts,
+    GetRecentPerformanceSamples,
+    GetRecentPrioritizationFees,
+    GetSignaturesForAddress,
+    GetSignatureStatuses,
+    GetSlot,
+    GetSlotLeader,
+    GetSlotLeaders,
+    GetStakeActivation,
+    GetSupply,
+    GetTokenAccountBalance,
+    GetTokenAccountsByDelegate,
+    GetTokenAccountsByOwner,
+    GetTokenLargestAccounts,
+    GetTokenSupply,
+    GetTransaction,
+    GetTransactionCount,
+    GetVersion,
+    GetVoteAccounts,
+    IsBlockhashValid,
+    LogsSubscribe,
+    LogsUnsubscribe,
+    MinimumLedgerSlot,
+    ProgramSubscribe,
+    ProgramUnsubscribe,
+    RequestAirdrop,
+    RootSubscribe,
+    RootUnsubscribe,
+    SendLegacyTransaction,
+    SendRawTransaction,
+    SendVersionedTransaction,
+    SignatureSubscribe,
+    SignatureUnsubscribe,
+    SimulateLegacyTransaction,
+    SimulateVersionedTransaction,
+    SlotSubscribe,
+    SlotsUpdatesSubscribe,
+    SlotsUpdatesUnsubscribe,
+    SlotUnsubscribe,
+    ValidatorExit,
+    VoteSubscribe,
+    VoteUnsubscribe,
+)
+from ..solders import (
+    batch_requests_to_json as _batch_to_json,
+)
+
+Body = Union[
+    GetAccountInfo,
+    GetBalance,
+    GetBlock,
+    GetBlockHeight,
+    GetBlockProduction,
+    GetBlockCommitment,
+    GetBlocks,
+    GetBlocksWithLimit,
+    GetBlockTime,
+    GetClusterNodes,
+    GetEpochInfo,
+    GetEpochSchedule,
+    GetFeeForMessage,
+    GetFirstAvailableBlock,
+    GetGenesisHash,
+    GetHealth,
+    GetHighestSnapshotSlot,
+    GetIdentity,
+    GetInflationGovernor,
+    GetInflationRate,
+    GetInflationReward,
+    GetLargestAccounts,
+    GetLatestBlockhash,
+    GetLeaderSchedule,
+    GetMaxRetransmitSlot,
+    GetMaxShredInsertSlot,
+    GetMinimumBalanceForRentExemption,
+    GetMultipleAccounts,
+    GetProgramAccounts,
+    GetRecentPerformanceSamples,
+    GetRecentPrioritizationFees,
+    GetSignaturesForAddress,
+    GetSignatureStatuses,
+    GetSlot,
+    GetSlotLeader,
+    GetSlotLeaders,
+    GetStakeActivation,
+    GetSupply,
+    GetTokenAccountBalance,
+    GetTokenAccountsByDelegate,
+    GetTokenAccountsByOwner,
+    GetTokenLargestAccounts,
+    GetTokenSupply,
+    GetTransaction,
+    GetTransactionCount,
+    GetVersion,
+    GetVoteAccounts,
+    IsBlockhashValid,
+    MinimumLedgerSlot,
+    RequestAirdrop,
+    SendLegacyTransaction,
+    SendRawTransaction,
+    SendVersionedTransaction,
+    ValidatorExit,
+    AccountSubscribe,
+    BlockSubscribe,
+    LogsSubscribe,
+    ProgramSubscribe,
+    SignatureSubscribe,
+    SlotSubscribe,
+    SlotsUpdatesSubscribe,
+    RootSubscribe,
+    VoteSubscribe,
+    AccountUnsubscribe,
+    BlockUnsubscribe,
+    LogsUnsubscribe,
+    ProgramUnsubscribe,
+    SignatureUnsubscribe,
+    SimulateLegacyTransaction,
+    SimulateVersionedTransaction,
+    SlotUnsubscribe,
+    SlotsUpdatesUnsubscribe,
+    RootUnsubscribe,
+    VoteUnsubscribe,
+]
+
+
+def batch_to_json(reqs: Sequence[Body]) -> str:
+    """Serialize a list of request objects into a single batch request JSON.
+
+    Args:
+        reqs: A list of request objects.
+
+    Returns:
+        str: The batch JSON string.
+
+    Example:
+        >>> from solders.rpc.requests import batch_to_json, GetClusterNodes, GetEpochSchedule
+        >>> batch_to_json([GetClusterNodes(0), GetEpochSchedule(1)])
+        '[{"method":"getClusterNodes","jsonrpc":"2.0","id":0},{"method":"getEpochSchedule","jsonrpc":"2.0","id":1}]'
+    """  # noqa: E501
+    return _batch_to_json(reqs)
+
+
+__all__ = [
+    "Body",
+    "GetAccountInfo",
+    "GetBalance",
+    "GetBlock",
+    "GetBlockHeight",
+    "GetBlockProduction",
+    "GetBlockCommitment",
+    "GetBlocks",
+    "GetBlocksWithLimit",
+    "GetBlockTime",
+    "GetEpochInfo",
+    "GetFeeForMessage",
+    "GetIdentity",
+    "GetInflationGovernor",
+    "GetInflationReward",
+    "GetLargestAccounts",
+    "GetLatestBlockhash",
+    "GetLeaderSchedule",
+    "GetMinimumBalanceForRentExemption",
+    "GetMultipleAccounts",
+    "GetProgramAccounts",
+    "GetRecentPerformanceSamples",
+    "GetRecentPrioritizationFees",
+    "GetSignaturesForAddress",
+    "GetSignatureStatuses",
+    "GetSlot",
+    "GetSlotLeader",
+    "GetSlotLeaders",
+    "GetStakeActivation",
+    "GetSupply",
+    "GetTokenAccountBalance",
+    "GetTokenAccountsByDelegate",
+    "GetTokenAccountsByOwner",
+    "GetTokenLargestAccounts",
+    "GetTokenSupply",
+    "GetTransaction",
+    "GetTransactionCount",
+    "GetVoteAccounts",
+    "IsBlockhashValid",
+    "RequestAirdrop",
+    "SendLegacyTransaction",
+    "SendRawTransaction",
+    "SendVersionedTransaction",
+    "SimulateLegacyTransaction",
+    "SimulateVersionedTransaction",
+    "ValidatorExit",
+    "AccountSubscribe",
+    "BlockSubscribe",
+    "LogsSubscribe",
+    "ProgramSubscribe",
+    "SignatureSubscribe",
+    "GetClusterNodes",
+    "GetEpochSchedule",
+    "GetFirstAvailableBlock",
+    "GetGenesisHash",
+    "GetHealth",
+    "GetHighestSnapshotSlot",
+    "GetInflationRate",
+    "GetMaxRetransmitSlot",
+    "GetMaxShredInsertSlot",
+    "GetVersion",
+    "MinimumLedgerSlot",
+    "SlotSubscribe",
+    "SlotsUpdatesSubscribe",
+    "RootSubscribe",
+    "VoteSubscribe",
+    "AccountUnsubscribe",
+    "BlockUnsubscribe",
+    "LogsUnsubscribe",
+    "ProgramUnsubscribe",
+    "SignatureUnsubscribe",
+    "SlotUnsubscribe",
+    "SlotsUpdatesUnsubscribe",
+    "RootUnsubscribe",
+    "VoteUnsubscribe",
+]
+root@0638fd780d9a:/app/server# cat /usr/local/lib/python3.13/site-packages/solders/rpc/responses.py
+from typing import Any, List, Sequence, TypeVar, Union
+
+from ..solders import (
+    AccountNotification,
+    AccountNotificationJsonParsed,
+    AccountNotificationJsonParsedResult,
+    AccountNotificationResult,
+    BlockNotification,
+    BlockNotificationResult,
+    BlockStoreError,
+    GetAccountInfoJsonParsedResp,
+    GetAccountInfoMaybeJsonParsedResp,
+    GetAccountInfoResp,
+    GetBalanceResp,
+    GetBlockCommitmentResp,
+    GetBlockHeightResp,
+    GetBlockProductionResp,
+    GetBlockResp,
+    GetBlocksResp,
+    GetBlocksWithLimitResp,
+    GetBlockTimeResp,
+    GetClusterNodesResp,
+    GetEpochInfoResp,
+    GetEpochScheduleResp,
+    GetFeeForMessageResp,
+    GetFirstAvailableBlockResp,
+    GetGenesisHashResp,
+    GetHealthResp,
+    GetHighestSnapshotSlotResp,
+    GetIdentityResp,
+    GetInflationGovernorResp,
+    GetInflationRateResp,
+    GetInflationRewardResp,
+    GetLargestAccountsResp,
+    GetLatestBlockhashResp,
+    GetLeaderScheduleResp,
+    GetMaxRetransmitSlotResp,
+    GetMaxShredInsertSlotResp,
+    GetMinimumBalanceForRentExemptionResp,
+    GetMultipleAccountsJsonParsedResp,
+    GetMultipleAccountsMaybeJsonParsedResp,
+    GetMultipleAccountsResp,
+    GetProgramAccountsJsonParsedResp,
+    GetProgramAccountsMaybeJsonParsedResp,
+    GetProgramAccountsResp,
+    GetProgramAccountsWithContextJsonParsedResp,
+    GetProgramAccountsWithContextMaybeJsonParsedResp,
+    GetProgramAccountsWithContextResp,
+    GetRecentPerformanceSamplesResp,
+    GetRecentPrioritizationFeesResp,
+    GetSignaturesForAddressResp,
+    GetSignatureStatusesResp,
+    GetSlotLeaderResp,
+    GetSlotLeadersResp,
+    GetSlotResp,
+    GetSupplyResp,
+    GetTokenAccountBalanceResp,
+    GetTokenAccountsByDelegateJsonParsedResp,
+    GetTokenAccountsByDelegateResp,
+    GetTokenAccountsByOwnerJsonParsedResp,
+    GetTokenAccountsByOwnerResp,
+    GetTokenLargestAccountsResp,
+    GetTokenSupplyResp,
+    GetTransactionCountResp,
+    GetTransactionResp,
+    GetVersionResp,
+    GetVoteAccountsResp,
+    IsBlockhashValidResp,
+    LogsNotification,
+    LogsNotificationResult,
+    MinimumLedgerSlotResp,
+    ProgramNotification,
+    ProgramNotificationJsonParsed,
+    ProgramNotificationJsonParsedResult,
+    ProgramNotificationResult,
+    RequestAirdropResp,
+    RootNotification,
+    RpcAccountBalance,
+    RpcBlockCommitment,
+    RpcBlockhash,
+    RpcBlockProduction,
+    RpcBlockProductionRange,
+    RpcBlockUpdate,
+    RpcConfirmedTransactionStatusWithSignature,
+    RpcContactInfo,
+    RpcIdentity,
+    RpcInflationGovernor,
+    RpcInflationRate,
+    RpcInflationReward,
+    RpcKeyedAccount,
+    RpcKeyedAccountJsonParsed,
+    RpcLogsResponse,
+    RpcPerfSample,
+    RpcPrioritizationFee,
+    RpcResponseContext,
+    RpcSignatureResponse,
+    RpcSimulateTransactionResult,
+    RpcSnapshotSlotInfo,
+    RpcSupply,
+    RpcTokenAccountBalance,
+    RpcVersionInfo,
+    RpcVote,
+    RpcVoteAccountInfo,
+    RpcVoteAccountStatus,
+    SendTransactionResp,
+    SignatureNotification,
+    SignatureNotificationResult,
+    SimulateTransactionResp,
+    SlotInfo,
+    SlotNotification,
+    SlotTransactionStats,
+    SlotUpdateCompleted,
+    SlotUpdateCreatedBank,
+    SlotUpdateDead,
+    SlotUpdateFirstShredReceived,
+    SlotUpdateFrozen,
+    SlotUpdateNotification,
+    SlotUpdateOptimisticConfirmation,
+    SlotUpdateRoot,
+    SubscriptionError,
+    SubscriptionResult,
+    UnsubscribeResult,
+    ValidatorExitResp,
+    VoteNotification,
+    parse_notification,
+    parse_websocket_message,
+)
+from ..solders import (
+    batch_responses_from_json as _batch_from_json,
+)
+from ..solders import (
+    batch_responses_to_json as _batch_to_json,
+)
+from .errors import (
+    BlockCleanedUpMessage,
+    BlockNotAvailableMessage,
+    BlockStatusNotAvailableYetMessage,
+    InternalErrorMessage,
+    InvalidParamsMessage,
+    InvalidRequestMessage,
+    KeyExcludedFromSecondaryIndexMessage,
+    LongTermStorageSlotSkippedMessage,
+    MethodNotFoundMessage,
+    MinContextSlotNotReachedMessage,
+    NodeUnhealthyMessage,
+    ParseErrorMessage,
+    RpcCustomErrorFieldless,
+    ScanErrorMessage,
+    SendTransactionPreflightFailureMessage,
+    SlotSkippedMessage,
+    TransactionPrecompileVerificationFailureMessage,
+    UnsupportedTransactionVersion,
+    UnsupportedTransactionVersionMessage,
+)
+
+Notification = Union[
+    AccountNotification,
+    AccountNotificationJsonParsed,
+    BlockNotification,
+    LogsNotification,
+    ProgramNotification,
+    ProgramNotificationJsonParsed,
+    SignatureNotification,
+    SlotNotification,
+    SlotUpdateNotification,
+    RootNotification,
+    VoteNotification,
+]
+
+RpcBlockUpdateError = Union[UnsupportedTransactionVersion, BlockStoreError]
+
+WebsocketMessage = Union[
+    Notification, SubscriptionResult, SubscriptionError, UnsubscribeResult
+]
+
+RPCError = Union[
+    RpcCustomErrorFieldless,
+    BlockCleanedUpMessage,
+    SendTransactionPreflightFailureMessage,
+    BlockNotAvailableMessage,
+    NodeUnhealthyMessage,
+    TransactionPrecompileVerificationFailureMessage,
+    SlotSkippedMessage,
+    LongTermStorageSlotSkippedMessage,
+    KeyExcludedFromSecondaryIndexMessage,
+    ScanErrorMessage,
+    BlockStatusNotAvailableYetMessage,
+    MinContextSlotNotReachedMessage,
+    UnsupportedTransactionVersionMessage,
+    ParseErrorMessage,
+    InvalidRequestMessage,
+    MethodNotFoundMessage,
+    InvalidParamsMessage,
+    InternalErrorMessage,
+]
+
+T = TypeVar("T")
+Resp = Union[RPCError, T]
+
+SlotUpdate = Union[
+    SlotUpdateFirstShredReceived,
+    SlotUpdateCompleted,
+    SlotUpdateCreatedBank,
+    SlotUpdateDead,
+    SlotUpdateOptimisticConfirmation,
+    SlotUpdateRoot,
+    SlotUpdateFrozen,
+]
+
+RPCResult = Union[
+    RPCError,
+    GetAccountInfoResp,
+    GetAccountInfoJsonParsedResp,
+    GetAccountInfoMaybeJsonParsedResp,
+    GetBalanceResp,
+    GetBlockProductionResp,
+    GetBlockResp,
+    GetBlockCommitmentResp,
+    GetBlockHeightResp,
+    GetBlocksResp,
+    GetBlocksWithLimitResp,
+    GetBlockTimeResp,
+    GetClusterNodesResp,
+    GetEpochInfoResp,
+    GetEpochScheduleResp,
+    GetFeeForMessageResp,
+    GetFirstAvailableBlockResp,
+    GetGenesisHashResp,
+    GetHealthResp,
+    GetHighestSnapshotSlotResp,
+    GetIdentityResp,
+    GetInflationGovernorResp,
+    GetInflationRateResp,
+    GetInflationRewardResp,
+    GetLargestAccountsResp,
+    GetLatestBlockhashResp,
+    GetLeaderScheduleResp,
+    GetMaxRetransmitSlotResp,
+    GetMaxShredInsertSlotResp,
+    GetMinimumBalanceForRentExemptionResp,
+    GetMultipleAccountsResp,
+    GetMultipleAccountsJsonParsedResp,
+    GetMultipleAccountsMaybeJsonParsedResp,
+    GetProgramAccountsWithContextResp,
+    GetProgramAccountsResp,
+    GetProgramAccountsWithContextJsonParsedResp,
+    GetProgramAccountsJsonParsedResp,
+    GetProgramAccountsMaybeJsonParsedResp,
+    GetProgramAccountsWithContextMaybeJsonParsedResp,
+    GetRecentPerformanceSamplesResp,
+    GetRecentPrioritizationFeesResp,
+    GetSignaturesForAddressResp,
+    GetSignatureStatusesResp,
+    GetSlotResp,
+    GetSlotLeaderResp,
+    GetSlotLeadersResp,
+    GetSupplyResp,
+    GetTokenAccountBalanceResp,
+    GetTokenAccountsByDelegateResp,
+    GetTokenAccountsByDelegateJsonParsedResp,
+    GetTokenAccountsByOwnerResp,
+    GetTokenAccountsByOwnerJsonParsedResp,
+    GetTokenLargestAccountsResp,
+    GetTokenSupplyResp,
+    GetTransactionResp,
+    GetTransactionCountResp,
+    GetVersionResp,
+    RpcVersionInfo,
+    GetVoteAccountsResp,
+    IsBlockhashValidResp,
+    MinimumLedgerSlotResp,
+    RequestAirdropResp,
+    SendTransactionResp,
+    SimulateTransactionResp,
+]
+
+
+def batch_to_json(resps: Sequence[RPCResult]) -> str:
+    """Serialize a list of response objects into a single batch response JSON.
+
+    Args:
+        resps: A list of response objects.
+
+    Returns:
+        str: The batch JSON string.
+
+    Example:
+        >>> from solders.rpc.responses import batch_to_json, GetBlockHeightResp, GetFirstAvailableBlockResp
+        >>> batch_to_json([GetBlockHeightResp(1233), GetFirstAvailableBlockResp(1)])
+        '[{"id":0,"jsonrpc":"2.0","result":1233},{"id":0,"jsonrpc":"2.0","result":1}]'
+
+    """  # noqa: E501
+    return _batch_to_json(resps)
+
+
+def batch_from_json(raw: str, parsers: Sequence[Any]) -> List[RPCResult]:
+    """Deserialize a batch request JSON string into a list of request objects.
+
+    Args:
+        raw (str): The batch JSON string.
+        parsers (Sequence): The classes to parse.
+
+    Returns:
+        A list of response objects.
+
+    Example:
+        >>> from solders.rpc.responses import batch_from_json, GetBlockHeightResp, GetFirstAvailableBlockResp
+        >>> raw = '[{ "jsonrpc": "2.0", "result": 1233, "id": 1 },{ "jsonrpc": "2.0", "result": 111, "id": 1 }]'
+        >>> batch_from_json(raw, [GetBlockHeightResp, GetFirstAvailableBlockResp])
+        [GetBlockHeightResp(
+            1233,
+        ), GetFirstAvailableBlockResp(
+            111,
+        )]
+
+    """  # noqa: E501
+    return _batch_from_json(raw, parsers)
+
+
+__all__ = [
+    "RpcResponseContext",
+    "GetAccountInfoResp",
+    "GetAccountInfoJsonParsedResp",
+    "GetAccountInfoMaybeJsonParsedResp",
+    "GetBalanceResp",
+    "RpcBlockCommitment",
+    "GetBlockCommitmentResp",
+    "GetBlockHeightResp",
+    "RpcBlockProductionRange",
+    "RpcBlockProduction",
+    "GetBlockProductionResp",
+    "GetBlockResp",
+    "GetBlocksResp",
+    "GetBlocksWithLimitResp",
+    "GetBlockTimeResp",
+    "RpcContactInfo",
+    "GetClusterNodesResp",
+    "GetEpochInfoResp",
+    "GetEpochScheduleResp",
+    "GetFeeForMessageResp",
+    "GetFirstAvailableBlockResp",
+    "GetGenesisHashResp",
+    "GetHealthResp",
+    "RpcSimulateTransactionResult",
+    "RpcSnapshotSlotInfo",
+    "GetHighestSnapshotSlotResp",
+    "RpcIdentity",
+    "GetIdentityResp",
+    "RpcInflationGovernor",
+    "GetInflationGovernorResp",
+    "RpcInflationRate",
+    "GetInflationRateResp",
+    "RpcInflationReward",
+    "GetInflationRewardResp",
+    "RpcAccountBalance",
+    "GetLargestAccountsResp",
+    "RpcBlockhash",
+    "GetLatestBlockhashResp",
+    "GetLeaderScheduleResp",
+    "GetMaxRetransmitSlotResp",
+    "GetMaxShredInsertSlotResp",
+    "GetMinimumBalanceForRentExemptionResp",
+    "GetMultipleAccountsResp",
+    "GetMultipleAccountsJsonParsedResp",
+    "GetMultipleAccountsMaybeJsonParsedResp",
+    "RpcKeyedAccount",
+    "RpcKeyedAccountJsonParsed",
+    "GetProgramAccountsWithContextResp",
+    "GetProgramAccountsWithContextJsonParsedResp",
+    "GetProgramAccountsResp",
+    "GetProgramAccountsJsonParsedResp",
+    "GetProgramAccountsWithContextMaybeJsonParsedResp",
+    "GetProgramAccountsMaybeJsonParsedResp",
+    "RpcPerfSample",
+    "GetRecentPerformanceSamplesResp",
+    "RpcPrioritizationFee",
+    "GetRecentPrioritizationFeesResp",
+    "RpcConfirmedTransactionStatusWithSignature",
+    "GetSignaturesForAddressResp",
+    "GetSignatureStatusesResp",
+    "GetSlotResp",
+    "GetSlotLeaderResp",
+    "GetSlotLeadersResp",
+    "RpcSupply",
+    "GetSupplyResp",
+    "GetTokenAccountBalanceResp",
+    "GetTokenAccountsByDelegateResp",
+    "GetTokenAccountsByDelegateJsonParsedResp",
+    "GetTokenAccountsByOwnerResp",
+    "GetTokenAccountsByOwnerJsonParsedResp",
+    "RpcTokenAccountBalance",
+    "GetTokenLargestAccountsResp",
+    "GetTokenSupplyResp",
+    "GetTransactionResp",
+    "GetTransactionCountResp",
+    "RpcVersionInfo",
+    "GetVersionResp",
+    "RpcVoteAccountInfo",
+    "RpcVoteAccountStatus",
+    "GetVoteAccountsResp",
+    "IsBlockhashValidResp",
+    "MinimumLedgerSlotResp",
+    "RequestAirdropResp",
+    "ValidatorExitResp",
+    "SendTransactionResp",
+    "SimulateTransactionResp",
+    "RpcLogsResponse",
+    "RpcVote",
+    "SlotTransactionStats",
+    "SlotUpdateFirstShredReceived",
+    "SlotUpdateCompleted",
+    "SlotUpdateCreatedBank",
+    "SlotUpdateDead",
+    "SlotUpdateOptimisticConfirmation",
+    "SlotUpdateRoot",
+    "SlotUpdateFrozen",
+    "AccountNotificationResult",
+    "AccountNotification",
+    "AccountNotificationJsonParsedResult",
+    "AccountNotificationJsonParsed",
+    "BlockNotificationResult",
+    "BlockNotification",
+    "LogsNotificationResult",
+    "LogsNotification",
+    "ProgramNotificationResult",
+    "ProgramNotification",
+    "ProgramNotificationJsonParsedResult",
+    "ProgramNotificationJsonParsed",
+    "RpcSignatureResponse",
+    "SignatureNotificationResult",
+    "SignatureNotification",
+    "SlotInfo",
+    "SlotNotification",
+    "SlotUpdateNotification",
+    "RootNotification",
+    "VoteNotification",
+    "SubscriptionResult",
+    "SubscriptionError",
+    "BlockStoreError",
+    "RpcBlockUpdate",
+    "UnsubscribeResult",
+    "batch_to_json",
+    "batch_from_json",
+    "parse_notification",
+    "parse_websocket_message",
+    "Notification",
+    "RpcBlockUpdateError",
+    "WebsocketMessage",
+    "RPCError",
+    "Resp",
+    "SlotUpdate",
+    "RPCResult",
+]
+root@0638fd780d9a:/app/server# python3 -c "
+> import solders
+> from solders import rpc
+> print('rpc module:', rpc)
+> print('rpc.__all__:', rpc.__all__ if hasattr(rpc, '__all__') else 'no all')
+> print('rpc.requests:', dir(rpc.requests))
+> print('rpc.responses:', dir(rpc.responses))
+> "
+rpc module: <module 'solders.rpc' from '/usr/local/lib/python3.13/site-packages/solders/rpc/__init__.py'>
+rpc.__all__: no all
+Traceback (most recent call last):
+  File "<string>", line 6, in <module>
+    print('rpc.requests:', dir(rpc.requests))
+                               ^^^^^^^^^^^^
+AttributeError: module 'solders.rpc' has no attribute 'requests'
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# cat /usr/local/lib/python3.13/site-packages/solders/rpc/__init__.py
+root@0638fd780d9a:/app/server# grep -r 'Connection' /usr/local/lib/python3.13/site-packages/solders/ -r 2>/dev/null | head -30
+root@0638fd780d9a:/app/server# python3 -c "
+> import solders
+> import inspect
+> for name, obj in inspect.getmembers(solders):
+>     if 'Connection' in name:
+>         print(f'Found {name} in {inspect.getfile(obj)}')
+> "
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# python3 -c "
+> import solders
+> import sys
+> for module in sys.modules.get('solders', []).__dir__():
+>     if 'client' in module or 'rpc' in module:
+>         print(module)
+> "
+rpc
+root@0638fd780d9a:/app/server# python3 -c "
+> import solders
+> import solders.solders as solders_module
+> print(dir(solders_module))
+> "
+['ACCOUNT_STORAGE_OVERHEAD', 'ADDRESS_LOOKUP_TABLE_ID', 'Account', 'AccountJSON', 'AccountMeta', 'AccountNotification', 'AccountNotificationJsonParsed', 'Accoun
+tNotificationJsonParsedResult', 'AccountNotificationResult', 'AccountSubscribe', 'AccountUnsubscribe', 'AddressLookupTable', 'AddressLookupTableAccount', 'Binco
+deError', 'BlockCleanedUp', 'BlockCleanedUpMessage', 'BlockNotAvailable', 'BlockNotAvailableMessage', 'BlockNotification', 'BlockNotificationResult', 'BlockStat
+usNotAvailableYet', 'BlockStatusNotAvailableYetMessage', 'BlockStoreError', 'BlockSubscribe', 'BlockUnsubscribe', 'CLOCK', 'COMPUTE_BUDGET_ID', 'CborError', 'Cl
+ock', 'CommitmentConfig', 'CommitmentLevel', 'CompiledInstruction', 'ComputeBudget', 'DEFAULT_BURN_PERCENT', 'DEFAULT_DEV_SLOTS_PER_EPOCH', 'DEFAULT_EXEMPTION_T
+HRESHOLD', 'DEFAULT_HASHES_PER_SECOND', 'DEFAULT_HASHES_PER_TICK', 'DEFAULT_LAMPORTS_PER_BYTE_YEAR', 'DEFAULT_MS_PER_SLOT', 'DEFAULT_SLOTS_PER_EPOCH', 'DEFAULT_
+S_PER_SLOT', 'DEFAULT_TICKS_PER_SECOND', 'DEFAULT_TICKS_PER_SLOT', 'EPOCH_SCHEDULE', 'EncodedConfirmedTransactionWithStatusMeta', 'EncodedTransactionWithStatusM
+eta', 'EpochInfo', 'EpochRewards', 'EpochSchedule', 'FORWARD_TRANSACTIONS_TO_LEADER_AT_SLOT_OFFSET', 'FailedTransactionMetadata', 'FeatureSet', 'GENESIS_EPOCH',
+ 'GetAccountInfo', 'GetAccountInfoJsonParsedResp', 'GetAccountInfoMaybeJsonParsedResp', 'GetAccountInfoResp', 'GetBalance', 'GetBalanceResp', 'GetBlock', 'GetBl
+ockCommitment', 'GetBlockCommitmentResp', 'GetBlockHeight', 'GetBlockHeightResp', 'GetBlockProduction', 'GetBlockProductionResp', 'GetBlockResp', 'GetBlockTime'
+, 'GetBlockTimeResp', 'GetBlocks', 'GetBlocksResp', 'GetBlocksWithLimit', 'GetBlocksWithLimitResp', 'GetClusterNodes', 'GetClusterNodesResp', 'GetEpochInfo', 'G
+etEpochInfoResp', 'GetEpochSchedule', 'GetEpochScheduleResp', 'GetFeeForMessage', 'GetFeeForMessageResp', 'GetFirstAvailableBlock', 'GetFirstAvailableBlockResp'
+, 'GetGenesisHash', 'GetGenesisHashResp', 'GetHealth', 'GetHealthResp', 'GetHighestSnapshotSlot', 'GetHighestSnapshotSlotResp', 'GetIdentity', 'GetIdentityResp'
+, 'GetInflationGovernor', 'GetInflationGovernorResp', 'GetInflationRate', 'GetInflationRateResp', 'GetInflationReward', 'GetInflationRewardResp', 'GetLargestAcc
+ounts', 'GetLargestAccountsResp', 'GetLatestBlockhash', 'GetLatestBlockhashResp', 'GetLeaderSchedule', 'GetLeaderScheduleResp', 'GetMaxRetransmitSlot', 'GetMaxR
+etransmitSlotResp', 'GetMaxShredInsertSlot', 'GetMaxShredInsertSlotResp', 'GetMinimumBalanceForRentExemption', 'GetMinimumBalanceForRentExemptionResp', 'GetMult
+ipleAccounts', 'GetMultipleAccountsJsonParsedResp', 'GetMultipleAccountsMaybeJsonParsedResp', 'GetMultipleAccountsResp', 'GetProgramAccounts', 'GetProgramAccoun
+tsJsonParsedResp', 'GetProgramAccountsMaybeJsonParsedResp', 'GetProgramAccountsResp', 'GetProgramAccountsWithContextJsonParsedResp', 'GetProgramAccountsWithCont
+extMaybeJsonParsedResp', 'GetProgramAccountsWithContextResp', 'GetRecentPerformanceSamples', 'GetRecentPerformanceSamplesResp', 'GetRecentPrioritizationFees', '
+GetRecentPrioritizationFeesResp', 'GetSignatureStatuses', 'GetSignatureStatusesResp', 'GetSignaturesForAddress', 'GetSignaturesForAddressResp', 'GetSlot', 'GetS
+lotLeader', 'GetSlotLeaderResp', 'GetSlotLeaders', 'GetSlotLeadersResp', 'GetSlotResp', 'GetStakeActivation', 'GetSupply', 'GetSupplyResp', 'GetTokenAccountBala
+nce', 'GetTokenAccountBalanceResp', 'GetTokenAccountsByDelegate', 'GetTokenAccountsByDelegateJsonParsedResp', 'GetTokenAccountsByDelegateResp', 'GetTokenAccount
+sByOwner', 'GetTokenAccountsByOwnerJsonParsedResp', 'GetTokenAccountsByOwnerResp', 'GetTokenLargestAccounts', 'GetTokenLargestAccountsResp', 'GetTokenSupply', '
+GetTokenSupplyResp', 'GetTransaction', 'GetTransactionCount', 'GetTransactionCountResp', 'GetTransactionResp', 'GetVersion', 'GetVersionResp', 'GetVoteAccounts'
+, 'GetVoteAccountsResp', 'HOLD_TRANSACTIONS_SLOT_OFFSET', 'Hash', 'INITIAL_RENT_EPOCH', 'INSTRUCTIONS', 'InnerInstruction', 'Instruction', 'InstructionErrorBors
+hIO', 'InstructionErrorCustom', 'InstructionErrorFieldless', 'InternalErrorMessage', 'InvalidParamsMessage', 'InvalidRequestMessage', 'IsBlockhashValid', 'IsBlo
+ckhashValidResp', 'KeyExcludedFromSecondaryIndex', 'KeyExcludedFromSecondaryIndexMessage', 'Keypair', 'LOOKUP_TABLE_MAX_ADDRESSES', 'LOOKUP_TABLE_META_SIZE', 'L
+egacy', 'LiteSVM', 'LogsNotification', 'LogsNotificationResult', 'LogsSubscribe', 'LogsUnsubscribe', 'LongTermStorageSlotSkipped', 'LongTermStorageSlotSkippedMe
+ssage', 'LookupTableMeta', 'LookupTableStatusDeactivating', 'LookupTableStatusFieldless', 'MAX_HASH_AGE_IN_SECONDS', 'MAX_PROCESSING_AGE', 'MAX_RECENT_BLOCKHASH
+ES', 'MAX_TRANSACTION_FORWARDING_DELAY', 'MAX_TRANSACTION_FORWARDING_DELAY_GPU', 'MS_PER_TICK', 'Memcmp', 'Message', 'MessageAddressTableLookup', 'MessageHeader
+', 'MessageV0', 'MethodNotFoundMessage', 'MinContextSlotNotReached', 'MinContextSlotNotReachedMessage', 'MinimumLedgerSlot', 'MinimumLedgerSlotResp', 'Mint', 'M
+ultisig', 'NUM_CONSECUTIVE_LEADER_SLOTS', 'NodeUnhealthy', 'NodeUnhealthyMessage', 'NullSigner', 'ParseErrorMessage', 'ParseHashError', 'ParsedAccount', 'Parsed
+AccountSource', 'ParsedAccountTxStatus', 'ParsedInstruction', 'Presigner', 'ProgramNotification', 'ProgramNotificationJsonParsed', 'ProgramNotificationJsonParse
+dResult', 'ProgramNotificationResult', 'ProgramSubscribe', 'ProgramUnsubscribe', 'Pubkey', 'RECENT_BLOCKHASHES', 'RENT', 'REWARDS', 'Rent', 'RequestAirdrop', 'R
+equestAirdropResp', 'Reward', 'RewardType', 'RootNotification', 'RootSubscribe', 'RootUnsubscribe', 'RpcAccountBalance', 'RpcAccountInfoConfig', 'RpcBlockCommit
+ment', 'RpcBlockConfig', 'RpcBlockProduction', 'RpcBlockProductionConfig', 'RpcBlockProductionConfigRange', 'RpcBlockProductionRange', 'RpcBlockSubscribeConfig'
+, 'RpcBlockSubscribeFilter', 'RpcBlockSubscribeFilterMentions', 'RpcBlockUpdate', 'RpcBlockhash', 'RpcConfirmedTransactionStatusWithSignature', 'RpcContactInfo'
+, 'RpcContextConfig', 'RpcCustomErrorFieldless', 'RpcEpochConfig', 'RpcFilterTypeFieldless', 'RpcGetVoteAccountsConfig', 'RpcIdentity', 'RpcInflationGovernor',
+'RpcInflationRate', 'RpcInflationReward', 'RpcKeyedAccount', 'RpcKeyedAccountJsonParsed', 'RpcLargestAccountsConfig', 'RpcLargestAccountsFilter', 'RpcLeaderSche
+duleConfig', 'RpcLogsResponse', 'RpcPerfSample', 'RpcPrioritizationFee', 'RpcProgramAccountsConfig', 'RpcRequestAirdropConfig', 'RpcResponseContext', 'RpcSendTr
+ansactionConfig', 'RpcSignatureResponse', 'RpcSignatureStatusConfig', 'RpcSignatureSubscribeConfig', 'RpcSignaturesForAddressConfig', 'RpcSimulateTransactionAcc
+ountsConfig', 'RpcSimulateTransactionConfig', 'RpcSimulateTransactionResult', 'RpcSnapshotSlotInfo', 'RpcSupply', 'RpcSupplyConfig', 'RpcTokenAccountBalance', '
+RpcTokenAccountsFilterMint', 'RpcTokenAccountsFilterProgramId', 'RpcTransactionConfig', 'RpcTransactionLogsConfig', 'RpcTransactionLogsFilter', 'RpcTransactionL
+ogsFilterMentions', 'RpcVersionInfo', 'RpcVote', 'RpcVoteAccountInfo', 'RpcVoteAccountStatus', 'SECONDS_PER_DAY', 'SLOT_HASHES', 'STAKE_HISTORY', 'SYSTEM_PROGRA
+M_ID', 'SanitizeError', 'ScanError', 'ScanErrorMessage', 'SendLegacyTransaction', 'SendRawTransaction', 'SendTransactionPreflightFailure', 'SendTransactionPrefl
+ightFailureMessage', 'SendTransactionResp', 'SendVersionedTransaction', 'SerdeJSONError', 'Signature', 'SignatureNotification', 'SignatureNotificationResult', '
+SignatureSubscribe', 'SignatureUnsubscribe', 'SignerError', 'SimulateLegacyTransaction', 'SimulateTransactionResp', 'SimulateVersionedTransaction', 'SimulatedTr
+ansactionInfo', 'SlotHashes', 'SlotHistory', 'SlotHistoryCheck', 'SlotInfo', 'SlotNotification', 'SlotSkipped', 'SlotSkippedMessage', 'SlotSubscribe', 'SlotTran
+sactionStats', 'SlotUnsubscribe', 'SlotUpdateCompleted', 'SlotUpdateCreatedBank', 'SlotUpdateDead', 'SlotUpdateFirstShredReceived', 'SlotUpdateFrozen', 'SlotUpd
+ateNotification', 'SlotUpdateOptimisticConfirmation', 'SlotUpdateRoot', 'SlotsUpdatesSubscribe', 'SlotsUpdatesUnsubscribe', 'StakeHistory', 'StakeHistoryEntry',
+ 'SubscriptionError', 'SubscriptionResult', 'TICKS_PER_DAY', 'TOKEN_PROGRAM_ID', 'TokenAccount', 'TokenAccountState', 'Transaction', 'TransactionBinaryEncoding'
+, 'TransactionConfirmationStatus', 'TransactionDetails', 'TransactionError', 'TransactionErrorDuplicateInstruction', 'TransactionErrorFieldless', 'TransactionEr
+rorInstructionError', 'TransactionErrorInsufficientFundsForRent', 'TransactionErrorProgramExecutionTemporarilyRestricted', 'TransactionMetadata', 'TransactionPr
+ecompileVerificationFailure', 'TransactionPrecompileVerificationFailureMessage', 'TransactionReturnData', 'TransactionStatus', 'UiAccountEncoding', 'UiAccountsL
+ist', 'UiAddressTableLookup', 'UiCompiledInstruction', 'UiConfirmedBlock', 'UiDataSliceConfig', 'UiInnerInstructions', 'UiLoadedAddresses', 'UiParsedMessage', '
+UiPartiallyDecodedInstruction', 'UiRawMessage', 'UiTokenAmount', 'UiTransaction', 'UiTransactionEncoding', 'UiTransactionStatusMeta', 'UiTransactionTokenBalance
+', 'UnsubscribeResult', 'UnsupportedTransactionVersion', 'UnsupportedTransactionVersionMessage', 'ValidatorExit', 'ValidatorExitResp', 'VersionedTransaction', '
+VoteNotification', 'VoteSubscribe', 'VoteUnsubscribe', '__all__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__spec__', 'advance_nonce_acc
+ount', 'allocate', 'allocate_with_seed', 'assign', 'assign_with_seed', 'authorize_nonce_account', 'batch_requests_to_json', 'batch_responses_from_json', 'batch_
+responses_to_json', 'close_lookup_table', 'create_account', 'create_account_with_seed', 'create_lookup_table', 'create_nonce_account', 'create_nonce_account_wit
+h_seed', 'deactivate_lookup_table', 'decode_advance_nonce_account', 'decode_allocate', 'decode_allocate_with_seed', 'decode_assign', 'decode_assign_with_seed',
+'decode_authorize_nonce_account', 'decode_create_account', 'decode_create_account_with_seed', 'decode_initialize_nonce_account', 'decode_transfer', 'decode_tran
+sfer_with_seed', 'decode_withdraw_nonce_account', 'derive_lookup_table_address', 'extend_lookup_table', 'freeze_lookup_table', 'from_bytes_versioned', 'get_asso
+ciated_token_address', 'initialize_nonce_account', 'parse_notification', 'parse_websocket_message', 'request_heap_frame', 'set_compute_unit_limit', 'set_compute
+_unit_price', 'set_loaded_accounts_data_size_limit', 'to_bytes_versioned', 'transfer', 'transfer_many', 'transfer_with_seed', 'withdraw_nonce_account']
+root@0638fd780d9a:/app/server# pip3 install requests
+Collecting requests
+  Downloading requests-2.34.2-py3-none-any.whl.metadata (4.8 kB)
+Collecting charset_normalizer<4,>=2 (from requests)
+  Downloading charset_normalizer-3.4.9-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (41 kB)
+Requirement already satisfied: idna<4,>=2.5 in /usr/local/lib/python3.13/site-packages (from requests) (3.18)
+Collecting urllib3<3,>=1.26 (from requests)
+  Downloading urllib3-2.7.0-py3-none-any.whl.metadata (6.9 kB)
+Collecting certifi>=2023.5.7 (from requests)
+  Downloading certifi-2026.6.17-py3-none-any.whl.metadata (2.5 kB)
+Downloading requests-2.34.2-py3-none-any.whl (73 kB)
+Downloading certifi-2026.6.17-py3-none-any.whl (133 kB)
+Downloading charset_normalizer-3.4.9-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (223 kB)
+Downloading urllib3-2.7.0-py3-none-any.whl (131 kB)
+Installing collected packages: urllib3, charset_normalizer, certifi, requests
+Successfully installed certifi-2026.6.17 charset_normalizer-3.4.9 requests-2.34.2 urllib3-2.7.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you ar
+e doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# cat > test_requests.py << 'EOF'
+> import requests
+> import json
+> from solders import GetVersion, GetHealth
+>
+> url = 'https://rpc.mainnet-beta.solana.com'
+>
+> # Network status
+> def get_network_status():
+>     resp = requests.get(f'{url}/jsonrpc', params={'method': 'getVersion', 'id': 1}, timeout=10)
+>     version_resp = requests.get(f'{url}/jsonrpc', params={'method': 'getHealth', 'id': 2}, timeout=10)
+>     # parse
+>     version = json.loads(resp.text)
+>     health = json.loads(version_resp.text)
+>     return {
+>         'status': 'online',
+>         'network': 'mainnet-beta',
+>         'current_slot': version['result']['latestBlockhash'],  # not correct, need slot
+>         'node_count': health['result']['numNodes'],
+>         'version': version['result']['version']
+>     }
+>
+> print(get_network_status())
+> EOF
+root@0638fd780d9a:/app/server# python3 test_requests.py
+Traceback (most recent call last):
+  File "/app/server/test_requests.py", line 3, in <module>
+    from solders import GetVersion, GetHealth
+ImportError: cannot import name 'GetVersion' from 'solders' (/usr/local/lib/python3.13/site-packages/solders/__init__.py)
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# python3 -c "
+> import solders
+> import inspect
+> for name, obj in inspect.getmembers(solders):
+>     if 'rpc' in name:
+>         print(name)
+>         for subname, subobj in inspect.getmembers(obj):
+>             if inspect.isclass(subobj):
+>                 print('  ', subname)
+> "
+rpc
+root@0638fd780d9a:/app/server# cat /usr/local/lib/python3.13/site-packages/solders/rpc/__init__.py
+root@0638fd780d9a:/app/server# cat /usr/local/lib/python3.13/site-packages/solders/rpc/requests.py | grep -A2 -B2 'class'
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# cat > test_rpc.py << 'EOF'
+> import requests
+> import json
+> from solders.rpc.requests import GetVersion, GetHealth
+>
+> url = 'https://rpc.mainnet-beta.solana.com/jsonrpc'
+>
+> # Create request objects
+> req1 = GetVersion(id=1)
+> req2 = GetHealth(id=2)
+>
+> # Convert to JSON strings
+> req1_str = json.dumps(req1.to_dict())
+> req2_str = json.dumps(req2.to_dict())
+>
+> # Send requests
+> resp1 = requests.post(url, json=req1_str, timeout=10)
+> resp2 = requests.post(url, json=req2_str, timeout=10)
+>
+> print('Response 1:', resp1.text)
+> print('Response 2:', resp2.text)
+> EOF
+root@0638fd780d9a:/app/server# python3 test_rpc.py
+Traceback (most recent call last):
+  File "/app/server/test_rpc.py", line 12, in <module>
+    req1_str = json.dumps(req1.to_dict())
+                          ^^^^^^^^^^^^
+AttributeError: 'solders.rpc.requests.GetVersion' object has no attribute 'to_dict'
+root@0638fd780d9a:/app/server# cd /app/server
+root@0638fd780d9a:/app/server# cat > test_direct.py << 'EOF'
+> import requests
+> import json
+>
+> url = 'https://rpc.mainnet-beta.solana.com/jsonrpc'
+>
+> # getVersion
+> payload = {
+>     'method': 'getVersion',
+>     'params': [],
+>     'id': 1,
+>     'jsonrpc': '2.0'
+> }
+> resp = requests.post(url, json=payload, timeout=10)
+> print('getVersion:', json.loads(resp.text))
+>
+> # getHealth
+> payload2 = {
+>     'method': 'getHealth',
+>     'params': [],
+>     'id': 2,
+>     'jsonrpc': '2.0'
+> }
+> resp2 = requests.post(url, json=payload2, timeout=10)
+> print('getHealth:', json.loads(resp2.text))
+> EOF
+root@0638fd780d9a:/app/server# python3 test_direct.py
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+        (self._dns_host, self.port),
+    ...<2 lines>...
+        socket_options=self.socket_options,
+    )
+  File "/usr/local/lib/python3.13/site-packages/urllib3/util/connection.py", line 60, in create_connection
+    for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+               ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/socket.py", line 975, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+               ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+socket.gaierror: [Errno -5] No address associated with hostname
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 788, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 488, in _make_request
+    raise new_e
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 464, in _make_request
+    self._validate_conn(conn)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 1106, in _validate_conn
+    conn.connect()
+    ~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connection.py", line 759, in connect
+    self.sock = sock = self._new_conn()
+                       ~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connection.py", line 211, in _new_conn
+    raise NameResolutionError(self.host, self, e) from e
+urllib3.exceptions.NameResolutionError: HTTPSConnection(host='rpc.mainnet-beta.solana.com', port=443): Failed to resolve 'rpc.mainnet-beta.solana.com' ([Errno -
+5] No address associated with hostname)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/requests/adapters.py", line 696, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 842, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "/usr/local/lib/python3.13/site-packages/urllib3/util/retry.py", line 543, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='rpc.mainnet-beta.solana.com', port=443): Max retries exceeded with url: /jsonrpc (Caused by NameReso
+lutionError("HTTPSConnection(host='rpc.mainnet-beta.solana.com', port=443): Failed to resolve 'rpc.mainnet-beta.solana.com' ([Errno -5] No address associated wi
+th hostname)"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/server/test_direct.py", line 13, in <module>
+    resp = requests.post(url, json=payload, timeout=10)
+  File "/usr/local/lib/python3.13/site-packages/requests/api.py", line 134, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/usr/local/lib/python3.13/site-packages/requests/api.py", line 71, in request
+    return session.request(method=method, url=url, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/requests/sessions.py", line 651, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/usr/local/lib/python3.13/site-packages/requests/sessions.py", line 784, in send
+    r = adapter.send(request, **kwargs)
+  File "/usr/local/lib/python3.13/site-packages/requests/adapters.py", line 729, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='rpc.mainnet-beta.solana.com', port=443): Max retries exceeded with url: /jsonrpc (Caused by NameR
+esolutionError("HTTPSConnection(host='rpc.mainnet-beta.solana.com', port=443): Failed to resolve 'rpc.mainnet-beta.solana.com' ([Errno -5] No address associated
+ with hostname)"))
+root@0638fd780d9a:/app/server# cd /app
+root@0638fd780d9a:/app# export | grep -i solana
+root@0638fd780d9a:/app# grep -r 'SOLANA' /etc/ -r 2>/dev/null | head -5
+root@0638fd780d9a:/app# netstat -tulpn | grep -i solana
+bash: netstat: command not found
+root@0638fd780d9a:/app# curl -s 127.0.0.1:8080 2>&1 | head -5
+bash: curl: command not found
+root@0638fd780d9a:/app# python3 -c "import solana; print(solana.__version__)" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import solana; print(solana.__version__)
+                         ^^^^^^^^^^^^^^^^^^
+AttributeError: module 'solana' has no attribute '__version__'
+root@0638fd780d9a:/app# python3 -c "import solana; help(solana)" 2>&1 | head -20
+Help on package solana:
+
+NAME
+    solana - # noqa: D104
+
+PACKAGE CONTENTS
+    _layouts (package)
+    _pydantic
+    constants
+    exceptions
+    models
+    rpc (package)
+    utils (package)
+    vote_program
+
+FILE
+    /usr/local/lib/python3.13/site-packages/solana/__init__.py
+
+
+root@0638fd780d9a:/app# cd /app
+root@0638fd780d9a:/app# netcat -lvp 5000 2>&1 | head -5
+bash: netcat: command not found
+root@0638fd780d9a:/app# find . -type f -name '*.json' -o -name '*.yml' -o -name '*.yaml' 2>/dev/null | head -10
+root@0638fd780d9a:/app# which solana
+root@0638fd780d9a:/app# solana --version 2>&1
+bash: solana: command not found
+root@0638fd780d9a:/app# apt-get update && apt-get install -y solana 2>&1 | tail -20
+Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]
+Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [48.0 kB]
+Get:4 http://deb.debian.org/debian bookworm/main amd64 Packages [8790 kB]
+Get:5 http://deb.debian.org/debian bookworm-updates/main amd64 Packages [6924 B]
+Get:6 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [316 kB]
+Fetched 9367 kB in 1s (10.4 MB/s)
+Reading package lists... Done
+Reading package lists...
+Building dependency tree...
+Reading state information...
+E: Unable to locate package solana
+root@0638fd780d9a:/app# cd /app
+root@0638fd780d9a:/app# env | grep -E 'NETWORK|URL|SOLANA'
+root@0638fd780d9a:/app# find . -type f -name '*network*' -o -name '*rpc*' 2>/dev/null
+./server/test_rpc.py
+root@0638fd780d9a:/app# python3 -c "import os; print(os.environ)" 2>&1 | head -20
+environ({'SHELL': '/bin/bash', 'PYTHON_SHA256': '9cf9427bee9e2242e3877dd0f6b641c1853ca461f39d6503ce260a59c80bf0d9', 'TERM_PROGRAM_VERSION': '3.3a', 'ASCIINEMA_R
+EC': '1', 'TMUX': '/tmp/tmux-0/default,33,0', 'HOSTNAME': '0638fd780d9a', 'PYTHON_VERSION': '3.13.1', 'PWD': '/app', 'HOME': '/root', 'GPG_KEY': '7169605F62C751
+356D054A26A821E680E5FA6305', 'TEST_DIR': '/tests', 'TERM': 'tmux-256color', 'TMUX_PANE': '%0', 'SHLVL': '2', 'LC_CTYPE': 'C.UTF-8', 'PATH': '/usr/local/sbin:/us
+r/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', 'TERM_PROGRAM': 'tmux', '_': '/usr/local/bin/python3', 'OLDPWD': '/app'})
+root@0638fd780d9a:/app# curl -s https://testnet-rpc.solanafoundation.org 2>&1 | head -5
+bash: curl: command not found
+root@0638fd780d9a:/app#

@@ -1,0 +1,240 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@e48f2d2464c6:/app# python3 -c "import importlib; import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); networks = importlib.import_mod
+ule('networks'); print('Networks imported')" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import importlib; import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); networks = importlib.import_module('networks'); print('Networks
+ imported')
+                                                                                                            ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'networks'
+root@e48f2d2464c6:/app# python3 -c "import importlib; import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); from networks import Network; p
+rint('Network imported')" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import importlib; import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); from networks import Network; print('Network imported')
+                                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'networks'
+root@e48f2d2464c6:/app# python3 -c "import importlib; import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); from networks import NetworkErr
+or; print('NetworkError imported')" 2>&1
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import importlib; import sys; sys.path.insert(0, '/usr/local/lib/python3.13/site-packages'); from networks import NetworkError; print('NetworkError imported
+')
+                                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'networks'
+root@e48f2d2464c6:/app# head -200 /usr/local/lib/python3.13/site-packages/bitcoinlib/networks.py
+# -*- coding: utf-8 -*-
+#
+#    BitcoinLib - Python Cryptocurrency Library
+#    NETWORK class reads network definitions and with helper methods
+#    © 2017 - 2025 May - 1200 Web Development <http://1200wd.com/>
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import json
+from bitcoinlib.encoding import *
+
+
+_logger = logging.getLogger(__name__)
+
+
+class NetworkError(Exception):
+    """
+    Network Exception class
+    """
+    def __init__(self, msg=''):
+        self.msg = msg
+        _logger.error(msg)
+
+    def __str__(self):
+        return self.msg
+
+
+def _read_network_definitions():
+    """
+    Returns network definitions from json file in settings dir
+
+    :return dict: Network definitions
+    """
+
+    fn = Path(BCL_DATA_DIR, 'networks.json')
+    f = fn.open('rb')
+
+    try:
+        network_definitions = json.loads(f.read())
+    except json.decoder.JSONDecodeError as e:
+        raise NetworkError("Error reading provider definitions from %s: %s" % (fn, e))
+    f.close()
+    return network_definitions
+
+
+NETWORK_DEFINITIONS = _read_network_definitions()
+
+
+def _format_value(field, value):
+    if field[:6] == 'prefix':
+        return bytes.fromhex(value)
+    elif field == 'denominator':
+        return float(value)
+    else:
+        return value
+
+
+def network_values_for(field):
+    """
+    Return all prefixes for field, i.e.: prefix_wif, prefix_address_p2sh, etc
+
+    >>> network_values_for('prefix_wif')
+    [b'\\x99', b'\\x80', b'\\xef', b'\\xb0', b'\\x9e', b'\\xf1']
+    >>> network_values_for('prefix_address_p2sh')
+    [b'\\x95', b'\\x05', b'\\xc4', b'2', b':', b'\\x16']
+
+    :param field: Prefix name from networks definitions (networks.json)
+    :type field: str
+
+    :return str:
+    """
+    return list(dict.fromkeys([_format_value(field, nv[field]) for nv in NETWORK_DEFINITIONS.values()]))
+
+
+def network_by_value(field, value):
+    """
+    Return all networks for field and (prefix) value.
+
+    Example, get available networks for WIF or address prefix
+
+    >>> network_by_value('prefix_wif', 'B0')
+    ['litecoin', 'litecoin_legacy']
+    >>> network_by_value('prefix_address', '6f')
+    ['testnet', 'testnet4', 'signet', 'litecoin_testnet']
+
+    This method does not work for HD prefixes, use 'wif_prefix_search' instead
+
+    >>> network_by_value('prefix_address', '043587CF')
+    []
+
+    :param field: Prefix name from networks definitions (networks.json)
+    :type field: str
+    :param value: Value of network prefix
+    :type value: str
+
+    :return list: Of network name strings
+    """
+    nws = [(nv, NETWORK_DEFINITIONS[nv]['priority'])
+           for nv in NETWORK_DEFINITIONS if NETWORK_DEFINITIONS[nv][field] == value]
+    if not nws:
+        try:
+            value = value.upper()
+        except TypeError:
+            pass
+        nws = [(nv, NETWORK_DEFINITIONS[nv]['priority'])
+               for nv in NETWORK_DEFINITIONS if NETWORK_DEFINITIONS[nv][field] == value]
+    return [nw[0] for nw in sorted(nws, key=lambda x: x[1], reverse=True)]
+
+
+def network_defined(network):
+    """
+    Is network defined?
+
+    Networks of this library are defined in networks.json in the operating systems user path.
+
+    >>> network_defined('bitcoin')
+    True
+    >>> network_defined('ethereum')
+    False
+
+    :param network: Network name
+    :type network: str
+
+    :return bool:
+    """
+    if network not in list(NETWORK_DEFINITIONS.keys()):
+        return False
+    return True
+
+
+def wif_prefix_search(wif, witness_type=None, multisig=None, network=None):
+    """
+    Extract network, script type and public/private information from HDKey WIF or WIF prefix.
+
+    Example, get bitcoin 'xprv' info:
+
+    >>> wif_prefix_search('0488ADE4', network='bitcoin', multisig=False)
+    [{'prefix': '0488ADE4', 'is_private': True, 'prefix_str': 'xprv', 'network': 'bitcoin', 'witness_type': 'legacy', 'multisig': False, 'script_type': 'p2pkh'}
+]
+
+    Or retreive info with full WIF string:
+
+    >>> wif_prefix_search('xprv9wTYmMFdV23N21MM6dLNavSQV7Sj7meSPXx6AV5eTdqqGLjycVjb115Ec5LgRAXscPZgy5G4jQ9csyyZLN3PZLxoM1h3BoPuEJzsgeypdKj', network='bitcoin',
+multisig=False)
+    [{'prefix': '0488ADE4', 'is_private': True, 'prefix_str': 'xprv', 'network': 'bitcoin', 'witness_type': 'legacy', 'multisig': False, 'script_type': 'p2pkh'}
+]
+
+    Can return multiple items if no network is specified:
+
+    >>> [nw['network'] for nw in wif_prefix_search('0488ADE4', multisig=True)]
+    ['bitcoin', 'regtest', 'dogecoin']
+
+    :param wif: WIF string or prefix as hexadecimal string
+    :type wif: str
+    :param witness_type: Limit search to specific witness type
+    :type witness_type: str
+    :param multisig: Limit search to multisig: false, true or None for both. Default is both
+    :type multisig: bool
+    :param network: Limit search to specified network
+    :type network: str
+
+    :return dict:
+    """
+
+    key_hex = wif
+    if len(wif) > 8:
+        try:
+            key_hex = change_base(wif, 58, 16)
+        except Exception:
+            pass
+    prefix = key_hex[:8].upper()
+    matches = []
+    for nw in NETWORK_DEFINITIONS:
+        if network is not None and nw != network:
+            continue
+        data = NETWORK_DEFINITIONS[nw]
+        for pf in data['prefixes_wif']:
+            if pf[0] == prefix and (multisig is None or pf[3] is None or pf[3] == multisig) and \
+                    (witness_type is None or pf[4] is None or pf[4] == witness_type):
+                matches.append({
+                    'prefix': prefix,
+                    'is_private': True if pf[2] == 'private' else False,
+                    'prefix_str': pf[1],
+                    'network': nw,
+                    'witness_type': pf[4],
+                    'multisig': pf[3],
+                    'script_type': pf[5]
+                })
+    return matches
+
+
+root@e48f2d2464c6:/app# python3 -m py_compile /usr/local/lib/python3.13/site-packages/bitcoinlib/networks.py 2>&1
+root@e48f2d2464c6:/app#

@@ -1,0 +1,31 @@
+<think>
+We need to fix the _line_type function to handle case-insensitive commands. The current function uses regex that is case-sensitive. We should convert the line to uppercase before matching. Also, we need to ensure that the delimiter is whitespace (or the provided delimiter). The function currently uses re.IGNORECASE flag on the compiled regex, but the regex itself is case-sensitive. We'll change the regex to be case-insensitive by using re.IGNORECASE flag and also convert the line to uppercase.
+
+Let's edit the file directly. We'll use a simple approach: replace the function with a new one that does line.upper() before matching. We'll write a Python script to do the replacement.
+
+But first, let's see the exact lines of the function. We can use sed to extract the function body. However, given the time, we can write a script that reads the file, finds the function, and replaces it. Let's do that now.
+</think>
+
+{
+  "analysis": "The _line_type function still has the old regex and does not convert the line to uppercase. We need to modify it. Let's write a Python script that replaces the function with a new version that converts the line to uppercase and uses re.IGNORECASE flag. Then we'll test.",
+  "plan": "1. Create a Python script to replace the _line_type function. 2. Run the script. 3. Verify the change. 4. Test with lowercase command. 5. Also test with uppercase command to ensure no regression. 6. Finally, we'll create a simple test to verify the fix works.",
+  "commands": [
+    {
+      "keystrokes": "cat > /tmp/fix_qdp.py << 'EOF'\nimport re\nimport sys\nwith open('/usr/local/lib/python3.9/site-packages/astropy/io/ascii/qdp.py', 'r') as f:\n    content = f.read()\n# Pattern to match the _line_type function\npattern = r'(def _line_type\\(line, delimiter=None\\):\\s*\"\"\"[^\\\"]*\"\"\"[^\\\"]*)\\s*line = line\\.strip\\(\\)'\n# We'll replace the whole function body until the line that returns something.\n# Let's do a more robust replacement: replace from 'def _line_type' to the next 'def' or end of file.\n# We'll read lines and find the function.\nlines = content.splitlines(keepends=True)\nin_func = False\nstart = -1\nfor i, line in enumerate(lines):\n    if line.strip().startswith('def _line_type'):\n        start = i\n        break\nif start == -1:\n    sys.exit(1)\n# Find the end of the function (next line that starts with 'def' or end of file)\nend = start + 1\nwhile end < len(lines) and not lines[end].strip().startswith('def '):\n    end += 1\n# Now replace lines[start:end] with new function\nnew_func = '''def _line_type(line, delimiter=None):\n    \\\"\\\"\\\"Interpret a QDP file line.\n\n    Parameters\n    ----------\n    line : str\n        a single line of the file\n\n    Returns\n    -------\n    type : str\n        Line type: \\\"comment\\\", \\\"command\\\", or \\\"data\\\"\n\n    Examples\n    --------\n    >>> _line_type(\\\"READ SERR 3\\\")\n    'command'\n    >>> _line_type(\\\" \\n    !some gibberish\\\")\n    'comment'\n    >>> _line_type(\\\"   \")\n    'comment'\n    >>> _line_type(\\\" 21345.45\\\")\n    'data,1'\n    >>> _line_type(\\\" 21345.45 1.53e-3 1e-3 .04 NO nan\\\")\n    'data,6'\n    >>> _line_type(\\\" 21345.45,1.53e-3,1e-3,.04,NO,nan\", delimiter=\\\",')\n    'data,6'\n    >>> _line_type(\\\" 21345.45 ! a comment to disturb\\\")\n    'data,1'\n    >>> _line_type(\\\"NO NO NO NO NO\\\")\n    'new'\n    >>> _line_type(\\\"NO,NO,NO,NO,NO\", delimiter=\\\",')\n    'new'\n    >>> _line_type(\\\"N O N NOON OON O\\\")\n    Traceback (most recent call last):\n        ...\n    ValueError: Unrecognized QDP line...\n    >>> _line_type(\\\" some non-comment gibberish\\\")\n    Traceback (most recent call last):\n        ...\n    ValueError: Unrecognized QDP line...\n    \\\"\\\"\\\"\n    _decimal_re = r\\\"[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d+)?\\\"\n    _command_re = r\\\"[Rr]READ\\s+[TSs]ERR(\\s+[0-9]+)+\\\"\n\n    sep = delimiter\n    if delimiter is None:\n        sep = r\\\"\\s+\\\"\n    _new_re = rf\\\"NO({sep}NO)+\\\"\n    _data_re = rf\\\"({_decimal_re}|NO|[-+]?nan)({sep}({_decimal_re}|NO|[-+]?nan))*)\\\"\n    _type_re = rf\\\"^\\s*((?P<command>{_command_re})|(?P<new>{_new_re})|(?P<data>{_data_re})?)\\s*(\\!(?P<comment>.*))?\s*$\\\"\n    _line_type_re = re.compile(_type_re, re.IGNORECASE)\n    line = line.strip()\n    if not line:\n        return \\\"comment\\\"\n    # Convert to uppercase to handle case-insensitive commands\n    line_upper = line.upper()\n    match = _line_type_re.match(line_upper)\n\n    if match is None:\n        raise ValueError(f\\\"Unrecognized QDP line: {line}\\\")\n    for type_, val in match.groupdict().items():\n        if val is None:\n            continue\n        if type_ == \\\"data\\\":\n            return f\\\"data,{len(val.split(sep=delimiter))}\\\"\n        else:\n            return type_'''\n# Replace\nlines[start:end] = new_func.splitlines(keepends=True)\nwith open('/usr/local/lib/python3.9/site-packages/astropy/io/ascii/qdp.py', 'w') as f:\n    f.writelines(lines)\nEOF\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "python3 /tmp/fix_qdp.py\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "grep -n '_line_type' /usr/local/lib/python3.9/site-packages/astropy/io/ascii/qdp.py\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "sed -n '20,80p' /usr/local/lib/python3.9/site-packages/astropy/io/ascii/qdp.py\n",
+      "duration": 0.5
+    }
+  ],
+  "task_complete": false
+}

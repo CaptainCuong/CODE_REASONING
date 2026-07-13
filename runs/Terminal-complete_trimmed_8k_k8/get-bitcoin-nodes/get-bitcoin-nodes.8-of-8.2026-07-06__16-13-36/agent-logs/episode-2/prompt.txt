@@ -1,0 +1,136 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@5e6a5449de73:/app# ls -la
+total 0
+drwxr-xr-x 2 root root  6 Mar 28  2025 .
+drwxr-xr-x 1 root root 72 Jul  8 03:36 ..
+root@5e6a5449de73:/app# cat > bitcoin_service.py << 'EOF'
+> #!/usr/bin/env python3
+> import json
+> import sys
+> from flask import Flask, request, abort
+> from bitcoinlib import RPCClient
+> from bitcoinlib.transactions import Transaction
+> from bitcoinlib.blocks import Block
+> from bitcoinlib.scripts import Script
+>
+> app = Flask(__name__)
+>
+> # RPC client configuration
+> rpc_config = {
+>     'host': 'localhost',
+>     'port': 8333,
+>     'user': '',
+>     'password': '',
+>     'timeout': 30
+> }
+>
+> def get_rpc_client():
+>     """Return a connected RPC client."""
+>     try:
+>         client = RPCClient(rpc_config['host'], rpc_config['port'],
+>                            user=rpc_config['user'], password=rpc_config['password'],
+>                            timeout=rpc_config['timeout'])
+>         return client
+>     except Exception as e:
+>         raise ConnectionError(f"Failed to connect to RPC server: {e}")
+>
+> def get_block(block_hash):
+>     """Return block details as JSON dict."""
+>     client = get_rpc_client()
+>     block = client.get_block(block_hash)
+>     # block is a Block object
+>     return {
+>         'hash': block.hash.hex(),
+>         'height': int(block.height),
+>         'merkleroot': block.merkleroot.hex(),
+>         'time': int(block.time),
+>         'nonce': int(block.nonce),
+>         'tx': [tx.hash.hex() for tx in block.transactions]
+>     }
+>
+> def get_transaction(txid):
+>     """Return transaction details as JSON dict."""
+>     client = get_rpc_client()
+>     transaction = client.get_transaction(txid)
+>     # transaction is a Transaction object
+>     vin = []
+>     for inp in transaction.vin:
+>         vin.append({
+>             'coinbase': inp.coinbase.hex() if inp.is_coinbase else '',
+>             'sequence': int(inp.sequence)
+>         })
+>     vout = []
+>     for out in transaction.vout:
+>         script = out.scriptPubKey
+>         vout.append({
+>             'value': out.value,
+>             'n': out.n,
+>             'scriptPubKey': {
+>                 'asm': script.asm,
+>                 'hex': script.hex,
+>                 'type': script.type
+>             }
+>         })
+>     return {
+>         'txid': transaction.hash.hex(),
+>         'blockhash': transaction.block_hash.hex(),
+>         'vin': vin,
+>         'vout': vout
+>     }
+>
+> def get_status():
+>     """Return network status."""
+>     try:
+>         client = get_rpc_client()
+>         # Get network info
+>         network = client.get_network_info()
+>         return {
+>             'status': 'online'
+>         }
+>     except Exception as e:
+>         return {
+>             'status': 'offline',
+>             'error': str(e)
+>         }
+>
+> @app.route('/block/<block_hash>', methods=['GET'])
+> def block_endpoint(block_hash):
+>     try:
+>         block = get_block(block_hash)
+>         return json.dumps(block)
+>     except ValueError:
+>         # Invalid block hash
+>         return json.dumps({'error': f"Block {block_hash} not found"}), 404
+>     except Exception as e:
+>         return json.dumps({'error': str(e)}), 500
+>
+> @app.route('/transaction/<txid>', methods=['GET'])
+> def transaction_endpoint(txid):
+>     try:
+>         transaction = get_transaction(txid)
+>         return json.dumps(transaction)
+>     except ValueError:
+>         return json.dumps({'error': f"Transaction {txid} not found"}), 404
+>     except Exception as e:
+>         return json.dumps({'error': str(e)}), 500
+>
+> @app.route('/status', methods=['GET'])
+> def status_endpoint():
+>     status = get_status()
+>     return json.dumps(status)
+>
+> if __name__ == '__main__':
+>     app.run(host='0.0.0.0', port=5000, debug=False)
+> EOF
+root@5e6a5449de73:/app# chmod +x bitcoin_service.py
+root@5e6a5449de73:/app# python3 -m py_compile bitcoin_service.py
+root@5e6a5449de73:/app# python3 bitcoin_service.py
+Traceback (most recent call last):
+  File "/app/bitcoin_service.py", line 5, in <module>
+    from bitcoinlib import RPCClient
+ImportError: cannot import name 'RPCClient' from 'bitcoinlib' (/usr/local/lib/python3.13/site-packages/bitcoinlib/__init__.py)
+root@5e6a5449de73:/app#

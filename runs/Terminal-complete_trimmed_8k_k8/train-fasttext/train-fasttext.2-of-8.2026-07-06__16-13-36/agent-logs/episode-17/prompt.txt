@@ -1,0 +1,113 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@e16ba2a74bfe:/app# cd /app
+root@e16ba2a74bfe:/app# cat > train_model5.py << 'EOF'
+> import pandas as pd
+> import fasttext
+> import os
+> import re
+> import numpy as np
+>
+> # Load data
+> train_df = pd.read_parquet('data/train-00000-of-00001.parquet')
+> test_df = pd.read_parquet('data/test-00000-of-00001.parquet')
+> print(f'Train shape: {train_df.shape}, Test shape: {test_df.shape}')
+>
+> # Preprocessing: tokenize, lowercase, remove punctuation
+> stop_words = {'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+> 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might', 'can'}
+>
+> def tokenize(text):
+>     # Convert to string, strip, lower, and tokenize
+>     if pd.isna(text):
+>         return []
+>     text = str(text).strip().lower()
+>     if not text:
+>         return []
+>     tokens = re.findall(r'\w+', text)
+>     tokens = [t for t in tokens if t not in stop_words]
+>     return tokens
+>
+> # Vectorized tokenization for train and test
+> def vectorize(df):
+>     # Apply tokenize to each text, but we can also do a vectorized approach using str.split and then flatten
+>     # For simplicity, we'll use apply but without na_action
+>     tokens = df['text'].apply(tokenize)
+>     return tokens
+>
+> train_tokens = vectorize(train_df)
+> test_tokens = vectorize(test_df)
+>
+> # Build vocabulary: word count 10
+> all_words = []
+> for tokens in train_tokens + test_tokens:
+>     all_words.extend(tokens)
+> word_counts = {}
+> for w in all_words:
+>     word_counts[w] = word_counts.get(w, 0) + 1
+> sorted_words = sorted(word_counts.items(), key=lambda x: x[1], reverse=True)
+> top10_words = [w for w, _ in sorted_words[:10]]
+> print(f'Top 10 words: {top10_words}')
+> print(f'Number of unique tokens: {len(all_words)}')
+>
+> # Filter tokens to top 10 words only
+> def filter_tokens(tokens):
+>     return [t for t in tokens if t in top10_words]
+>
+> train_tokens = train_tokens.apply(filter_tokens)
+> test_tokens = test_tokens.apply(filter_tokens)
+>
+> # Build label mapping
+> label_to_int = {}
+> int_to_label = {}
+> for idx, label in enumerate(train_df['label'].unique()):
+>     label_to_int[label] = idx
+>     int_to_label[idx] = label
+> print(f'Number of labels: {len(label_to_int)}')
+>
+> # Convert to fasttext format: each line: <label_index> <word> <word> ...
+> train_lines = []
+> for tokens, label in zip(train_tokens, train_df['label']):
+>     line = str(label_to_int[label]) + ' ' + ' '.join(tokens)
+>     train_lines.append(line)
+>
+> test_lines = []
+> for tokens, label in zip(test_tokens, test_df['label']):
+>     line = str(label_to_int[label]) + ' ' + ' '.join(tokens)
+>     test_lines.append(line)
+>
+> # Train model
+> model = fasttext.SentenceSkipGram()
+> model.set_word_count(10)
+> model.set_negative_sample(5)
+> model.set_learning_rate(0.1)
+> model.set_loss('crossEntropy')
+> model.set_epoch(5)
+> model.train(train_lines)
+>
+> # Evaluate on test set
+> test_accuracy = 0
+> for line in test_lines:
+>     parts = line.split()
+>     label = parts[0]
+>     tokens = parts[1:]
+>     pred = model.predict(tokens)
+>     if pred[0] == int(label):
+>         test_accuracy += 1
+>
+> print(f'Test accuracy: {test_accuracy/len(test_lines):.2f}')
+>
+> # Save model
+> model.save_model('model.bin')
+> print('Model saved to model.bin')
+>
+> # Check model size
+> size = os.path.getsize('model.bin')
+> print(f'Model size: {size} bytes ({size/1024/1024:.2f} MB)')
+> EOF
+root@e16ba2a74bfe:/app# python3 train_model5.py
+Train shape: (650000, 2), Test shape: (10000, 2)
+

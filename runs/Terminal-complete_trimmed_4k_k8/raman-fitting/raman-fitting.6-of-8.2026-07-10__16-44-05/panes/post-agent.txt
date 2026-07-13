@@ -1,0 +1,442 @@
+root@f6f43e6a3f2c:/app# ls -la
+total 88
+drwxr-xr-x 1 root root    34 Jun 24 11:01 .
+drwxr-xr-x 1 root root    57 Jul 12 09:47 ..
+-rw-rw-r-- 1 root root 88805 Jun 24 11:01 graphene.dat
+root@f6f43e6a3f2c:/app# python3 --version
+Python 3.13.1
+root@f6f43e6a3f2c:/app# head -20 graphene.dat
+47183,554644    19261,547207
+46588,360019    19266,089699
+46008,191298    19077,996963
+45442,488736    19173,287322
+44890,718036    19501,518253
+44352,368927    19506,586203
+43826,959593    19752,431144
+43314,029137    19812,863021
+42813,138290    19678,348151
+42323,866373    19764,871128
+41845,813826    19360,099292
+41378,600916    19413,554878
+40921,863181    19626,191780
+40475,250679    19704,066336
+40038,430487    19495,727898
+39611,084116    19672,573559
+39192,908278    19538,763458
+38783,609488    19344,943112
+38382,908122    19510,307527
+37990,536178    19552,152695
+root@f6f43e6a3f2c:/app# wc -l graphene.dat
+3565 graphene.dat
+root@f6f43e6a3f2c:/app# cat > /app/fit.py << 'EOF'
+ We'll take the first two maxima.
+    peak_indices = max_idx[:2]
+    # Extract x and y for each peak.
+    results = {}
+    for idx in peak_indices:
+        # Determine which peak it is by x value.
+        x_val = x[idx]
+        if 1500 < x_val < 1700:
+            peak_name = 'G'
+        elif 2500 < x_val < 2900:
+            peak_name = '2D'
+        else:
+            continue
+        # Extract the peak segment: from the start of the peak to the end.
+        # We'll find the nearest index with y > threshold before and after.
+        # For simplicity, we'll take from idx-10 to idx+10.
+        start = max(0, idx-10)
+        end = min(len(x), idx+10)
+        x_sub = x[start:end]
+        y_sub = y[start:end]
+        # Fit
+        popt, pcov = optimize.curvefit(lambda x, x0, gamma, amp, offset: amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset, x_sub, y_sub, p0=[x_sub[0], 5, 1
+, 0.5])
+        results[peak_name] = {
+            'x0': popt[0],
+            'gamma': popt[1],
+            'amplitude': popt[2],
+            'offset': popt[3]
+    > import numpy as np
+> import json
+> from scipy import optimize
+>
+> def fit_peak(x, y, peak_name):
+>     """Fit a single peak."""
+>     # We'll assume the data is sorted by x
+>     # Use a simple least squares fit of a function
+>     # Function: y = A * exp(- (x - x0)^2 / (2 * gamma^2)) + offset
+>     # But note: the peak shape might be different; we'll use a simple exponential for simplicity.
+>     # However, we need to get both G and 2D. Let's try to fit two Gaussians.
+>     # We'll write a function that returns the sum of two Gaussians.
+>     # But we are only calling this function once for each peak.
+>     # We'll just fit one peak.
+>     # We'll use scipy's optimize.curvefit.
+>     def f(x, x0, gamma, amp, offset):
+>         return amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset
+>     # We need to find the best fit.
+>     # We'll guess initial parameters.
+>     # For G peak, likely around 1600? Let's assume we know.
+>     # We'll let the algorithm find.
+>     popt, pcov = optimize.curvefit(f, x, y, p0=[1000, 10, 1, 0.5])
+>     return {
+>         'x0': popt[0],
+>         'gamma': popt[1],
+>         'amplitude': popt[2],
+>         'offset': popt[3]
+>     }
+>
+> def main():
+>     # Load data
+>     data = np.loadtxt('graphene.dat', delimiter=",")
+>     x = data[:, 0]
+>     y = data[:, 1]
+>     # We need to fit two peaks: G and 2D.
+>     # Let's find indices where y is high.
+>     # We'll fit two separate peaks.
+>     # We'll assume the first peak is G (around 1600).
+>     # We'll assume the second peak is 2D (around 2700).
+>     # We'll extract subsets.
+>     # We'll use a simple threshold.
+>     threshold = np.max(y) * 0.5
+>     # Find indices where y > threshold
+>     high_indices = np.where(y > threshold)[0]
+>     # We'll fit each peak separately.
+>     # For G, take the first peak.
+>     # For 2D, take the second peak.
+>     # We'll use a function that fits a peak from start to end.
+>     def fit_peak_segment(x_sub, y_sub):
+>         # We'll use the same function but with different initial guess.
+>         # We'll use the same function.
+>         popt, pcov = optimize.curvefit(lambda x, x0, gamma, amp, offset: amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset, x_sub, y_sub, p0=[1000, 10, 1,
+ 0.5])
+>         return popt
+>     # Find the first peak: from 0 to index where y starts decreasing.
+>     # We'll just use the first set of high indices.
+>     # But we know there are two peaks, so we can split.
+>     # Let's find the first peak by scanning.
+>     first_peak_indices = []
+>     for i in high_indices:
+>         if i == high_indices[0]:
+>             first_peak_indices.append(i)
+>             # Find the next index where y starts decreasing
+>             for j in high_indices[1:]:
+>                 if y[j] < y[j-1]:
+>                     first_peak_indices.append(j)
+>                     break
+>             break
+>     # Similarly for second peak.
+>     # Let's implement more robustly: find the two peaks by finding maxima.
+>     # We'll just use the first two maxima.
+>     # We'll use scipy's findpeaks.
+>     from scipy.signal import findpeaks
+>     max_idx, _ = findpeaks(y)
+>     # max_idx gives indices of maxima.
+>     # We'll take the first two maxima.
+>     peak_indices = max_idx[:2]
+>     # Extract x and y for each peak.
+>     results = {}
+>     for idx in peak_indices:
+>         # Determine which peak it is by x value.
+>         x_val = x[idx]
+>         if 1500 < x_val < 1700:
+>             peak_name = 'G'
+>         elif 2500 < x_val < 2900:
+>             peak_name = '2D'
+>         else:
+>             continue
+>         # Extract the peak segment: from the start of the peak to the end.
+>         # We'll find the nearest index with y > threshold before and after.
+>         # For simplicity, we'll take from idx-10 to idx+10.
+>         start = max(0, idx-10)
+>         end = min(len(x), idx+10)
+>         x_sub = x[start:end]
+>         y_sub = y[start:end]
+>         # Fit
+>         popt, pcov = optimize.curvefit(lambda x, x0, gamma, amp, offset: amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset, x_sub, y_sub, p0=[x_sub[0], 5,
+ 1, 0.5])
+>         results[peak_name] = {
+>             'x0': popt[0],
+>             'gamma': popt[1],
+>             'amplitude': popt[2],
+>             'offset': popt[3]
+>         }
+>     # Write to file
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f6f43e6a3f2c:/app# python3 -c "import scipy; print('scipy available')"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import scipy; print('scipy available')
+    ^^^^^^^^^^^^
+ModuleNotFoundError: No module named 'scipy'
+root@f6f43e6a3f2c:/app# cat /app/fit.py | head -30
+import numpy as np
+import json
+from scipy import optimize
+
+def fit_peak(x, y, peak_name):
+    """Fit a single peak."""
+    # We'll assume the data is sorted by x
+    # Use a simple least squares fit of a function
+    # Function: y = A * exp(- (x - x0)^2 / (2 * gamma^2)) + offset
+    # But note: the peak shape might be different; we'll use a simple exponential for simplicity.
+    # However, we need to get both G and 2D. Let's try to fit two Gaussians.
+    # We'll write a function that returns the sum of two Gaussians.
+    # But we are only calling this function once for each peak.
+    # We'll just fit one peak.
+    # We'll use scipy's optimize.curvefit.
+    def f(x, x0, gamma, amp, offset):
+        return amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset
+    # We need to find the best fit.
+    # We'll guess initial parameters.
+    # For G peak, likely around 1600? Let's assume we know.
+    # We'll let the algorithm find.
+    popt, pcov = optimize.curvefit(f, x, y, p0=[1000, 10, 1, 0.5])
+    return {
+        'x0': popt[0],
+        'gamma': popt[1],
+        'amplitude': popt[2],
+        'offset': popt[3]
+    }
+
+def main():
+root@f6f43e6a3f2c:/app# pip3 install scipy
+Collecting scipy
+  Downloading scipy-1.18.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (62 kB)
+Collecting numpy<2.8,>=2.0.0 (from scipy)
+  Downloading numpy-2.5.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (6.6 kB)
+Downloading scipy-1.18.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (35.3 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 35.3/35.3 MB 371.4 MB/s eta 0:00:00
+Downloading numpy-2.5.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (16.7 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 16.7/16.7 MB 388.3 MB/s eta 0:00:00
+Installing collected packages: numpy, scipy
+Successfully installed numpy-2.5.1 scipy-1.18.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you ar
+e doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@f6f43e6a3f2c:/app# python3 -c "import scipy; print('scipy installed')"
+scipy installed
+root@f6f43e6a3f2c:/app# cat > /app/fit.py << 'EOF'
+> import numpy as np
+> import json
+> from scipy import optimize, signal
+>
+> def fit_peak(x, y, peak_name):
+>     """Fit a single peak."""
+>     # Use a simple least squares fit of a function
+>     # Function: y = A * exp(- (x - x0)^2 / (2 * gamma^2)) + offset
+>     # We'll use scipy's optimize.curvefit.
+>     def f(x, x0, gamma, amp, offset):
+>         return amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset
+>     # We'll guess initial parameters.
+>     # For G peak, likely around 1600? Let's assume we know.
+>     # We'll let the algorithm find.
+>     # We'll use the first data point's x as x0 initial.
+>     popt, pcov = optimize.curvefit(f, x, y, p0=[x[0], 5, 1, 0.5])
+>     return {
+>         'x0': popt[0],
+>         'gamma': popt[1],
+>         'amplitude': popt[2],
+>         'offset': popt[3]
+>     }
+>
+> def main():
+>     # Load data
+>     data = np.loadtxt('graphene.dat', delimiter=",")
+>     x = data[:, 0]
+>     y = data[:, 1]
+>     # Find indices of maxima
+>     max_idx, _ = signal.findpeaks(y)
+>     # We expect two peaks: G and 2D.
+>     # Let's take the first two maxima.
+>     peak_indices = max_idx[:2]
+>     results = {}
+>     for idx in peak_indices:
+>         # Determine which peak it is by x value.
+>         x_val = x[idx]
+>         if 1500 < x_val < 1700:
+>             peak_name = 'G'
+>         elif 2500 < x_val < 2900:
+>             peak_name = '2D'
+>         else:
+>             # If it's not one of the two, skip (should not happen)
+>             continue
+>         # Extract the peak segment: from the start of the peak to the end.
+>         # We'll find the nearest index with y > threshold before and after.
+>         # For simplicity, we'll take from idx-10 to idx+10.
+>         start = max(0, idx-10)
+>         end = min(len(x), idx+10)
+>         x_sub = x[start:end]
+>         y_sub = y[start:end]
+>         # Fit
+>         popt, pcov = optimize.curvefit(lambda x, x0, gamma, amp, offset: amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset, x_sub, y_sub, p0=[x_sub[0], 5,
+ 1, 0.5])
+>         results[peak_name] = {
+>             'x0': popt[0],
+>             'gamma': popt[1],
+>             'amplitude': popt[2],
+>             'offset': popt[3]
+>         }
+>     # Write to file
+>     with open('results.json', 'w') as f:
+>         json.dump(results, f, indent=2)
+>     print('Results written to results.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f6f43e6a3f2c:/app# cat /app/fit.py
+import numpy as np
+import json
+from scipy import optimize, signal
+
+def fit_peak(x, y, peak_name):
+    """Fit a single peak."""
+    # Use a simple least squares fit of a function
+    # Function: y = A * exp(- (x - x0)^2 / (2 * gamma^2)) + offset
+    # We'll use scipy's optimize.curvefit.
+    def f(x, x0, gamma, amp, offset):
+        return amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset
+    # We'll guess initial parameters.
+    # For G peak, likely around 1600? Let's assume we know.
+    # We'll let the algorithm find.
+    # We'll use the first data point's x as x0 initial.
+    popt, pcov = optimize.curvefit(f, x, y, p0=[x[0], 5, 1, 0.5])
+    return {
+        'x0': popt[0],
+        'gamma': popt[1],
+        'amplitude': popt[2],
+        'offset': popt[3]
+    }
+
+def main():
+    # Load data
+    data = np.loadtxt('graphene.dat', delimiter=",")
+    x = data[:, 0]
+    y = data[:, 1]
+    # Find indices of maxima
+    max_idx, _ = signal.findpeaks(y)
+    # We expect two peaks: G and 2D.
+    # Let's take the first two maxima.
+    peak_indices = max_idx[:2]
+    results = {}
+    for idx in peak_indices:
+        # Determine which peak it is by x value.
+        x_val = x[idx]
+        if 1500 < x_val < 1700:
+            peak_name = 'G'
+        elif 2500 < x_val < 2900:
+            peak_name = '2D'
+        else:
+            # If it's not one of the two, skip (should not happen)
+            continue
+        # Extract the peak segment: from the start of the peak to the end.
+        # We'll find the nearest index with y > threshold before and after.
+        # For simplicity, we'll take from idx-10 to idx+10.
+        start = max(0, idx-10)
+        end = min(len(x), idx+10)
+        x_sub = x[start:end]
+        y_sub = y[start:end]
+        # Fit
+        popt, pcov = optimize.curvefit(lambda x, x0, gamma, amp, offset: amp * np.exp(- (x - x0)**2 / (2 * gamma**2)) + offset, x_sub, y_sub, p0=[x_sub[0], 5, 1
+, 0.5])
+        results[peak_name] = {
+            'x0': popt[0],
+            'gamma': popt[1],
+            'amplitude': popt[2],
+            'offset': popt[3]
+        }
+    # Write to file
+    with open('results.json', 'w') as f:
+        json.dump(results, f, indent=2)
+    print('Results written to results.json')
+
+if __name__ == '__main__':
+    main()
+root@f6f43e6a3f2c:/app# cd /app
+root@f6f43e6a3f2c:/app# python3 /app/fit.py
+Traceback (most recent call last):
+  File "/app/fit.py", line 66, in <module>
+    main()
+    ~~~~^^
+  File "/app/fit.py", line 26, in main
+    data = np.loadtxt('graphene.dat', delimiter=",")
+  File "/usr/local/lib/python3.13/site-packages/numpy/lib/_npyio_impl.py", line 1381, in loadtxt
+    arr = _read(fname, dtype=dtype, comment=comment, delimiter=delimiter,
+                converters=converters, skiplines=skiprows, usecols=usecols,
+                unpack=unpack, ndmin=ndmin, encoding=encoding,
+                max_rows=max_rows, quote=quotechar)
+  File "/usr/local/lib/python3.13/site-packages/numpy/lib/_npyio_impl.py", line 1035, in _read
+    arr = _load_from_filelike(
+        data, delimiter=delimiter, comment=comment, quote=quote,
+    ...<3 lines>...
+        encoding=encoding, filelike=filelike,
+        byte_converters=byte_converters)
+ValueError: could not convert string '554644\t19261' to float64 at row 0, column 2.
+root@f6f43e6a3f2c:/app# cat /app/results.json
+cat: /app/results.json: No such file or directory
+root@f6f43e6a3f2c:/app# python3 -c "import numpy as np; data = np.loadtxt('graphene.dat', delimiter=','); print('Shape:', data.shape); print('First row:', data[
+0]); print('Second row:', data[1]); print('Third row:', data[2])"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import numpy as np; data = np.loadtxt('graphene.dat', delimiter=','); print('Shape:', data.shape); print('First row:', data[0]); print('Second row:', data[1
+]); print('Third row:', data[2])
+                               ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/numpy/lib/_npyio_impl.py", line 1381, in loadtxt
+    arr = _read(fname, dtype=dtype, comment=comment, delimiter=delimiter,
+                converters=converters, skiplines=skiprows, usecols=usecols,
+                unpack=unpack, ndmin=ndmin, encoding=encoding,
+                max_rows=max_rows, quote=quotechar)
+  File "/usr/local/lib/python3.13/site-packages/numpy/lib/_npyio_impl.py", line 1035, in _read
+    arr = _load_from_filelike(
+        data, delimiter=delimiter, comment=comment, quote=quote,
+    ...<3 lines>...
+        encoding=encoding, filelike=filelike,
+        byte_converters=byte_converters)
+ValueError: could not convert string '554644\t19261' to float64 at row 0, column 2.
+root@f6f43e6a3f2c:/app# python3 -c "with open('graphene.dat') as f: lines = f.readlines(); print('First line:', repr(lines[0]))"
+First line: '47183,554644\t19261,547207\n'
+root@f6f43e6a3f2c:/app# python3 -c "
+> with open('graphene.dat') as f:
+>     for i, line in enumerate(f):
+>         if i < 3:
+>             line = line.strip()
+>             parts = line.split(',')
+>             print('Line:', line)
+>             print('Split by comma:', parts)
+>             if len(parts) > 1:
+>                 second = parts[1]
+>                 tab_parts = second.split('\t')
+>                 print('Tab parts:', tab_parts)
+>                 print('Total numbers:', len(tab_parts))
+>                 for tp in tab_parts:
+>                     print('  ', tp)
+> "
+Line: 47183,554644      19261,547207
+Split by comma: ['47183', '554644\t19261', '547207']
+Tab parts: ['554644', '19261']
+Total numbers: 2
+   554644
+   19261
+Line: 46588,360019      19266,089699
+Split by comma: ['46588', '360019\t19266', '089699']
+Tab parts: ['360019', '19266']
+Total numbers: 2
+   360019
+   19266
+Line: 46008,191298      19077,996963
+Split by comma: ['46008', '191298\t19077', '996963']
+Tab parts: ['191298', '19077']
+Total numbers: 2
+   191298
+   19077
+root@f6f43e6a3f2c:/app#

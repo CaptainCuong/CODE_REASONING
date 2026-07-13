@@ -1,0 +1,108 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@38999d0ebd03:/app# cd /app/ssl
+root@38999d0ebd03:/app/ssl# cat > verification.txt << 'EOF'
+> Subject: $(openssl x509 -subject -in server.crt 2>/dev/null | head -1)
+> EOF
+root@38999d0ebd03:/app/ssl# openssl x509 -subject -in server.crt >> verification.txt
+root@38999d0ebd03:/app/ssl# echo '---' >> verification.txt
+root@38999d0ebd03:/app/ssl# openssl x509 -startdate -enddate -in server.crt >> verification.txt
+root@38999d0ebd03:/app/ssl# echo '---' >> verification.txt
+root@38999d0ebd03:/app/ssl# openssl x509 -fingerprint -sha256 -in server.crt >> verification.txt
+root@38999d0ebd03:/app/ssl# cd /app
+root@38999d0ebd03:/app# cat > check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+>
+> def verify_certificate():
+>     cert_path = '/app/ssl/server.pem'
+>     try:
+>         with open(cert_path, 'r') as f:
+>             cert_data = f.read()
+>     except FileNotFoundError:
+>         print('ERROR: Certificate file not found at', cert_path)
+>         sys.exit(1)
+>
+>     # Try to load the certificate using OpenSSL subprocess
+>     result = subprocess.run(['openssl', 'x509', '-noout', '-subject'],
+>                             input=cert_data.encode('utf-8'),
+>                             capture_output=True, text=True)
+>     if result.returncode != 0:
+>         print('ERROR: Failed to parse certificate')
+>         sys.exit(1)
+>
+>     # Extract subject
+>     subject = result.stdout.strip()
+>     print(f'Subject: {subject}')
+>
+>     # Extract start and end dates
+>     result = subprocess.run(['openssl', 'x509', '-noout', '-startdate', '-enddate'],
+>                             input=cert_data.encode('utf-8'),
+>                             capture_output=True, text=True)
+>     if result.returncode != 0:
+>         print('ERROR: Failed to get dates')
+>         sys.exit(1)
+>     dates = result.stdout.strip().split('\n')
+>     start_date = dates[0].strip()
+>     end_date = dates[1].strip()
+>     print(f'Start Date: {start_date}')
+>     print(f'End Date: {end_date}')
+>
+>     # Extract Common Name
+>     result = subprocess.run(['openssl', 'x509', '-noout', '-subject'],
+>                             input=cert_data.encode('utf-8'),
+>                             capture_output=True, text=True)
+>     if result.returncode != 0:
+>         print('ERROR: Failed to get subject')
+>         sys.exit(1)
+>     subject_lines = result.stdout.strip().split('\n')
+>     common_name = None
+>     for line in subject_lines:
+>         if line.startswith(' CN='):
+>             common_name = line.split('=')[1].strip()
+>             break
+>     if common_name:
+>         print(f'Common Name: {common_name}')
+>     else:
+>         print('WARNING: Common Name not found')
+>
+>     # Check if certificate is still valid (optional)
+>     from datetime import datetime
+>     now = datetime.now()
+>     # Parse dates (simple string comparison assuming format YYYY-MM-DDTHH:MM:SS)
+>     # We'll just print expiration status
+>     print(f'Current Date: {now.date()}')
+>     print(f'Expiry Date: {end_date.split()[0]}')
+>
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     verify_certificate()
+> EOF
+root@38999d0ebd03:/app# python3 check_cert.py
+Traceback (most recent call last):
+  File "/app/check_cert.py", line 68, in <module>
+    verify_certificate()
+    ~~~~~~~~~~~~~~~~~~^^
+  File "/app/check_cert.py", line 15, in verify_certificate
+    result = subprocess.run(['openssl', 'x509', '-noout', '-subject'],
+                            input=cert_data.encode('utf-8'),
+                            capture_output=True, text=True)
+  File "/usr/local/lib/python3.13/subprocess.py", line 556, in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/subprocess.py", line 1219, in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/subprocess.py", line 2099, in _communicate
+    self._save_input(input)
+    ~~~~~~~~~~~~~~~~^^^^^^^
+  File "/usr/local/lib/python3.13/subprocess.py", line 2179, in _save_input
+    self._input = self._input.encode(self.stdin.encoding,
+                  ^^^^^^^^^^^^^^^^^^
+AttributeError: 'bytes' object has no attribute 'encode'. Did you mean: 'decode'?
+root@38999d0ebd03:/app#

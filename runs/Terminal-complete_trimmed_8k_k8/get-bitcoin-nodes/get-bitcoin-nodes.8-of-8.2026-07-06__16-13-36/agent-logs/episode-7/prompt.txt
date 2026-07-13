@@ -1,0 +1,220 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@5e6a5449de73:/app# tail -200 /usr/local/lib/python3.13/site-packages/bitcoinlib/services/bitcoind.py
+                'input_n': -1,
+                'block_height': blockcount - tx['confirmations'] + 1,
+                'fee': None,
+                'size': 0,
+                'value': round(tx['amount'] * self.units),
+                'script': tx['scriptPubKey'],
+                'date': None,
+            })
+            if tx['txid'] == after_txid:
+                utxos = []
+
+        return utxos
+
+    def _parse_transaction(self, tx, block_height=None, get_input_values=True):
+        t = Transaction.parse_hex(tx['hex'], strict=self.strict, network=self.network)
+        t.confirmations = tx.get('confirmations')
+        t.block_hash = tx.get('blockhash')
+        t.status = 'unconfirmed'
+        for i in t.inputs:
+            if i.prev_txid == b'\x00' * 32:
+                i.script_type = 'coinbase'
+                continue
+            if get_input_values:
+                txi = self.proxy.getrawtransaction(i.prev_txid.hex(), 1)
+                i.value = round(float(txi['vout'][i.output_n_int]['value']) / self.network.denominator)
+        # This doesn't seem to save any time:
+        # if get_input_values:
+        #     batchreq = []
+        #     for i in t.inputs:
+        #         batchreq.append(['getrawtransaction', i.prev_txid.hex(), 1])
+        #     res = self.proxy.batch_(batchreq)
+        #     for n, txi in enumerate(res):
+        #         t.inputs[n].value = round(float(txi['vout'][t.inputs[n].output_n_int]['value']) / self.network.denominator)
+        for o in t.outputs:
+            o.spent = None
+
+        if not block_height and t.block_hash:
+            block_height = self.proxy.getblock(t.block_hash, 1)['height']
+        t.block_height = block_height
+        if not t.confirmations and block_height is not None:
+            if not self.latest_block:
+                self.latest_block = self.blockcount()
+            t.confirmations = (self.latest_block - block_height) + 1
+        if t.confirmations or block_height:
+            t.status = 'confirmed'
+            t.verified = True
+        t.version = tx['version'].to_bytes(4, 'big')
+        t.version_int = tx['version']
+        t.date = None if 'time' not in tx else datetime.fromtimestamp(tx['time'], timezone.utc)
+        t.update_totals()
+        return t
+
+    def gettransaction(self, txid):
+        tx_raw = self.proxy.getrawtransaction(txid, 1)
+        return self._parse_transaction(tx_raw)
+
+    def gettransactions(self, address, after_txid='', limit=MAX_TRANSACTIONS):
+        MAX_WALLET_TRANSACTIONS = 1000
+        txs = []
+        res = self.proxy.getaddressinfo(address)
+        if not (res['ismine'] or res['iswatchonly']):
+            raise ClientError("Address %s not found in bitcoind wallet, use 'importpubkey' or 'importaddress' to add "
+                              "address to wallet." % address)
+        txs_list = self.proxy.listtransactions("*", MAX_WALLET_TRANSACTIONS, 0, True)
+        if len(txs_list) >= MAX_WALLET_TRANSACTIONS:
+            raise ClientError("Bitcoind wallet contains too many transactions %d, use other service provider for this "
+                              "wallet" % MAX_WALLET_TRANSACTIONS)
+        txids = list(set([(tx['txid'], tx.get('blockheight')) for tx in txs_list if tx['address'] == address]))
+        for (txid, blockheight) in txids:
+            tx_raw = self.proxy.getrawtransaction(txid, 1)
+            t = self._parse_transaction(tx_raw, blockheight)
+            txs.append(t)
+            if txid == after_txid:
+                txs = []
+        return txs
+
+    def getrawtransaction(self, txid):
+        res = self.proxy.getrawtransaction(txid)
+        return res
+
+    def sendrawtransaction(self, rawtx):
+        res = self.proxy.sendrawtransaction(rawtx)
+        return {
+            'txid': res,
+            'response_dict': res
+        }
+
+    def estimatefee(self, blocks):
+        pres = ''
+        try:
+            pres = self.proxy.estimatesmartfee(blocks)
+            res = pres['feerate']
+        except KeyError as e:
+            _logger.info("bitcoind error: %s, %s" % (e, pres))
+            res = self.proxy.estimatefee(blocks)
+        return round(res * self.units)
+
+    def blockcount(self):
+        bcinfo = self.proxy.getblockchaininfo()
+        if bcinfo['headers'] - bcinfo['blocks'] > 2:
+            raise ClientError("Node not fully synced! Currently %d blocks synced and %d blocks known" %
+                              (bcinfo['blocks'], bcinfo['headers']))
+        return bcinfo['blocks']
+
+    def mempool(self, txid=''):
+        txids = self.proxy.getrawmempool()
+        if not txid:
+            return txids
+        elif txid in txids:
+            return [txid]
+        return []
+
+    def getblock(self, blockid, parse_transactions=True, page=1, limit=None):
+        if isinstance(blockid, int) or len(blockid) < 10:
+            blockid = self.proxy.getblockhash(int(blockid))
+        if n
+[... output limited to 10000 bytes; 69 interior bytes omitted ...]
+page * limit]:
+                tx['time'] = bd['time']
+                tx['blockhash'] = bd['hash']
+                txs.append(self._parse_transaction(tx, block_height=bd['height'], get_input_values=True))
+        else:
+            bd = self.proxy.getblock(blockid, 1)
+            txs = bd['tx']
+
+        block = {
+            'bits': int(bd['bits'], 16),
+            'depth': bd['confirmations'],
+            'block_hash': bd['hash'],
+            'height': bd['height'],
+            'merkle_root': bd['merkleroot'],
+            'nonce': bd['nonce'],
+            'prev_block': None if 'previousblockhash' not in bd else bd['previousblockhash'],
+            'time': bd['time'],
+            'tx_count': bd['nTx'],
+            'txs': txs,
+            'version': bd['version'],
+            'page': page,
+            'pages': None,
+            'limit': limit
+        }
+        return block
+
+    def getrawblock(self, blockid):
+        if isinstance(blockid, int):
+            blockid = self.proxy.getblockhash(blockid)
+        return self.proxy.getblock(blockid, 0)
+
+    def isspent(self, txid, index):
+        res = self.proxy.gettxout(txid, index)
+        return 0 if res else 1
+
+    def getinfo(self):
+        info = self.proxy.getmininginfo()
+        return {
+            'blockcount': info['blocks'],
+            'chain': info['chain'],
+            'difficulty': int(info['difficulty']),
+            'hashrate': int(info['networkhashps']),
+            'mempool_size': int(info['pooledtx']),
+        }
+
+
+if __name__ == '__main__':
+    #
+    # SOME EXAMPLES
+    #
+
+    from pprint import pprint
+
+    # Connect by specifying connection URL
+    base_url = 'http://bitcoinrpc:passwd@host:8332'
+    bdc = BitcoindClient(base_url=base_url)
+
+    print("\n=== SERVERINFO ===")
+    pprint(bdc.proxy.getnetworkinfo())
+
+    print("\n=== Best Block ===")
+    blockhash = bdc.proxy.getbestblockhash()
+    bestblock = bdc.proxy.getblock(blockhash)
+    bestblock['tx'] = '...' + str(len(bestblock['tx'])) + ' transactions...'
+    pprint(bestblock)
+
+    print("\n=== Mempool ===")
+    rmp = bdc.proxy.getrawmempool()
+    pprint(rmp[:25])
+    print('... truncated ...')
+    print("Mempool Size %d" % len(rmp))
+
+    print("\n=== Raw Transaction by txid ===")
+    t = bdc.getrawtransaction('7eb5332699644b753cd3f5afba9562e67612ea71ef119af1ac46559adb69ea0d')
+    pprint(t)
+
+    print("\n=== Current network fees ===")
+    t = bdc.estimatefee(5)
+    pprint(t)
+root@5e6a5449de73:/app# python3 -c "import bitcoinlib.services.baseclient; print(dir(bitcoinlib.services.baseclient))"
+['ALLOW_DATABASE_THREADS', 'Address', 'BCL_DATABASE_DIR', 'BCL_DATA_DIR', 'BCL_INSTALL_DIR', 'BCL_LOG_FILE', 'BECH32M_CONST', 'BIP38_CONFIRMATION_CODE_PREFIX',
+'BIP38_EC_MULTIPLIED_PRIVATE_KEY_PREFIX', 'BIP38_MAGIC_LOT_AND_SEQUENCE', 'BIP38_MAGIC_LOT_AND_SEQUENCE_COMPRESSED_FLAG', 'BIP38_MAGIC_LOT_AND_SEQUENCE_UNCOMPRE
+SSED_FLAG', 'BIP38_MAGIC_NO_LOT_AND_SEQUENCE', 'BIP38_MAGIC_NO_LOT_AND_SEQUENCE_COMPRESSED_FLAG', 'BIP38_MAGIC_NO_LOT_AND_SEQUENCE_UNCOMPRESSED_FLAG', 'BIP38_NO
+_EC_MULTIPLIED_PRIVATE_KEY_PREFIX', 'BITCOINLIB_VERSION', 'BLOCK_COUNT_CACHE_TIME', 'BUMPFEE_DEFAULT_MULTIPLIER', 'BaseClient', 'ClientError', 'DATABASE_ENCRYPT
+ION_ENABLED', 'DB_FIELD_ENCRYPTION_KEY', 'DB_FIELD_ENCRYPTION_PASSWORD', 'DEFAULT_DATABASE', 'DEFAULT_DATABASE_CACHE', 'DEFAULT_LANGUAGE', 'DEFAULT_NETWORK', 'D
+EFAULT_WITNESS_TYPE', 'ENABLE_BITCOINLIB_LOGGING', 'ENCODING_BECH32_PREFIXES', 'KEY_PATH_BITCOINCORE', 'KEY_PATH_LEGACY', 'KEY_PATH_P2SH', 'KEY_PATH_P2WPKH', 'K
+EY_PATH_P2WSH', 'LOGLEVEL', 'MAX_TRANSACTIONS', 'NETWORK_DENOMINATORS', 'Network', 'OP_N_CODES', 'Path', 'RotatingFileHandler', 'SCRIPT_TYPES', 'SEQUENCE_ENABLE
+_LOCKTIME', 'SEQUENCE_LOCKTIME_DISABLE_FLAG', 'SEQUENCE_LOCKTIME_GRANULARITY', 'SEQUENCE_LOCKTIME_MASK', 'SEQUENCE_LOCKTIME_TYPE_FLAG', 'SEQUENCE_REPLACE_BY_FEE
+', 'SERVICE_CACHING_ENABLED', 'SERVICE_MAX_ERRORS', 'SIGHASH_ALL', 'SIGHASH_ANYONECANPAY', 'SIGHASH_NONE', 'SIGHASH_SINGLE', 'SIGNATURE_VERSION_SEGWIT', 'SIGNAT
+URE_VERSION_STANDARD', 'SUPPORTED_ADDRESS_ENCODINGS', 'TIMEOUT_REQUESTS', 'TYPE_INT', 'TYPE_TEXT', 'WALLET_KEY_STRUCTURES', '__builtins__', '__cached__', '__doc
+__', '__file__', '__loader__', '__name__', '__package__', '__spec__', '_logger', 'configparser', 'datetime', 'deprecated', 'enum', 'formatter', 'functools', 'ge
+t_encoding_from_witness', 'get_key_structure_data', 'handler', 'initialize_lib', 'json', 'locale', 'logger', 'logging', 'op', 'opcodeints', 'opcodenames', 'os',
+ 'platform', 'read_config', 'requests', 'script_type_default', 'sys', 'timezone', 'urlencode', 'urllib3']
+root@5e6a5449de73:/app# python3 -c "import bitcoinlib.services.authproxy; print(dir(bitcoinlib.services.authproxy))"
+['AuthServiceProxy', 'EncodeDecimal', 'HTTP_TIMEOUT', 'JSONRPCException', 'USER_AGENT', '__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__na
+me__', '__package__', '__spec__', 'base64', 'decimal', 'httplib', 'json', 'log', 'logging', 'urlparse']
+root@5e6a5449de73:/app#

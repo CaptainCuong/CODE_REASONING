@@ -1,0 +1,40 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la\n'
+'head -5 daily_temp_sf_high.csv\n'
+'head -5 daily_temp_sf_low.csv\n'
+'wc -l daily_temp_sf_high.csv daily_temp_sf_low.csv\n'
+'cat daily_temp_sf_high.csv\n'
+'cat daily_temp_sf_low.csv\n'
+'python3 -c "import csv; from datetime import datetime; high = {}; with open(\'daily_temp_sf_high.csv\') as f: r = csv.DictReader(f); for row in r: high[row[\'date\']] = int(row[\'temperature\'])\n low = {}; with open(\'daily_temp_sf_low.csv\') as f: r = csv.DictReader(f); for row in r: dt = datetime.strptime(row[\'temperature\'], \'%m/%d/%Y %H:%M:%S\')\n low[dt.strftime(\'%Y-%m-%d\')] = int(row[\'temperature\'])\n diffs = [(high[d] - low[d]) for d in high]\n avg = sum(diffs)/len(diffs)\n print(avg)"\n'
+"cat > compute_avg.py << 'EOF'\nimport csv\nfrom datetime import datetime\n\ndef parse_date(temp_str):\n    # Try formats\n    formats = [\n        '%m/%d/%Y %H:%M:%S',\n        '%Y-%m-%d',\n        '%m-%d-%Y %H:%M:%S',\n    ]\n    for fmt in formats:\n        try:\n            return datetime.strptime(temp_str, fmt)\n        except ValueError:\n            continue\n    raise ValueError(f'Unknown date format: {temp_str}')\n\n# Read high file\nhigh = {}\nwith open('daily_temp_sf_high.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        high[row['date']] = int(row['temperature'])\n\n# Read low file\nlow = {}\nwith open('daily_temp_sf_low.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        dt = parse_date(row['temperature'])\n        low[dt.strftime('%Y-%m-%d')] = int(row['temperature'])\n\n# Compute differences\ndiffs = []\nfor date in high:\n    if date in low:\n        diffs.append(high[date] - low[date])\n    else:\n        print(f'Missing low for date {date}')\n        exit(1)\n\navg = sum(diffs) / len(diffs)\nprint(avg)\nEOF\n"
+'python3 compute_avg.py\n'
+'python3 compute_avg.py > avg_temp.txt\n'
+'cat avg_temp.txt\n'
+'cat -v daily_temp_sf_low.csv\n'
+'python3 -c "import csv; with open(\'daily_temp_sf_low.csv\') as f: r = csv.DictReader(f); for i, row in enumerate(r): print(i, row)"\n'
+'python3 -c "import csv; with open(\'daily_temp_sf_low.csv\') as f: r = csv.reader(f); headers = next(r); print(\'Headers:\', headers); for row in r: print(row)"\n'
+"cat > debug.py << 'EOF'\nimport csv\nwith open('daily_temp_sf_low.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    for i, row in enumerate(reader):\n        print(i, row)\n        print('  row[\\'temperature\\']:', row['temperature'], type(row['temperature']))\n        print('  row[\\'date\\']:', row['date'], type(row['date']))\nEOF\n"
+'python3 debug.py\n'
+"cat > clean_low.py << 'EOF'\nimport csv\nwith open('daily_temp_sf_low.csv', 'r') as f:\n    lines = f.readlines()\nprint('Original lines:', len(lines))\nfor i, line in enumerate(lines):\n    print(i, repr(line))\n# Clean carriage returns\nwith open('clean_low.csv', 'w') as f:\n    for line in lines:\n        line = line.replace('\\r', '')\n        f.write(line)\nprint('Cleaned lines:', len(open('clean_low.csv').readlines()))\nEOF\n"
+'python3 clean_low.py\n'
+'cat clean_low.csv\n'
+"cat > compute_avg2.py << 'EOF'\nimport csv\nfrom datetime import datetime\n\ndef parse_date(temp_str):\n    formats = [\n        '%m/%d/%Y %H:%M:%S',\n        '%Y-%m-%d',\n        '%m-%d-%Y %H:%M:%S',\n    ]\n    for fmt in formats:\n        try:\n            return datetime.strptime(temp_str, fmt)\n        except ValueError:\n            continue\n    raise ValueError(f'Unknown date format: {temp_str}')\n\n# Read high file\nhigh = {}\nwith open('daily_temp_sf_high.csv', 'r') as f:\n    reader = csv.reader(f, lineterminator='\\n')\n    headers = next(reader)\n    for row in reader:\n        if len(row) != 2:\n            continue\n        high[row[0]] = int(row[1])\n\n# Read low file\nlow = {}\nwith open('daily_temp_sf_low.csv', 'r') as f:\n    reader = csv.reader(f, lineterminator='\\n')\n    headers = next(reader)\n    for row in reader:\n        if len(row) != 2:\n            continue\n        dt = parse_date(row[1])\n        low[dt.strftime('%Y-%m-%d')] = int(row[0])\n\n# Compute differences\ndiffs = []\nfor date in high:\n    if date in low:\n        diffs.append(high[date] - low[date])\n    else:\n        print(f'Missing low for date {date}')\n        exit(1)\n\navg = sum(diffs) / len(diffs)\nprint(avg)\nEOF\n"
+'python3 compute_avg2.py\n'
+'python3 compute_avg2.py > avg_temp.txt\n'
+'cat avg_temp.txt\n'
+"cat > debug2.py << 'EOF'\nimport csv\nwith open('daily_temp_sf_low.csv', 'r') as f:\n    lines = f.readlines()\nprint('Total lines:', len(lines))\nfor i, line in enumerate(lines):\n    print(i, repr(line))\nwith open('daily_temp_sf_low.csv', 'r') as f:\n    reader = csv.reader(f, lineterminator='\\n')\n    for i, row in enumerate(reader):\n        print(f'Row {i}: {row}')\n        print(f'  len(row): {len(row)}')\n        if i == 0:\n            print(f'  Header: {row}')\n        if i == 1:\n            print(f'  Data row 1: {row}')\nEOF\n"
+'python3 debug2.py\n'
+"cat > compute_avg_fixed.py << 'EOF'\nimport csv\nfrom datetime import datetime\n\ndef parse_date(temp_str):\n    formats = [\n        '%m/%d/%Y %H:%M:%S',\n        '%Y-%m-%d',\n        '%m-%d-%Y %H:%M:%S',\n    ]\n    for fmt in formats:\n        try:\n            return datetime.strptime(temp_str, fmt)\n        except ValueError:\n            continue\n    raise ValueError(f'Unknown date format: {temp_str}')\n\n# Read high file\nhigh = {}\nwith open('daily_temp_sf_high.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        high[row['date']] = int(row['temperature'])\n\n# Read low file\nlow = {}\nwith open('daily_temp_sf_low.csv', 'r') as f:\n    reader = csv.DictReader(f)\n    for row in reader:\n        dt = parse_date(row['date'])\n        low[dt.strftime('%Y-%m-%d')] = int(row['temperature'])\n\n# Compute differences\ndiffs = []\nfor date in high:\n    if date in low:\n        diffs.append(high[date] - low[date])\n    else:\n        print(f'Missing low for date {date}')\n        exit(1)\n\navg = sum(diffs) / len(diffs)\nprint(avg)\nEOF\n"
+'python3 compute_avg_fixed.py\n'
+'python3 compute_avg_fixed.py > avg_temp.txt\n'
+'cat avg_temp.txt\n'
+'hexdump -C avg_temp.txt\n'
+'wc -l avg_temp.txt\n'
+"echo '' >> avg_temp.txt\n"
+'cat avg_temp.txt\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

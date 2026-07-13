@@ -1,0 +1,70 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@ad1135b1c941:/app/ssl# cd /app/ssl
+root@ad1135b1c941:/app/ssl# openssl x509 -in server.crt -subject 2>&1 | grep '^Subject:' | cut -d: -f2 | sed 's/^\s*//;s/\s*$//' > /tmp/subject3.txt
+root@ad1135b1c941:/app/ssl# cat /tmp/subject3.txt
+root@ad1135b1c941:/app/ssl# openssl x509 -in server.crt -validuntil 2>&1 | grep -E '^Valid From:' | tail -1 > /tmp/from.txt
+root@ad1135b1c941:/app/ssl# cat /tmp/from.txt
+root@ad1135b1c941:/app/ssl# openssl x509 -in server.crt -validuntil 2>&1 | grep -E '^Valid Until:' | tail -1 > /tmp/until.txt
+root@ad1135b1c941:/app/ssl# cat /tmp/until.txt
+root@ad1135b1c941:/app/ssl# cat > /app/ssl/verification.txt << EOF
+> Subject: $(cat /tmp/subject3.txt)
+> Validity Dates: Valid From: $(cat /tmp/from.txt) Valid Until: $(cat /tmp/until.txt)
+> SHA-256 Fingerprint: $(openssl x509 -in server.crt -fingerprint sha256 2>&1 | grep SHA256 | cut -d' ' -f2 | sed 's/\s*$//')
+> EOF
+root@ad1135b1c941:/app/ssl# cat /app/ssl/verification.txt
+Subject:
+Validity Dates: Valid From:  Valid Until:
+SHA-256 Fingerprint:
+root@ad1135b1c941:/app/ssl# cat > /app/check_cert.py << 'EOF'
+> import ssl
+> import subprocess
+> import sys
+> import os
+> from datetime import datetime
+>
+> def main():
+>     cert_path = '/app/ssl/server.pem'
+>     if not os.path.exists(cert_path):
+>         print('Certificate file does not exist')
+>         sys.exit(1)
+>
+>     try:
+>         with open(cert_path, 'rb') as f:
+>             cert_data = f.read()
+>         # Load certificate
+>         cert = ssl.Certificate.load(cert_data)
+>
+>         # Subject
+>         subject = cert.subject
+>         print(f'Subject: {subject}')
+>
+>         # Common Name
+>         common_name = subject.get('CN', 'Not found')
+>         print(f'Common Name: {common_name}')
+>
+>         # Expiration date
+>         # Using the internal module
+>         cert_int = ssl._ssl.Certificate._from_bytes(cert_data)
+>         exp_time = cert_int.exptime  # bytes in DDMMYYYYHHMMSS format
+>         dt = datetime.strptime(exp_time.decode('ascii'), '%d%m%Y%H%M%S')
+>         print(f'Expiration Date: {dt.date()}')
+>
+>         # Fingerprint
+>         subprocess.run(['openssl', 'x509', '-in', cert_path, '-fingerprint', 'sha256'], capture_output=True)
+>
+>         print('Certificate verification successful')
+>         sys.exit(0)
+>     except Exception as e:
+>         print(f'Error: {e}')
+>         sys.exit(1)
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@ad1135b1c941:/app/ssl# python3 /app/check_cert.py
+Error: module 'ssl' has no attribute 'Certificate'
+root@ad1135b1c941:/app/ssl#

@@ -1,0 +1,367 @@
+root@a7b34d504547:/app/langcodes# cat langcodes/__init__.py | head -200
+"""
+langcodes knows what languages are. It knows the standardized codes that
+refer to them, such as `en` for English, `es` for Spanish and `hi` for Hindi.
+Often, it knows what these languages are called *in* a language, and that
+language doesn't have to be English.
+
+See README.md for the main documentation, or read it on GitHub at
+https://github.com/LuminosoInsight/langcodes/ . For more specific documentation
+on the functions in langcodes, scroll down and read the docstrings.
+
+Some of these functions, particularly those that work with the names of
+languages, require the `language_data` module to be installed.
+"""
+from operator import itemgetter
+from typing import Any, List, Tuple, Dict, Sequence, Iterable, Optional, Mapping, Union
+import warnings
+import sys
+
+from langcodes.tag_parser import LanguageTagError, parse_tag, normalize_characters
+from langcodes.language_distance import tuple_distance_cached
+from langcodes.data_dicts import (
+    ALL_SCRIPTS,
+    DEFAULT_SCRIPTS,
+    LANGUAGE_REPLACEMENTS,
+    LANGUAGE_ALPHA3,
+    LANGUAGE_ALPHA3_BIBLIOGRAPHIC,
+    TERRITORY_REPLACEMENTS,
+    NORMALIZED_MACROLANGUAGES,
+    LIKELY_SUBTAGS,
+    VALIDITY,
+)
+
+# When we're getting natural language information *about* languages, it's in
+# English if you don't specify the language.
+DEFAULT_LANGUAGE = 'en'
+
+
+LANGUAGE_NAME_IMPORT_MESSAGE = """
+Looking up language names now requires the `language_data` package.
+
+Install it with:
+    pip install language_data
+Or as an optional feature of langcodes:
+    pip install langcodes[data]
+"""
+
+
+class Language:
+    """
+    The Language class defines the results of parsing a language tag.
+    Language objects have the following attributes, any of which may be
+    unspecified (in which case their value is None):
+
+    - *language*: the code for the language itself.
+    - *script*: the 4-letter code for the writing system being used.
+    - *territory*: the 2-letter or 3-digit code for the country or similar territory
+      of the world whose usage of the language appears in this text.
+    - *extlangs*: a list of more specific language codes that follow the language
+      code. (This is allowed by the language code syntax, but deprecated.)
+    - *variants*: codes for specific variations of language usage that aren't
+      covered by the *script* or *territory* codes.
+    - *extensions*: information that's attached to the language code for use in
+      some specific system, such as Unicode collation orders.
+    - *private*: a code starting with `x-` that has no defined meaning.
+
+    The `Language.get` method converts a string to a Language instance.
+    It's also available at the top level of this module as the `get` function.
+    """
+
+    ATTRIBUTES = [
+        'language',
+        'extlangs',
+        'script',
+        'territory',
+        'variants',
+        'extensions',
+        'private',
+    ]
+
+    # When looking up "likely subtags" data, we try looking up the data for
+    # increasingly less specific versions of the language code.
+    BROADER_KEYSETS = [
+        {'language', 'script', 'territory'},
+        {'language', 'territory'},
+        {'language', 'script'},
+        {'language'},
+        {'script'},
+        {},
+    ]
+
+    MATCHABLE_KEYSETS = [
+        {'language', 'script', 'territory'},
+        {'language', 'script'},
+        {'language'},
+    ]
+
+    # Values cached at the class level
+    _INSTANCES: Dict[tuple, 'Language'] = {}
+    _PARSE_CACHE: Dict[Tuple[str, bool], 'Language'] = {}
+
+    def __init__(
+        self,
+        language: Optional[str] = None,
+        extlangs: Optional[Sequence[str]] = None,
+        script: Optional[str] = None,
+        territory: Optional[str] = None,
+        variants: Optional[Sequence[str]] = None,
+        extensions: Optional[Sequence[str]] = None,
+        private: Optional[str] = None,
+    ):
+        """
+        The constructor for Language objects.
+
+        It's inefficient to call this directly, because it can't return
+        an existing instance. Instead, call Language.make(), which
+        has the same signature.
+        """
+        self.language = language
+        self.extlangs = extlangs
+        self.script = script
+        self.territory = territory
+        self.variants = variants
+        self.extensions = extensions
+        self.private = private
+
+        # Cached values
+        self._simplified: 'Language' = None
+        self._searchable: 'Language' = None
+        self._broader: List[str] = None
+        self._assumed: 'Language' = None
+        self._filled: 'Language' = None
+        self._macrolanguage: Optional['Language'] = None
+        self._str_tag: str = None
+        self._dict: dict = None
+        self._disp_separator: str = None
+        self._disp_pattern: str = None
+
+        # Make sure the str_tag value is cached
+        self.to_tag()
+
+    @classmethod
+    def make(
+        cls,
+        language: Optional[str] = None,
+        extlangs: Optional[Sequence[str]] = None,
+        script: Optional[str] = None,
+        territory: Optional[str] = None,
+        variants: Optional[Sequence[str]] = None,
+        extensions: Optional[Sequence[str]] = None,
+        private: Optional[str] = None,
+    ) -> 'Language':
+        """
+        Create a Language object by giving any subset of its attributes.
+
+        If this value has been created before, return the existing value.
+        """
+        values = (
+            language,
+            tuple(extlangs or ()),
+            script,
+            territory,
+            tuple(variants or ()),
+            tuple(extensions or ()),
+            private,
+        )
+        if values in cls._INSTANCES:
+            return cls._INSTANCES[values]
+
+        instance = cls(
+            language=language,
+            extlangs=extlangs,
+            script=script,
+            territory=territory,
+            variants=variants,
+            extensions=extensions,
+            private=private,
+        )
+        cls._INSTANCES[values] = instance
+        return instance
+
+    @staticmethod
+    def get(tag: Union[str, 'Language'], normalize=True) -> 'Language':
+        """
+        Create a Language object from a language tag string.
+
+        If normalize=True, non-standard or overlong tags will be replaced as
+        they're interpreted. This is recommended.
+
+        Here are several examples of language codes, which are also test cases.
+        Most language codes are straightforward, but these examples will get
+        pretty obscure toward the end.
+
+        >>> Language.get('en-US')
+        Language.make(language='en', territory='US')
+
+        >>> Language.get('zh-Hant')
+        Language.make(language='zh', script='Hant')
+
+        >>> Language.get('und')
+        Language.make()
+root@a7b34d504547:/app/langcodes# grep -n 'def __hash__' langcodes/__init__.py
+1503:    def __hash__(self) -> int:
+root@a7b34d504547:/app/langcodes# grep -A 2 -B 2 'def __hash__' langcodes/__init__.py
+        return self._str_tag == other._str_tag
+
+    def __hash__(self) -> int:
+        return hash(id(self))
+
+root@a7b34d504547:/app/langcodes# sed -i 's/return hash(id(self))/        return hash(self._str_tag)/' langcodes/__init__.py
+root@a7b34d504547:/app/langcodes# grep -A 2 -B 2 'def __hash__' langcodes/__init__.py
+        return self._str_tag == other._str_tag
+
+    def __hash__(self) -> int:
+                return hash(self._str_tag)
+
+root@a7b34d504547:/app/langcodes# cat > test_hash.py << 'EOF'
+> import pickle
+> from langcodes import Language
+>
+> # Test 1: hash consistency within same process
+> lang1 = Language.get('en')
+> lang2 = Language.get('en')
+> print('hash1:', hash(lang1))
+> print('hash2:', hash(lang2))
+> print('equal?', lang1 == lang2)
+> print('hash equal?', hash(lang1) == hash(lang2))
+>
+> # Test 2: pickle scenario
+> with open('test pickle', 'wb') as f:
+>     pickle.dump(lang1, f)
+> with open('test pickle', 'rb') as f:
+>     lang3 = pickle.load(f)
+> print('id after pickle:', id(lang3))
+> print('id equal?', id(lang3) == id(lang1))
+> print('hash equal?', hash(lang3) == hash(lang1))
+> print('lang3 == lang1?', lang3 == lang1)
+>
+> # Additional test: multiple languages
+> lang_en = Language.get('en')
+> lang_es = Language.get('es')
+> print('en hash:', hash(lang_en))
+> print('es hash:', hash(lang_es))
+> print('en hash == es hash?', hash(lang_en) == hash(lang_es))
+>
+> # Check that _str_tag exists
+> print('lang_en._str_tag:', lang_en._str_tag)
+> print('lang3._str_tag:', lang3._str_tag)
+> EOF
+root@a7b34d504547:/app/langcodes# python3 test_hash.py
+hash1: -7215991001365404510
+hash2: -7215991001365404510
+equal? True
+hash equal? True
+id after pickle: 132208557858144
+id equal? False
+hash equal? True
+lang3 == lang1? True
+en hash: -7215991001365404510
+es hash: -7143097873473282966
+en hash == es hash? False
+lang_en._str_tag: en
+lang3._str_tag: en
+root@a7b34d504547:/app/langcodes# sed -i 's/                return hash(self._str_tag)/        return hash(self._str_tag)/' langcodes/__init__.py
+root@a7b34d504547:/app/langcodes# grep -n 'def __hash__' langcodes/__init__.py -A 2
+1503:    def __hash__(self) -> int:
+1504-        return hash(self._str_tag)
+1505-
+root@a7b34d504547:/app/langcodes# python3 -c "
+> from langcodes import Language
+> lang = Language.get('en')
+> print(repr(lang))
+> print(lang._str_tag)
+> print(hash(lang))
+> "
+Language.make(language='en')
+en
+7730882467731307331
+root@a7b34d504547:/app/langcodes# python3 -c "
+> from langcodes import Language
+> # Test hash equality for different languages
+> lang1 = Language.get('en')
+> lang2 = Language.get('es')
+> print('en hash:', hash(lang1))
+> print('es hash:', hash(lang2))
+> print('equal?', hash(lang1) == hash(lang2))
+> # Test hash equality for same language but different tags
+> lang3 = Language.get('en-US')
+> lang4 = Language.get('en-US')
+> print('en-US hash:', hash(lang3))
+> print('same hash?', hash(lang3) == hash(lang4))
+> "
+en hash: 5652026657717847098
+es hash: -9111929641978097487
+equal? False
+en-US hash: 3064777023170425672
+same hash? True
+root@a7b34d504547:/app/langcodes# python3 -c "
+> import pickle
+> from langcodes import Language
+> lang1 = Language.get('en')
+> lang2 = Language.get('en')
+> print('Same object:', lang1 is lang2)
+> with open('test.pkl', 'wb') as f:
+>     pickle.dump(lang1, f)
+> with open('test.pkl', 'rb') as f:
+>     lang3 = pickle.load(f)
+> print('Pickle hash equal:', hash(lang3) == hash(lang1))
+> print('Pickle id equal:', id(lang3) == id(lang1))
+> "
+Same object: True
+Pickle hash equal: True
+Pickle id equal: False
+root@a7b34d504547:/app/langcodes# diff -u <(cp langcodes/__init__.py langcodes/__init__.py.backup) langcodes/__init__.py | head -30
+--- /dev/fd/63  2026-07-11 18:00:22.207071875 +0000
++++ langcodes/__init__.py       2026-07-11 18:00:17.093062791 +0000
+@@ -0,0 +1,1931 @@
++"""
++langcodes knows what languages are. It knows the standardized codes that
++refer to them, such as `en` for English, `es` for Spanish and `hi` for Hindi.
++Often, it knows what these languages are called *in* a language, and that
++language doesn't have to be English.
++
++See README.md for the main documentation, or read it on GitHub at
++https://github.com/LuminosoInsight/langcodes/ . For more specific documentation
++on the functions in langcodes, scroll down and read the docstrings.
++
++Some of these functions, particularly those that work with the names of
++languages, require the `language_data` module to be installed.
++"""
++from operator import itemgetter
++from typing import Any, List, Tuple, Dict, Sequence, Iterable, Optional, Mapping, Union
++import warnings
++import sys
++
++from langcodes.tag_parser import LanguageTagError, parse_tag, normalize_characters
++from langcodes.language_distance import tuple_distance_cached
++from langcodes.data_dicts import (
++    ALL_SCRIPTS,
++    DEFAULT_SCRIPTS,
++    LANGUAGE_REPLACEMENTS,
++    LANGUAGE_ALPHA3,
++    LANGUAGE_ALPHA3_BIBLIOGRAPHIC,
++    TERRITORY_REPLACEMENTS,
+root@a7b34d504547:/app/langcodes# python3 -c "
+> import random
+> from langcodes import Language
+> random.seed(42)
+> for _ in range(100):
+>     tag = 'en-US' if random.random() < 0.5 else 'fr-FR'
+>     lang1 = Language.get(tag)
+>     lang2 = Language.get(tag)
+>     if hash(lang1) != hash(lang2):
+>         print('FAIL:', tag, hash(lang1), hash(lang2))
+> print('All same tags hash equal.')
+> "
+All same tags hash equal.
+root@a7b34d504547:/app/langcodes# python3 -c "
+> from langcodes import Language
+> lang = Language.get('en-US')
+> print('Hash type:', type(lang.__hash__()))
+> print('Hash value:', lang.__hash__())
+> "
+Hash type: <class 'int'>
+Hash value: 7860418318353072379
+root@a7b34d504547:/app/langcodes# rm -f test_hash.py test pickle
+root@a7b34d504547:/app/langcodes#

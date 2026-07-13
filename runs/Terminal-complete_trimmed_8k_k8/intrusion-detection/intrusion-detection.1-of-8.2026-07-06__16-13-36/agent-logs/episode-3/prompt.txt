@@ -1,0 +1,287 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@3b998ee63049:/app# which jq
+/usr/bin/jq
+root@3b998ee63049:/app# mkdir -p /app/scripts
+root@3b998ee63049:/app# cd /app/scripts
+root@3b998ee63049:/app/scripts# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> REPORT_DIR="/app/reports"
+> ALERT_FILE="$REPORT_DIR/alert.json"
+> REPORT_FILE="$REPORT_DIR/report.json"
+>
+> # Ensure reports directory exists
+> mkdir -p "$REPORT_DIR"
+>
+> # Read rules into associative arrays
+> RULES_ID=()
+> RULES_PATTERN=()
+> RULES_SEVERITY=()
+> RULES_THRESHOLD=()
+> RULES_TIMEFRAME=()
+>
+> # Parse JSON
+> if command -v jq >/dev/null 2>&1; then
+>     jq -r '.rules[] | "\(.id) \(.pattern) \(.severity) \(.threshold) \(.timeframe)"' "$RULES_FILE" > /tmp/rules.tmp
+> else
+>     # Fallback: use grep and sed to parse
+>     echo "jq not found, using fallback parsing"
+>     # We'll implement a simple parser later
+>     echo "Error: jq required for JSON parsing"
+>     exit 1
+> fi
+>
+> while read -r line; do
+>     if [[ -z "$line" ]]; then
+>         continue
+>     fi
+>     # Split by space
+>     IFS=' ' read -r id pattern severity threshold timeframe <<< "$line"
+>     RULES_ID+=("$id")
+>     RULES_PATTERN+=("$pattern")
+>     RULES_SEVERITY+=("$severity")
+>     RULES_THRESHOLD+=("$threshold")
+>     RULES_TIMEFRAME+=("$timeframe")
+> done < /tmp/rules.tmp
+>
+> # Parse logs
+> # We'll store matches per rule and IPs per rule
+> # Use associative arrays
+> declare -A matches
+> declare -A ips
+>
+> # Timestamps for logs (we'll just use current time for alerts, but we could parse timestamps)
+> # For simplicity, we'll use current timestamp for both.
+> TIMESTAMP=$(date -Iseconds)
+>
+> # Process auth.log
+> while IFS= read -r line; do
+>     for i in "${!RULES_ID[@]}"; do
+>         if [[ -n "${RULES_PATTERN[$i]}" ]]; then
+>             if [[ $line =~ ${RULES_PATTERN[$i]} ]]; then
+>                 matches["${RULES_ID[$i]}"]=$(( ${matches["${RULES_ID[$i]}"-0]} || 0 + 1 ))
+>                 # Extract IP from line
+>                 if [[ -f /usr/bin/awk ]]; then
+>                     ip=$(echo "$line" | awk -F' ' '{print $4}' 2>/dev/null || echo "unknown")
+>                 else
+>                     ip="unknown"
+>                 fi
+>                 ips["${RULES_ID[$i]}"]="$ips["${RULES_ID[$i]}"-0]${ips["${RULES_ID[$i]}"-0]", }$ip"
+>             fi
+>         fi
+>     done
+> done < <(cat "$LOG_DIR/auth.log")
+>
+> # Process http.log
+> while IFS= read -r line; do
+>     for i in "${!RULES_ID[@]}"; do
+>         if [[ -n "${RULES_PATTERN[$i]}" ]]; then
+>             if [[ $line =~ ${RULES_PATTERN[$i]} ]]; then
+>                 matches["${RULES_ID[$i]}"]=$(( ${matches["${RULES_ID[$i]}"-0]} || 0 + 1 ))
+>                 # Extract IP from line
+>                 if [[ -f /usr/bin/awk ]]; then
+>                     ip=$(echo "$line" | awk -F' ' '{print $1}' 2>/dev/null || echo "unknown")
+>                 else
+>                     ip="unknown"
+>                 fi
+>                 ips["${RULES_ID[$i]}"]="$ips["${RULES_ID[$i]}"-0]${ips["${RULES_ID[$i]}"-0]", }$ip"
+>             fi
+>         fi
+>     done
+> done < <(cat "$LOG_DIR/http.log")
+>
+> # Build alerts and events arrays
+> alerts=()
+> events=()
+> statistics=()
+>
+> for i in "${!RULES_ID[@]}"; do
+>     rule_id="${RULES_ID[$i]}"
+>     severity="${RULES_SEVERITY[$i]}"
+>     match_count="${matches[$rule_id]-0}"
+>     # Get IPs as comma-separated unique list
+>     ip_list="${ips[$rule_id]//, /,}"
+>     # Trim trailing comma if any
+>     ip_list="${ip_list%,*}"
+>     # Remove duplicate IPs (comma-separated)
+>     ip_list="$(echo $ip_list | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')"
+>
+>     # Build alert object
+>     alert_obj="${rule_id} ${severity} ${match_count} ${ip_list}"
+>     alerts+=("$alert_obj")
+>
+>     # Build event object
+>     event_obj="${rule_id} ${severity} ${match_count} ${ip_list}"
+>     events+=("$event_obj")
+>
+>     # Build statistics object
+>     statistics["${rule_id}"]=$match_count
+>
+> done
+>
+> # Generate alert.json
+> if command -v jq >/dev/null 2>&1; then
+>     jq -n --arg timestamp "$TIMESTAMP" --argjson alerts "$(jq -R . <<< "${alerts[*]}" | jq -s '.')" \
+>         '{timestamp: $timestamp, alerts: $alerts}' > "$ALERT_FILE"
+> else
+>     # Manual JSON construction
+>     > "$ALERT_FILE"
+>     echo '{' >> "$ALERT_FILE"
+>     echo '  "timestamp": "'"$TIMESTAMP"'",' >> "$ALERT_FILE"
+>     echo '  "alerts": [' >> "$ALERT_FILE"
+>     for (( idx=0; idx<${#alerts[@]}; idx++ )); do
+>         if [[ $idx -eq 0 ]]; then
+>             echo '    {' >> "$ALERT_FILE"
+>             echo '      "id": "'"${alerts[$idx]%% *}"'",' >> "$ALERT_FILE"
+>             echo '      "severity": "'"${alerts[$idx]%% * *}"'",' >> "$ALERT_FILE"
+>             echo '      "matches": '${alerts[$idx]##* }',' >> "$ALERT_FILE"
+>             echo '      "ips": "'"${alerts[$idx]##* }"'" >> "$ALERT_FILE"
+>             echo '    }' >> "$ALERT_FILE"
+>         else
+>             echo '    
+[... output limited to 10000 bytes; 70 interior bytes omitted ...]
+'"$TIMESTAMP"'",' >> "$REPORT_FILE"
+>     echo '  "events": [' >> "$REPORT_FILE"
+>     for (( idx=0; idx<${#events[@]}; idx++ )); do
+>         if [[ $idx -eq 0 ]]; then
+>             echo '    {' >> "$REPORT_FILE"
+>             echo '      "id": "'"${events[$idx]%% *}"'",' >> "$REPORT_FILE"
+>             echo '      "severity": "'"${events[$idx]%% * *}"'",' >> "$REPORT_FILE"
+>             echo '      "matches": '${events[$idx]##* }',' >> "$REPORT_FILE"
+>             echo '      "ips": "'"${events[$idx]##* }"'" >> "$REPORT_FILE"
+>             echo '    }' >> "$REPORT_FILE"
+>         else
+>             echo '    {' >> "$REPORT_FILE"
+>             echo '      "id": "'"${events[$idx]%% *}"'",' >> "$REPORT_FILE"
+>             echo '      "severity": "'"${events[$idx]%% * *}"'",' >> "$REPORT_FILE"
+>             echo '      "matches": '${events[$idx]##* }',' >> "$REPORT_FILE"
+>             echo '      "ips": "'"${events[$idx]##* }"'" >> "$REPORT_FILE"
+>             echo '    }' >> "$REPORT_FILE"
+>         fi
+>         if [[ $idx -lt $((${#events[@]}-1)) ]]; then
+>             echo '  ],' >> "$REPORT_FILE"
+>         else
+>             echo '  ]' >> "$REPORT_FILE"
+>         fi
+>     done
+>     echo '  },' >> "$REPORT_FILE"
+>     echo '  "statistics": {' >> "$REPORT_FILE"
+>     first=1
+>     for key in "${!statistics[@]}"; do
+>         if [[ $first -eq 0 ]]; then
+>             echo '    ' >> "$REPORT_FILE"
+>         else
+>             echo '    ' >> "$REPORT_FILE"
+>         fi
+>         echo "    \"$key\": ${statistics[$key]}" >> "$REPORT_FILE"
+>         first=0
+>         if [[ $key == "${!statistics[@]}" ]]; then
+>             echo '  }' >> "$REPORT_FILE"
+>         else
+>             echo ',' >> "$REPORT_FILE"
+>         fi
+>     done
+>     echo '}' >> "$REPORT_FILE"
+> fi
+>
+> echo "Detection complete. Alerts saved to $ALERT_FILE, report to $REPORT_FILE"
+> EOF
+root@3b998ee63049:/app/scripts# chmod +x intrusion_detector.sh
+root@3b998ee63049:/app/scripts# cat > response.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> REPORT_DIR="/app/reports"
+>
+> if [[ $# -neq 1 ]]; then
+>     echo "Usage: $0 <IP_ADDRESS>"
+>     exit 1
+> fi
+>
+> IP="$1"
+> TIMESTAMP=$(date -Iseconds)
+> REPORT_FILE="$REPORT_DIR/incident_$IP_$TIMESTAMP.txt"
+>
+> # Extract lines from logs containing the IP
+> # Use grep -E with pattern: IP at start of line (or within line).
+> # We'll use awk to print lines where $1 matches IP for auth.log and $1 for http.log.
+> # But simpler: use grep with fixed pattern.
+> # For auth.log, IP appears as third field.
+> # For http.log, IP appears as first field.
+>
+> # Collect lines
+> auth_lines=()
+> while IFS= read -r line; do
+>     auth_lines+=("$line")
+> done < <(grep -E "^$IP" "$LOG_DIR/auth.log")
+>
+> http_lines=()
+> while IFS= read -r line; do
+>     http_lines+=("$line")
+> done < <(grep -E "^$IP" "$LOG_DIR/http.log")
+>
+> # Count total matches for each rule? We'll just summarize.
+> # For simplicity, we'll list all lines and then count suspicious activities.
+> # We'll also check for rule patterns.
+> # Let's load rules from detection_rules.json
+> if command -v jq >/dev/null 2>&1; then
+>     jq -r '.rules[] | "\(.id) \(.pattern)"' /app/rules/detection_rules.json > /tmp/rules2.tmp
+> else
+>     # fallback: just print error
+>     echo "jq required for rule detection"
+>     # We'll still produce a report with extracted lines
+> fi
+>
+> > "$REPORT_FILE"
+> echo "Incident Report for IP $IP" >> "$REPORT_FILE"
+> echo "Generated at $TIMESTAMP" >> "$REPORT_FILE"
+> echo "=" >> "$REPORT_FILE"
+>
+> echo "=== Auth.log lines ===" >> "$REPORT_FILE"
+> for line in "${auth_lines[@]}"; do
+>     echo "$line" >> "$REPORT_FILE"
+> done
+>
+> echo "" >> "$REPORT_FILE"
+> echo "=== Http.log lines ===" >> "$REPORT_FILE"
+> for line in "${http_lines[@]}"; do
+>     echo "$line" >> "$REPORT_FILE"
+> done
+>
+> echo "" >> "$REPORT_FILE"
+> echo "=== Suspicious Activity Summary ===" >> "$REPORT_FILE"
+> # Count matches for each rule
+> # We'll use grep -c with pattern.
+> if command -v jq >/dev/null 2>&1; then
+>     while IFS= read -r rule_pattern; do
+>         # rule_pattern format: id pattern
+>         rule_id=${rule_pattern%% *}
+>         pattern=${rule_pattern#* }
+>         # Count matches in auth.log
+>         auth_count=$(grep -E "$pattern" "$LOG_DIR/auth.log" | wc -l)
+>         # Count matches in http.log
+>         http_count=$(grep -E "$pattern" "$LOG_DIR/http.log" | wc -l)
+>         total=$((auth_count + http_count))
+>         if [[ $total -gt 0 ]]; then
+>             echo "Rule $rule_id: $total matches" >> "$REPORT_FILE"
+>         fi
+>     done < /tmp/rules2.tmp
+> else
+>     echo "Rule detection not available due to missing jq" >> "$REPORT_FILE"
+> fi
+>
+> echo "Report saved to $REPORT_FILE"
+> EOF
+root@3b998ee63049:/app/scripts# chmod +x response.sh
+root@3b998ee63049:/app/scripts# cd /app
+root@3b998ee63049:/app# ./scripts/intrusion_detector.sh
+./scripts/intrusion_detector.sh: line 207: unexpected EOF while looking for matching `"'
+root@3b998ee63049:/app#

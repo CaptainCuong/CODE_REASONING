@@ -1,0 +1,224 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected after JSON object
+
+New Terminal Output:
+
+root@21ad6cbe7fbf:/app# rm intrusion_detector.sh
+root@21ad6cbe7fbf:/app# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR=/app/logs
+> RULES=/app/rules/detection_rules.json
+> OUTPUT_ALERT=/app/reports/alert.json
+> OUTPUT_REPORT=/app/reports/report.json
+>
+> # Parse rules
+> rules_id=()
+> rule_pattern=()
+> rule_threshold=()
+> rule_severity=()
+>
+> while IFS= read -r line; do
+>     line=$(echo "$line" | jq -c '.')
+>     if [ -z "$line" ]; then continue
+>     fi
+>     rule_id=$(echo "$line" | jq -r '.id')
+>     pattern=$(echo "$line" | jq -r '.pattern')
+>     threshold=$(echo "$line" | jq -r '.threshold')
+>     severity=$(echo "$line" | jq -r '.severity')
+>     rules_id+=($rule_id)
+>     rule_pattern+=($pattern)
+>     rule_threshold+=($threshold)
+>     rule_severity+=($severity)
+>
+> done < "$RULES" | jq -r '.rules[]'
+>
+> # Process logs
+> # Use jq to count matches per rule and extract IPs
+> # We'll process each log file separately and combine results.
+> # We'll use jq to parse the log lines and produce an array of matches.
+> # We'll write a temporary jq script to compute matches and IPs.
+> jq_script="""
+> # This jq script will read the logs and produce a JSON object with rule_id, matches, and ips.
+> # We'll combine results.
+> def rule_matches:
+>   .rule_id as $rule_id
+>   | .matches as $matches
+>   | .ips as $ips
+>   | { rule_id: $rule_id, matches: $matches, ips: $ips }
+>
+> # Process auth.log
+> auth_matches = (
+>   . as $auth
+>   | reduce $auth[] as $line ({};
+>     .rule_id = .rule_id
+>     | .matches = .matches
+>     | .ips = .ips
+>     | .rule_id = .rule_id
+>     | .matches = .matches
+>     | .ips = .ips
+>   )
+>   | .rule_id = .rule_id
+>   | .matches = .matches
+>   | .ips = .ips
+> ) as $auth
+>
+> # Process http.log
+> http_matches = (
+>   . as $http
+>   | reduce $http[] as $line ({};
+>     .rule_id = .rule_id
+>     | .matches = .matches
+>     | .ips = .ips
+>     | .rule_id = .rule_id
+>     | .matches = .matches
+>     | .ips = .ips
+>   )
+>   | .rule_id = .rule_id
+>   | .matches = .matches
+>   | .ips = .ips
+> ) as $http
+>
+> # Combine
+> combine($auth, $http)
+> """
+> # Actually, we can compute per rule matches directly with jq.
+> # Let's compute for each rule the total matches and unique IPs across both logs.
+> jq_script="""
+> # Compute matches per rule across both logs
+> reduce inputs as $line ({};
+>   # For each line, try to match each rule
+>   .rule_id as $rule_id
+>   | .matches as $matches
+>   | .ips as $ips
+>   | .rule_id = $rule_id
+>   | .matches = $matches
+>   | .ips = $ips
+> ) as $rule_data
+>
+> # Then combine all rule_data
+> reduce $rule_data[] as $data ({};
+>   .rule_id = $data.rule_id
+>   | .matches = .matches + $data.matches
+>   | .ips = .ips + ($data.ips // [])
+> ) as $combined
+>
+> # Sort IPs and remove empty strings
+> $combined | .ips = (.ips | unique | sort) | .matches = .matches
+> """
+>
+> # We'll run jq on the logs, but logs contain multiple lines. We'll treat each line as a JSON object.
+> # Actually, each line is a JSON object. So we can process with jq on the whole file.
+> # Let's compute matches and IPs for each rule.
+> jq_result=$(jq -f <(echo "$jq_script") logs/auth.log logs/http.log 2>&1)
+> if [ $? -ne 0 ]; then
+>     echo "Error processing logs with jq"
+>     exit 1
+> fi
+>
+> # Now we have jq_result containing rule_id, matches, and ips.
+> # We'll store them in arrays.
+> jq -r '.rule_id' jq_result > /tmp/rule_ids.txt
+> jq -r '.matches' jq_result > /tmp/matches.txt
+> jq -r '.ips' jq_result > /tmp/ips.txt
+>
+> # But we also need to store the IPs per rule for deduplication across both logs.
+> # Actually, the jq script already combines both logs, so the IPs are already unique.
+> # We'll read the IPs and matches into arrays.
+>
+> # Let's just use jq to produce the final alert and report directly.
+> # We'll write a new jq script that outputs the required JSON structure.
+> jq_final_script="""
+> def rule_matches:
+>   .rule_id as $rule_id
+>   | .matches as $matches
+>   | .ips as $ips
+>   | { rule_id: $rule_id, matches: $matches, ips: $ips }
+>
+> # Process logs
+> auth_matches = (
+>   . as $auth
+>   | reduce $auth[] as $line ({};
+>     .rule_id = .rule_id
+>     | .matches = .matches
+>     | .ips = .ips
+>   )
+>   | .rule_id = .rule_id
+>   | .matches = .matches
+>   | .ips = .ips
+> ) as $auth
+>
+> http_matches = (
+>   . as $http
+>   | reduce $http[] as $line ({};
+>     .rule_id = .rule_id
+>     | .matches = .matches
+>     | .ips = .ips
+>   )
+>   | .rule_id = .rule_id
+>   | .matches = .matches
+>   | .ips = .ips
+> ) as $http
+>
+> combine($auth, $http)
+> """
+>
+> jq_final_result=$(jq -f <(echo "$jq_final_script") logs/auth.log logs/http.log 2>&1)
+> if [ $? -ne 0 ]; then
+>     echo "Error processing logs with jq"
+>     exit 1
+> fi
+>
+> # Now we have jq_final_result containing rule_id, matches, and ips.
+> # We'll store them in arrays.
+> jq -r '.rule_id' jq_final_result > /tmp/rule_ids.txt
+> jq -r '.matches' jq_final_result > /tmp/matches.txt
+> jq -r '.ips' jq_final_result > /tmp/ips.txt
+>
+> # Now compute statistics and generate final JSON.
+> now=$(date -u +'%Y-%m-%dT%H:%M:%S.%f')
+>
+> # Build alerts array
+> alerts=()
+> events=()
+> for i in {0..$(($(wc -l < /tmp/rule_ids.txt) - 1))}; do
+>     rule_id=$(sed -n "$(($i+1))p" /tmp/rule_ids.txt)
+>     matches=$(sed -n "$(($i+1))p" /tmp/matches.txt)
+>     ips=$(sed -n "$(($i+1))p" /tmp/ips.txt)
+>     if [ $matches -ge ${rule_threshold[$rule_id]} ]; then
+>         alerts+=("
+>         {
+>             "id": "$rule_id",
+>             "severity": "${rule_severity[$rule_id]}",
+>             "matches": $matches,
+>             "ips": "$ips"
+>         }
+>         ")
+>     fi
+>     events+=("
+>     {
+>         "id": "$rule_id",
+>         "severity": "${rule_severity[$rule_id]}",
+>         "matches": $matches,
+>         "ips": "$ips"
+>     }
+>     ")
+>
+> echo '{
+>   "timestamp": "$now",
+>   "alerts": [
+>     '$ alerts[@]'
+>   ]
+> }' > "$OUTPUT_ALERT"
+> echo '{
+>   "timestamp": "$now",
+>   "events": [
+>     '$ events[@]'
+>   ],
+>   "statistics": {
+>     "rule_id": $rule_matches[$i]
+>   }
+> }' > "$OUTPUT_REPORT"
+> EOF
+root@21ad6cbe7fbf:/app#

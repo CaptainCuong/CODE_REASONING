@@ -1,0 +1,110 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@ea5da4377473:/app# cd /app
+root@ea5da4377473:/app# cat > extract_and_save.py << 'EOF'
+> import sys
+> import os
+> import tempfile
+> import subprocess
+> from transformers import AlbertModel, AlbertTokenizer
+>
+> # Find the tar.gz file
+> tar_path = None
+> for root, dirs, files in os.walk('/app/cache'):
+>     for f in files:
+>         if f.endswith('.tar.gz'):
+>             tar_path = os.path.join(root, f)
+>             break
+>     if tar_path:
+>         break
+>
+> if tar_path is None:
+>     print('No tar.gz found')
+>     sys.exit(1)
+>
+> print('Tar.gz path:', tar_path)
+>
+> # Extract the tar.gz to a temporary location
+> with tempfile.TemporaryDirectory() as tmpdir:
+>     subprocess.run(['tar', '-xzf', tar_path, '-C', tmpdir], check=True)
+>     print('Extracted to', tmpdir)
+>     # Now locate the extracted model files
+>     # The tar.gz contains directories like 'models', 'config.json', 'tokenizers'
+>     # Let's find the pytorch_model.bin
+>     for root, dirs, files in os.walk(tmpdir):
+>         for f in files:
+>             if f.endswith('.bin'):
+>                 model_path = os.path.join(root, f)
+>                 print('Found model:', model_path)
+>                 break
+>         else:
+>             continue
+>         break
+>     if not model_path:
+>         for root, dirs, files in os.walk(tmpdir):
+>             for f in files:
+>                 if f.endswith('.pt'):
+>                     model_path = os.path.join(root, f)
+>                     print('Found model:', model_path)
+>                     break
+>             else:
+>                 continue
+>             break
+>
+> if not model_path:
+>     print('Could not find model files')
+>     sys.exit(1)
+>
+> # Load model and tokenizer from the extracted directory
+> # The model is saved in the tar_path as a tarball, but we can also load from the extracted directory.
+> # Let's load from the extracted directory to be safe.
+> # We need to find the tokenizer as well.
+> # The tokenizer is in the tar.gz in a directory named 'tokenizers'.
+> # Let's find the tokenizer file.
+> for root, dirs, files in os.walk(tmpdir):
+>     for f in files:
+>         if f.endswith('.txt'):
+>             tokenizer_path = os.path.join(root, f)
+>             print('Found tokenizer:', tokenizer_path)
+>             break
+>     else:
+>         continue
+>     break
+>
+> if not tokenizer_path:
+>     print('Could not find tokenizer file')
+>     sys.exit(1)
+>
+> # Now load the model and tokenizer
+> model = AlbertModel.from_pretrained(model_path)
+> tokenizer = AlbertTokenizer.from_pretrained(tokenizer_path)
+>
+> # Save to /app/cache
+> model.save_pretrained('/app/cache')
+> tokenizer.save_pretrained('/app/cache')
+> print('Saved to /app/cache')
+>
+> # Verify
+> import glob
+> for f in glob.glob('/app/cache/*.bin'):
+>     print('Saved model:', f)
+> for f in glob.glob('/app/cache/*.txt'):
+>     print('Saved tokenizer config:', f)
+> EOF
+root@ea5da4377473:/app# python3 extract_and_save.py
+No tar.gz found
+root@ea5da4377473:/app# ls -la /app/cache/
+total 8
+drwxr-xr-x 4 root root   94 Jul  8 05:58 .
+drwxr-xr-x 1 root root 4096 Jul  8 06:00 ..
+drwxr-xr-x 3 root root   52 Jul  8 05:58 .locks
+-rw-r--r-- 1 root root  191 Jul  8 05:58 CACHEDIR.TAG
+drwxr-xr-x 6 root root   81 Jul  8 05:58 models--albert--albert-base-v2
+root@ea5da4377473:/app# du -sh /app/cache/
+256M    /app/cache/
+root@ea5da4377473:/app# find /app/cache -type f -name '*.tar.gz' -o -name '*.py' -o -name '*.bin' -o -name '*.txt' | head -20
+/app/cache/models--albert--albert-base-v2/snapshots/8e2f239c5f8a2c0f253781ca60135db913e5c80c/pytorch_model.bin
+root@ea5da4377473:/app#

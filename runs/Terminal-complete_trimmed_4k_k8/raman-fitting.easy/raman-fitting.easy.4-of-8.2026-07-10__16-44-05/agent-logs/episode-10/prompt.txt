@@ -1,0 +1,107 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@cc18da589bea:/app# cat > /app/fit_final2.py << 'EOF'
+> import numpy as np
+> from scipy import optimize
+> import json
+>
+> # Parse the data
+> x = []
+> y = []
+> with open('/app/graphene.dat', 'r') as f:
+>     for line in f:
+>         line = line.strip()
+>         if not line:
+>             continue
+>         parts = line.split()
+>         for part in parts:
+>             subparts = part.split(',')
+>             if len(subparts) == 2:
+>                 x.append(float(subparts[0]))
+>                 y.append(float(subparts[1]))
+>
+> # Split into two datasets (first column, second column)
+> dataset1 = [(x[i], y[i]) for i in range(0, len(x), 2)]
+> dataset2 = [(x[i], y[i]) for i in range(1, len(x), 2)]
+>
+> print('Dataset1 count:', len(dataset1))
+> print('Dataset2 count:', len(dataset2))
+>
+> # Extract x and y for each dataset
+> def extract(dataset):
+>     xs = [p[0] for p in dataset]
+>     ys = [p[1] for p in dataset]
+>     return np.array(xs), np.array(ys)
+>
+> d1_x, d1_y = extract(dataset1)
+> d2_x, d2_y = extract(dataset2)
+>
+> # Find the peak positions in each dataset
+> # We'll search for the min and max of the first dataset? Actually, the G peak is at 1580, which is in dataset2.
+> # The 2D peak at 2700 is also in dataset2.
+> # Let's compute the min and max of dataset2 x values.
+> print('Dataset2 x min/max:', d2_x.min(), d2_x.max())
+> print('Dataset1 x min/max:', d1_x.min(), d1_x.max())
+>
+> # Now we need to fit the peaks. We'll assume the G peak is in dataset2 and the 2D peak is in dataset1.
+> # But note: the 2D peak at 2700 is also in dataset2. Let's check the distribution of values around 1580 and 2700.
+> # We'll write a function to fit a peak in a given dataset.
+> def fit_peak_in_dataset(x, y, guess):
+>     # guess is a list of [x0, gamma, amp, offset]
+>     def f(params, x):
+>         x0, gamma, amp, offset = params
+>         return offset + (amp / (2 * gamma)) * (1 / (1 + ((x - x0) / gamma) ** 2))
+>     result = optimize.minimize(lambda p: ((f(p, x) - y) ** 2).sum(), [guess])
+>     return result.x
+>
+> # For dataset2, fit the G peak (around 1580)
+> g_peak_guess = [1580, 10, 1, 0]
+> g_params = fit_peak_in_dataset(d2_x, d2_y, g_peak_guess)
+> # For dataset1, fit the 2D peak (around 2700)
+> d_peak_guess = [2700, 10, 1, 0]
+> d_params = fit_peak_in_dataset(d1_x, d1_y, d_peak_guess)
+>
+> # Extract parameters
+> g_x0, g_gamma, g_amp, g_offset = g_params
+> d_x0, d_gamma, d_amp, d_offset = d_params
+>
+> # Create dictionary
+> results = {
+>     'G': {
+>         'x0': g_x0,
+>         'gamma': g_gamma,
+>         'amplitude': g_amp,
+>         'offset': g_offset
+>     },
+>     '2D': {
+>         'x0': d_x0,
+>         'gamma': d_gamma,
+>         'amplitude': d_amp,
+>         'offset': d_offset
+>     }
+> }
+>
+> # Write to file
+> with open('/app/results.json', 'w') as f:
+>     json.dump(results, f, indent=2)
+>
+> print('Results written to /app/results.json')
+> print(json.dumps(results, indent=2))
+> EOF
+root@cc18da589bea:/app# python3 /app/fit_final2.py
+Dataset1 count: 3565
+Dataset2 count: 3565
+Dataset2 x min/max: 40.0 79400.0
+Dataset1 x min/max: 1648.0 47183.0
+Traceback (most recent call last):
+  File "/app/fit_final2.py", line 56, in <module>
+    g_params = fit_peak_in_dataset(d2_x, d2_y, g_peak_guess)
+  File "/app/fit_final2.py", line 51, in fit_peak_in_dataset
+    result = optimize.minimize(lambda p: ((f(p, x) - y) ** 2).sum(), [guess])
+  File "/usr/local/lib/python3.13/site-packages/scipy/optimize/_minimize.py", line 591, in minimize
+    raise ValueError("'x0' must only have one dimension.")
+ValueError: 'x0' must only have one dimension.
+root@cc18da589bea:/app#

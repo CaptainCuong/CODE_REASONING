@@ -1,0 +1,64 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@297622e33f86:/app# ls -la /app/model_cache/sentiment_model/
+total 262260
+drwxr-xr-x 2 root root       121 Jul  7 16:02 .
+drwxr-xr-x 3 root root        37 Jul  7 16:02 ..
+-rw-r--r-- 1 root root       766 Jul  7 16:02 config.json
+-rw------- 1 root root 267832560 Jul  7 16:02 model.safetensors
+-rw-r--r-- 1 root root    711396 Jul  7 16:02 tokenizer.json
+-rw-r--r-- 1 root root       351 Jul  7 16:02 tokenizer_config.json
+root@297622e33f86:/app# cat > /app/app.py << 'EOF'
+> import json
+> import sys
+> from flask import Flask, request, Response
+> from transformers import AutoModelForSequenceClassification, AutoTokenizer
+>
+> # Load model and tokenizer
+> model_path = '/app/model_cache/sentiment_model'
+> model = AutoModelForSequenceClassification.from_pretrained(model_path)
+> tokenizer = AutoTokenizer.from_pretrained(model_path)
+>
+> def predict_sentiment(text):
+>     inputs = tokenizer(text, return_tensors='pt')
+>     outputs = model(**inputs)
+>     probabilities = outputs.logits.softmax(dim=1)
+>     positive_prob = probabilities[0][1].item()  # second class is positive
+>     negative_prob = probabilities[0][0].item()  # first class is negative
+>     # Determine sentiment based on threshold (e.g., 0.5)
+>     if positive_prob > 0.5:
+>         sentiment = 'positive'
+>     else:
+>         sentiment = 'negative'
+>     return sentiment, positive_prob, negative_prob
+>
+> app = Flask(__name__)
+>
+> @app.route('/sentiment', methods=['POST'])
+> def sentiment_analysis():
+>     try:
+>         data = request.get_json()
+>         if not isinstance(data, dict) or 'text' not in data:
+>             return {'error': 'Invalid request: expected JSON with key "text"'}, 400
+>         text = data['text']
+>         sentiment, pos, neg = predict_sentiment(text)
+>         result = {
+>             'sentiment': sentiment,
+>             'confidence': {
+>                 'positive': pos,
+>                 'negative': neg
+>             }
+>         }
+>         return result
+>     except Exception as e:
+>         return {'error': str(e)}, 500
+>
+> if __name__ == '__main__':
+>     app.run(host='0.0.0.0', port=5000, debug=False)
+> EOF
+root@297622e33f86:/app# cd /app
+root@297622e33f86:/app# python3 app.py
+

@@ -1,0 +1,254 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+cat /usr/local/lib/python3.10/site-packages/mteb/load_results/benchmark_results.py
+Traceback (most recent call last):
+  File "/app/eval.py", line 4, in <module>
+    from mteb import evaluate
+  File "/usr/local/lib/python3.10/site-packages/mteb/__init__.py", line 5, in <module>
+    from mteb.benchmarks.benchmarks import (
+  File "/usr/local/lib/python3.10/site-packages/mteb/benchmarks/__init__.py", line 3, in <module>
+    from mteb.benchmarks.benchmark import Benchmark
+  File "/usr/local/lib/python3.10/site-packages/mteb/benchmarks/benchmark.py", line 9, in <module>
+    from mteb.load_results.load_results import load_results
+  File "/usr/local/lib/python3.10/site-packages/mteb/load_results/__init__.py", line 3, in <module>
+    from .benchmark_results import BenchmarkResults, ModelResult
+  File "/usr/local/lib/python3.10/site-packages/mteb/load_results/benchmark_results.py", line 15, in <module>
+    from mteb.abstasks.AbsTask import AbsTask, ScoresDict
+  File "/usr/local/lib/python3.10/site-packages/mteb/abstasks/__init__.py", line 3, in <module>
+    from ..evaluation.LangMapping import *
+  File "/usr/local/lib/python3.10/site-packages/mteb/evaluation/__init__.py", line 3, in <module>
+    from .MTEB import *
+  File "/usr/local/lib/python3.10/site-packages/mteb/evaluation/MTEB.py", line 23, in <module>
+    from mteb.models import model_meta_from_sentence_transformers
+  File "/usr/local/lib/python3.10/site-packages/mteb/models/__init__.py", line 5, in <module>
+    from mteb.models.overview import (
+  File "/usr/local/lib/python3.10/site-packages/mteb/models/overview.py", line 14, in <module>
+    from mteb.models import (
+  File "/usr/local/lib/python3.10/site-packages/mteb/models/gme_v_models.py", line 409, in <module>
+    gme_qwen2vl_2b = ModelMeta(
+  File "/usr/local/lib/python3.10/site-packages/pydantic/main.py", line 263, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+pydantic_core._pydantic_core.ValidationError: 1 validation error for ModelMeta
+name
+  Field required [type=missing, input_value={'loader': functools.part...'], 'FEVER': ['train']}}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.13/v/missing
+root@c7c950b4648d:/app# cat /usr/local/lib/python3.10/site-packages/mteb/load_results/__init__.py
+from __future__ import annotations
+
+from .benchmark_results import BenchmarkResults, ModelResult
+from .load_results import load_results
+from .task_results import TaskResult
+
+__all__ = ["load_results", "TaskResult", "ModelResult", "BenchmarkResults"]
+root@c7c950b4648d:/app# cat /usr/local/lib/python3.10/site-packages/mteb/load_results/benchmark_results.py
+from __future__ import annotations
+
+import json
+import warnings
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
+from pathlib import Path
+from typing import Any, Callable, Literal
+
+import numpy as np
+import pandas as pd
+from packaging.version import InvalidVersion, Version
+from pydantic import BaseModel, ConfigDict
+
+from mteb.abstasks.AbsTask import AbsTask, ScoresDict
+from mteb.abstasks.TaskMetadata import ISO_LANGUAGE_SCRIPT, TASK_DOMAIN, TASK_TYPE
+from mteb.languages import ISO_LANGUAGE
+from mteb.load_results.task_results import TaskResult
+from mteb.models.overview import get_model_metas
+
+Split = str
+Score = Any
+
+
+class ModelResult(BaseModel):
+    model_name: str
+    model_revision: str | None
+    task_results: list[TaskResult]
+    model_config = ConfigDict(
+        protected_namespaces=(),
+    )
+
+    def __repr__(self) -> str:
+        n_entries = len(self.task_results)
+        return f"ModelResult(model_name={self.model_name}, model_revision={self.model_revision}, task_results=[...](#{n_entries}))"
+
+    @classmethod
+    def from_validated(cls, **data) -> ModelResult:
+        data["task_results"] = [
+            TaskResult.from_validated(**res) for res in data["task_results"]
+        ]
+        return cls.model_construct(**data)
+
+    def filter_tasks(
+        self,
+        task_names: list[str] | None = None,
+        languages: list[str] | None = None,
+        domains: list[TASK_DOMAIN] | None = None,
+        task_types: list[TASK_TYPE] | None = None,
+    ) -> ModelResult:
+        new_task_results = []
+        for task_result in self.task_results:
+            if (task_names is not None) and (task_result.task_name not in task_names):
+                continue
+            if languages is not None:
+                task_languages = task_result.languages
+                if not any(lang in task_languages for lang in languages):
+                    continue
+            if domains is not None:
+                task_domains = task_result.domains
+                if not any(domain in task_domains for domain in domains):
+                    continue
+            if (task_types is not None) and (task_result.task_type not in task_types):
+                continue
+            new_task_results.append(task_result)
+        return type(s
+[... output limited to 10000 bytes; 71 interior bytes omitted ...]
+model_construct(model_results=model_results)
+
+    def get_scores(
+        self,
+        splits: list[Split] | None = None,
+        languages: list[ISO_LANGUAGE | ISO_LANGUAGE_SCRIPT] | None = None,
+        scripts: list[ISO_LANGUAGE_SCRIPT] | None = None,
+        getter: Callable[[ScoresDict], Score] | None = None,
+        aggregation: Callable[[list[Score]], Any] | None = None,
+        format: Literal["wide", "long"] = "wide",
+    ) -> list[dict]:
+        entries = []
+        if format == "wide":
+            for model_res in self:
+                try:
+                    model_scores = model_res.get_scores(
+                        splits=splits,
+                        languages=languages,
+                        scripts=scripts,
+                        getter=getter,
+                        aggregation=aggregation,
+                        format="wide",
+                    )
+                    entries.append(
+                        {
+                            "model": model_res.model_name,
+                            "revision": model_res.model_revision,
+                            **model_scores,
+                        }
+                    )
+                except Exception as e:
+                    warnings.warn(
+                        f"Couldn't get scores for {model_res.model_name}({model_res.model_revision}), due to: {e}"
+                    )
+        if format == "long":
+            for model_res in self:
+                try:
+                    entries.extend(
+                        model_res.get_scores(
+                            splits=splits,
+                            languages=languages,
+                            scripts=scripts,
+                            getter=getter,
+                            aggregation=aggregation,
+                            format="long",
+                        )
+                    )
+                except Exception as e:
+                    warnings.warn(
+                        f"Couldn't get scores for {model_res.model_name}({model_res.model_revision}), due to: {e}"
+                    )
+        return entries
+
+    def __iter__(self):
+        return iter(self.model_results)
+
+    def __getitem__(self, index) -> ModelResult:
+        return self.model_results[index]
+
+    def to_legacy_dict(self) -> dict[str, dict[str, list[TaskResult]]]:
+        res = defaultdict(dict)
+        for model_res in self:
+            res[model_res.model_name][model_res.model_revision] = model_res.task_results
+        return res
+
+    @classmethod
+    def from_legacy_dict(cls, legacy: dict[str, dict[str, list[TaskResult]]]):
+        model_results = []
+        for model_name, revisions in legacy.items():
+            for model_revision, results in revisions.items():
+                model_results.append(
+                    ModelResult(
+                        model_name=model_name,
+                        model_revision=model_revision,
+                        task_results=results,
+                    )
+                )
+        return cls(model_results=model_results)
+
+    def to_dict(self) -> dict:
+        return self.model_dump()
+
+    @classmethod
+    def from_dict(cls, data: dict) -> BenchmarkResults:
+        return cls.model_validate(data)
+
+    def to_disk(self, path: Path | str) -> None:
+        path = Path(path)
+        with path.open("w") as out_file:
+            out_file.write(self.model_dump_json(indent=2))
+
+    @classmethod
+    def from_validated(cls, **data) -> BenchmarkResults:
+        model_results = []
+        for model_res in data["model_results"]:
+            model_results.append(ModelResult.from_validated(**model_res))
+        return cls.model_construct(model_results=model_results)
+
+    @classmethod
+    def from_disk(cls, path: Path | str) -> BenchmarkResults:
+        path = Path(path)
+        with path.open() as in_file:
+            data = json.loads(in_file.read())
+        return cls.from_dict(data)
+
+    @property
+    def languages(self) -> list[str]:
+        langs = []
+        for model_res in self.model_results:
+            langs.extend(model_res.languages)
+        return list(set(langs))
+
+    @property
+    def domains(self) -> list[str]:
+        ds = []
+        for model_res in self.model_results:
+            ds.extend(model_res.domains)
+        return list(set(ds))
+
+    @property
+    def task_types(self) -> list[str]:
+        ts = []
+        for model_res in self.model_results:
+            ts.extend(model_res.task_types)
+        return list(set(ts))
+
+    @property
+    def task_names(self) -> list[str]:
+        names = []
+        for model_res in self.model_results:
+            names.extend(model_res.task_names)
+        return list(set(names))
+root@c7c950b4648d:/app#
+root@c7c950b4648d:/app# ls -la
+total 4
+drwxr-xr-x 1 root root  29 Jul 10 21:48 .
+drwxr-xr-x 1 root root  87 Jul 10 21:47 ..
+-rw-r--r-- 1 root root 979 Jul 10 21:48 eval.py
+root@c7c950b4648d:/app# python3 /app/eval.py
+cat /app/results/huggingface__bert-base/2025-12-31T10:20:00.000000/STS12.json
+

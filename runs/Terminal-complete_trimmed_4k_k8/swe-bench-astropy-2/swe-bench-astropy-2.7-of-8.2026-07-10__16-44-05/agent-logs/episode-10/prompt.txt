@@ -1,0 +1,120 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@bf91c1b6efb5:/app# cat /usr/local/lib/python3.9/site-packages/astropy/io/ascii/qdp.py | grep -A 100 '_read_table_qdp'
+def _read_table_qdp(qdp_file, names=None, table_id=None, delimiter=None):
+    """Read a table from a QDP file.
+
+    Parameters
+    ----------
+    qdp_file : str
+        Input QDP file name
+
+    Other Parameters
+    ----------------
+    names : list of str
+        Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+        including error columns.
+
+    table_id : int, default 0
+        Number of the table to be read from the QDP file. This is useful
+        when multiple tables present in the file. By default, the first is read.
+
+    delimiter : str
+        Any delimiter accepted by the `sep` argument of str.split()
+
+    Returns
+    -------
+    tables : list of `~astropy.table.Table`
+        List containing all the tables present inside the QDP file
+    """
+    if table_id is None:
+        warnings.warn(
+            "table_id not specified. Reading the first available table",
+            AstropyUserWarning,
+        )
+        table_id = 0
+
+    tables = _get_tables_from_qdp_file(
+        qdp_file, input_colnames=names, delimiter=delimiter
+    )
+
+    return tables[table_id]
+
+
+def _write_table_qdp(table, filename=None, err_specs=None):
+    """Write a table to a QDP file.
+
+    Parameters
+    ----------
+    table : :class:`~astropy.table.Table`
+        Input table to be written
+    filename : str
+        Output QDP file name
+
+    Other Parameters
+    ----------------
+    err_specs : dict
+        Dictionary of the format {'serr': [1], 'terr': [2, 3]}, specifying
+        which columns have symmetric and two-sided errors (see QDP format
+        specification)
+    """
+    import io
+
+    fobj = io.StringIO()
+
+    if "initial_comments" in table.meta and table.meta["initial_comments"] != []:
+        for line in table.meta["initial_comments"]:
+            line = line.strip()
+            if not line.startswith("!"):
+                line = "!" + line
+            print(line, file=fobj)
+
+    if err_specs is None:
+        serr_cols, terr_cols = _understand_err_col(table.colnames)
+    else:
+        serr_cols = err_specs.pop("serr", [])
+        terr_cols = err_specs.pop("terr", [])
+    if serr_cols != []:
+        col_string = " ".join([str(val) for val in serr_cols])
+        print(f"READ SERR {col_string}", file=fobj)
+    if terr_cols != []:
+        col_string = " ".join([str(val) for val in terr_cols])
+        print(f"READ TERR {col_string}", file=fobj)
+
+    if "comments" in table.meta and table.meta["comments"] != []:
+        for line in table.meta["comments"]:
+            line = line.strip()
+            if not line.startswith("!"):
+                line = "!" + line
+            print(line, file=fobj)
+
+    colnames = table.colnames
+    print("!" + " ".join(colnames), file=fobj)
+    for row in table:
+        values = []
+        for val in row:
+            if not np.ma.is_masked(val):
+                rep = str(val)
+            else:
+                rep = "NO"
+            values.append(rep)
+        print(" ".join(values), file=fobj)
+
+    full_string = fobj.getvalue()
+    fobj.close()
+--
+        return _read_table_qdp(
+            self.lines,
+            table_id=self.table_id,
+            names=self.names,
+            delimiter=self.delimiter,
+        )
+
+    def write(self, table):
+        self._check_multidim_table(table)
+        lines = _write_table_qdp(table, err_specs=self.err_specs)
+        return lines
+root@bf91c1b6efb5:/app#

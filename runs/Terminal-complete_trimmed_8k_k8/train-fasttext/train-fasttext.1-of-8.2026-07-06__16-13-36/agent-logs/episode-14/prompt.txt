@@ -1,0 +1,94 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@2486187ed1cf:/app# cat > train_model.py << 'EOF'
+> import pandas as pd
+> import subprocess
+> import os
+> import sys
+>
+> def load_parquet(filepath):
+>     df = pd.read_parquet(filepath)
+>     return df
+>
+> def write_fasttext(df, output_path):
+>     with open(output_path, 'w') as f:
+>         for _, row in df.iterrows():
+>             f.write(f"{row['label']} {row['text']}\n")
+>     print(f"Written {output_path}")
+>
+> # Load data
+> train_df = load_parquet('data/train-00000-of-00001.parquet')
+> test_df = load_parquet('data/test-00000-of-00001.parquet')
+>
+> # Write to fasttext format
+> train_txt = 'train.txt'
+> test_txt = 'test.txt'
+> write_fasttext(train_df, train_txt)
+> write_fasttext(test_df, test_txt)
+>
+> # Train model with command line
+> # The format: fasttext supervised -input train.txt -output model.bin ...options
+> cmd = ['fasttext', 'supervised',
+>        '-input', train_txt,
+>        '-output', 'model.bin',
+>        '-loss', 'softmax',
+>        '-wordNgrams', '1',
+>        '-neg', '5',
+>        '-minCount', '5',
+>        '-epoch', '10']
+> print('Training...')
+> result = subprocess.run(cmd, capture_output=True, text=True)
+> if result.returncode != 0:
+>     print('Training failed:')
+>     print(result.stderr)
+>     sys.exit(1)
+> print('Training done')
+>
+> # Evaluate model on test set
+> # The format: fasttext predict -input test.txt -model model.bin -output output.txt
+> cmd_eval = ['fasttext', 'predict',
+>             '-input', test_txt,
+>             '-model', 'model.bin',
+>             '-output', 'output.txt']
+> result_eval = subprocess.run(cmd_eval, capture_output=True, text=True)
+> if result_eval.returncode != 0:
+>     print('Prediction failed:')
+>     print(result_eval.stderr)
+>     sys.exit(1)
+>
+> # Compute accuracy
+> with open('output.txt', 'r') as f:
+>     lines = f.readlines()
+> # The output format is: predicted_label probability
+> predicted = []
+> for line in lines:
+>     parts = line.strip().split()
+>     if len(parts) >= 2:
+>         predicted.append(int(parts[0]))
+> # Compare with actual labels
+> actual = test_df['label'].tolist()
+> correct = sum(1 for a, p in zip(actual, predicted) if a == p)
+> total = len(actual)
+> accuracy = correct / total
+> print(f'Accuracy: {accuracy}')
+> print(f'Correct: {correct}, Total: {total}')
+>
+> # Check model size
+> model_size = os.path.getsize('model.bin')
+> print(f'Model size: {model_size} bytes')
+> if model_size > 150 * 1024 * 1024:
+>     print('Model size exceeds 150MB!')
+> else:
+>     print('Model size OK')
+>
+> # Ensure model.bin is in current directory (already)
+> print('Model saved as model.bin')
+> EOF
+root@2486187ed1cf:/app# python3 train_model.py
+Written train.txt
+Written test.txt
+Training...
+

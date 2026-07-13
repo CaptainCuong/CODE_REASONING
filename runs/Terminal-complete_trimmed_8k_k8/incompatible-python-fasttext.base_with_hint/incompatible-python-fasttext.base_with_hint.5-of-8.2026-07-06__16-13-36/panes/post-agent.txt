@@ -1,0 +1,573 @@
+root@5ade7ad11099:/app# ls -la
+total 104284
+drwxr-xr-x 1 root root        31 Jul  7 03:19 .
+drwxr-xr-x 1 root root        57 Jul  7 04:13 ..
+-rw-r--r-- 1 root root 106785163 Jul  7 03:19 model.bin
+root@5ade7ad11099:/app# python3 --version
+Python 3.13.1
+root@5ade7ad11099:/app# pip list | grep -i fasttext
+fasttext   0.9.3
+root@5ade7ad11099:/app# python3 -c "import fasttext; print('fasttext available')" 2>&1
+fasttext available
+root@5ade7ad11099:/app# file model.bin
+bash: file: command not found
+root@5ade7ad11099:/app# head -c 100 model.bin | od -x
+0000000 16ba 2f4f 000c 0000 0005 0000 0005 0000
+0000020 0005 0000 0001 0000 0005 0000 0002 0000
+0000040 0003 0000 0003 0000 8480 001e 0000 0000
+0000060 0000 0000 0064 0000 432d eb1c 36e2 3f1a
+0000100 c042 0018 c03d 0018 0005 0000 d98e 0545
+0000120 0000 0000 ffff ffff ffff ffff 6874 0065
+0000140 da4d 0038
+0000144
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# cat > test_predict.py << 'EOF'
+> import fasttext
+> model = fasttext.load_model('model.bin')
+> print('Model loaded')
+> result = model.predict('Hello world')
+> print('Prediction:', result)
+> EOF
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Model loaded
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 4, in <module>
+    result = model.predict('Hello world')
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 239, in predict
+    return labels, np.array(probs, copy=False)
+                   ~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ValueError: Unable to avoid copy while creating an array as requested.
+If using `np.array(obj, copy=False)` replace it with `np.asarray(obj)` to allow a copy when needed (no behavior change in NumPy 1.x).
+For more details, see https://numpy.org/devdocs/numpy_2_0_migration_guide.html#adapting-to-changes-in-the-copy-keyword.
+root@5ade7ad11099:/app# python3 -c "import numpy; print(numpy.__version__)"
+2.5.1
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# cat /usr/local/lib/python3.13/site-packages/fasttext/FastText.py | grep -n "np.array.*copy=False"
+41:        return np.array(y_scores, copy=False), np.array(y_true, copy=False)
+56:        return np.array(precision, copy=False), np.array(recall, copy=False)
+239:            return labels, np.array(probs, copy=False)
+root@5ade7ad11099:/app# sed -i "s/np\.array(obj, copy=False)/np.asarray(obj)/g" /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Model loaded
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 4, in <module>
+    result = model.predict('Hello world')
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 239, in predict
+    return labels, np.array(probs, copy=False)
+                   ~~~~~~~~^^^^^^^^^^^^^^^^^^^
+ValueError: Unable to avoid copy while creating an array as requested.
+If using `np.array(obj, copy=False)` replace it with `np.asarray(obj)` to allow a copy when needed (no behavior change in NumPy 1.x).
+For more details, see https://numpy.org/devdocs/numpy_2_0_migration_guide.html#adapting-to-changes-in-the-copy-keyword.
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# sed -n '230,250p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+            return all_labels, all_probs
+        else:
+            text = check(text)
+            predictions = self.f.predict(text, k, threshold, on_unicode_error)
+            if predictions:
+                probs, labels = zip(*predictions)
+            else:
+                probs, labels = ([], ())
+
+            return labels, np.array(probs, copy=False)
+
+    def get_input_matrix(self):
+        """
+        Get a reference to the full input matrix of a Model. This only
+        works if the model is not quantized.
+        """
+        if self.f.isQuant():
+            raise ValueError("Can't get quantized Matrix")
+        return np.array(self.f.getInputMatrix())
+
+    def get_output_matrix(self):
+root@5ade7ad11099:/app# sed -i 's/np\.array\(.*\), copy=False/np.asarray(\1)/g' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 1, in <module>
+    import fasttext
+  File "/usr/local/lib/python3.13/site-packages/fasttext/__init__.py", line 12, in <module>
+    from .FastText import train_supervised
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 41
+    return np.asarray((y_scores, copy=False), np.array(y_true))
+                                 ^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# cp /usr/local/lib/python3.13/site-packages/fasttext/FastText.py /usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup
+root@5ade7ad11099:/app# cat > fix_fasttext.py << 'EOF'
+> import sys
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'r') as f:
+>     content = f.read()
+> # Replace the three occurrences
+> import re
+> # Pattern: np.array(..., copy=False)
+> # We'll replace each with np.asarray(...)
+> # But note there may be multiple commas in the array creation.
+> # We'll use a function to replace each occurrence.
+> def replace_array(match):
+>     # match group 1 is the array content (without the copy=False)
+>     # Actually we want to keep the same array creation but replace copy=False.
+>     # Since we know the exact lines, we can just replace the whole match.
+>     # Instead, we'll replace the whole line.
+>     return 'np.asarray(' + match.group(0)[len('np.array('):match.group(0).rfind(',')]) + ')
+> # But easier: replace the whole match with np.asarray(...) where ... is the same but without copy=False.
+> # We'll extract the inner part.
+> inner = match.group(0)[len('np.array('):match.group(0).rfind(',')]
+> # If there is a trailing ', copy=False' we need to remove it.
+> if inner.endswith(', copy=False'):
+>     inner = inner[:-len(', copy=False')]
+> return 'np.asarray(' + inner + ')'
+>
+> # Use a more robust approach: replace the exact lines we know.
+> lines = content.split('\n')
+> new_lines = []
+> for line in lines:
+>     if 'np.array(y_scores, copy=False)' in line:
+>         line = line.replace('np.array(y_scores, copy=False)', 'np.asarray(y_scores)')
+>         new_lines.append(line)
+>         continue
+>     if 'np.array(y_true)' in line:
+>         line = line.replace('np.array(y_true)', 'np.asarray(y_true)')
+>         new_lines.append(line)
+>         continue
+>     if 'np.array(precision, copy=False)' in line:
+>         line = line.replace('np.array(precision, copy=False)', 'np.asarray(precision)')
+>         new_lines.append(line)
+>         continue
+>     if 'np.array(recall, copy=False)' in line:
+>         line = line.replace('np.array(recall, copy=False)', 'np.asarray(recall)')
+>         new_lines.append(line)
+>         continue
+>     if 'np.array(probs, copy=False)' in line:
+>         line = line.replace('np.array(probs, copy=False)', 'np.asarray(probs)')
+>         new_lines.append(line)
+>         continue
+>     new_lines.append(line)
+>
+> new_content = '\n'.join(new_lines)
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'w') as f:
+>     f.write(new_content)
+> EOF
+root@5ade7ad11099:/app# python3 fix_fasttext.py
+  File "/app/fix_fasttext.py", line 15
+    return 'np.asarray(' + match.group(0)[len('np.array('):match.group(0).rfind(',')]) + ')
+                                                                                     ^
+SyntaxError: unmatched ')'
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 1, in <module>
+    import fasttext
+  File "/usr/local/lib/python3.13/site-packages/fasttext/__init__.py", line 12, in <module>
+    from .FastText import train_supervised
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 41
+    return np.asarray((y_scores, copy=False), np.array(y_true))
+                                 ^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# cp /usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+root@5ade7ad11099:/app# cat > fix_fasttext2.py << 'EOF'
+> import sys
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'r') as f:
+>     content = f.read()
+> # Replace the three occurrences
+> lines = content.split('\n')
+> new_lines = []
+> for line in lines:
+>     # Pattern 1: np.array(y_scores, copy=False)
+>     if 'np.array(y_scores, copy=False)' in line:
+>         line = line.replace('np.array(y_scores, copy=False)', 'np.asarray(y_scores)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 2: np.array(y_true) (note: there is also np.array(y_true) without copy=False)
+>     # Actually we need to replace any np.array with copy=False, but also the line that got corrupted.
+>     # Let's check for np.array(y_true) without copy=False.
+>     if 'np.array(y_true)' in line:
+>         line = line.replace('np.array(y_true)', 'np.asarray(y_true)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 3: np.array(precision, copy=False)
+>     if 'np.array(precision, copy=False)' in line:
+>         line = line.replace('np.array(precision, copy=False)', 'np.asarray(precision)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 4: np.array(recall, copy=False)
+>     if 'np.array(recall, copy=False)' in line:
+>         line = line.replace('np.array(recall, copy=False)', 'np.asarray(recall)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 5: np.array(probs, copy=False)
+>     if 'np.array(probs, copy=False)' in line:
+>         line = line.replace('np.array(probs, copy=False)', 'np.asarray(probs)')
+>         new_lines.append(line)
+>         continue
+>     # If none of the above, keep line
+>     new_lines.append(line)
+>
+> new_content = '\n'.join(new_lines)
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'w') as f:
+>     f.write(new_content)
+> EOF
+root@5ade7ad11099:/app# python3 fix_fasttext2.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 1, in <module>
+    import fasttext
+  File "/usr/local/lib/python3.13/site-packages/fasttext/__init__.py", line 12, in <module>
+    from .FastText import train_supervised
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 41
+    return np.asarray((y_scores, copy=False), np.asarray(y_true))
+                                 ^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# sed -n '35,45p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup
+
+        if pair_list:
+            y_scores, y_true = zip(*pair_list)
+        else:
+            y_scores, y_true = ([], ())
+
+        return np.asarray((y_scores, copy=False), np.array(y_true))
+
+    def precision_recall_curve(self, label=None):
+        """Return precision/recall curve"""
+        if label:
+root@5ade7ad11099:/app# cat > fix_all.py << 'EOF'
+> import sys
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'r') as f:
+>     lines = f.readlines()
+>
+> new_lines = []
+> for line in lines:
+>     # Pattern 1: np.array(y_scores, copy=False)
+>     if 'np.array(y_scores, copy=False)' in line:
+>         line = line.replace('np.array(y_scores, copy=False)', 'np.asarray(y_scores)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 2: np.array(precision, copy=False)
+>     if 'np.array(precision, copy=False)' in line:
+>         line = line.replace('np.array(precision, copy=False)', 'np.asarray(precision)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 3: np.array(recall, copy=False)
+>     if 'np.array(recall, copy=False)' in line:
+>         line = line.replace('np.array(recall, copy=False)', 'np.asarray(recall)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 4: np.array(probs, copy=False)
+>     if 'np.array(probs, copy=False)' in line:
+>         line = line.replace('np.array(probs, copy=False)', 'np.asarray(probs)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 5: np.array(y_true) without copy=False
+>     if 'np.array(y_true)' in line:
+>         line = line.replace('np.array(y_true)', 'np.asarray(y_true)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 6: the corrupted line at line 41 (we need to replace it by line number)
+>     # We'll just replace any line that contains 'np.asarray((y_scores, copy=False), np.asarray(y_true))'
+>     if 'np.asarray((y_scores, copy=False), np.asarray(y_true))' in line:
+>         line = line.replace('np.asarray((y_scores, copy=False), np.asarray(y_true))', 'np.asarray(y_scores), np.asarray(y_true)')
+>         new_lines.append(line)
+>         continue
+>     new_lines.append(line)
+>
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'w') as f:
+>     f.writelines(new_lines)
+> EOF
+root@5ade7ad11099:/app# python3 fix_all.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 1, in <module>
+    import fasttext
+  File "/usr/local/lib/python3.13/site-packages/fasttext/__init__.py", line 12, in <module>
+    from .FastText import train_supervised
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 56
+    return np.asarray((precision, copy=False), np.array(recall))
+                                  ^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# sed -n '35,45p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup
+
+        if pair_list:
+            y_scores, y_true = zip(*pair_list)
+        else:
+            y_scores, y_true = ([], ())
+
+        return np.asarray((y_scores, copy=False), np.array(y_true))
+
+    def precision_recall_curve(self, label=None):
+        """Return precision/recall curve"""
+        if label:
+root@5ade7ad11099:/app# sed -n '55,65p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup
+
+        return np.asarray((precision, copy=False), np.array(recall))
+
+    def precision_at_recall(self, recall, label=None):
+        """Return precision for a given recall"""
+        if label:
+            label_id = self.f.get_label_id(label)
+            precision = self.m.precisionAtRecallLabel(label_id, recall)
+        else:
+            precision = self.m.precisionAtRecall(recall)
+
+root@5ade7ad11099:/app# cat > fix_backup.py << 'EOF'
+> import sys
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup', 'r') as f:
+>     lines = f.readlines()
+>
+> new_lines = []
+> for line in lines:
+>     # Pattern 1: np.array(y_scores, copy=False)
+>     if 'np.array(y_scores, copy=False)' in line:
+>         line = line.replace('np.array(y_scores, copy=False)', 'np.asarray(y_scores)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 2: np.array(y_true) (without copy=False)
+>     if 'np.array(y_true)' in line:
+>         line = line.replace('np.array(y_true)', 'np.asarray(y_true)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 3: np.array(precision, copy=False)
+>     if 'np.array(precision, copy=False)' in line:
+>         line = line.replace('np.array(precision, copy=False)', 'np.asarray(precision)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 4: np.array(recall, copy=False)
+>     if 'np.array(recall, copy=False)' in line:
+>         line = line.replace('np.array(recall, copy=False)', 'np.asarray(recall)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 5: np.array(probs, copy=False)
+>     if 'np.array(probs, copy=False)' in line:
+>         line = line.replace('np.array(probs, copy=False)', 'np.asarray(probs)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 6: the corrupted line at line 41 (we know it's the line with np.asarray((y_scores, copy=False), np.array(y_true)))
+>     if 'np.asarray((y_scores, copy=False), np.array(y_true))' in line:
+>         line = line.replace('np.asarray((y_scores, copy=False), np.array(y_true))', 'np.asarray(y_scores), np.asarray(y_true)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 7: the corrupted line at line 56 (we know it's the line with np.asarray((precision, copy=False), np.array(recall)))
+>     if 'np.asarray((precision, copy=False), np.array(recall))' in line:
+>         line = line.replace('np.asarray((precision, copy=False), np.array(recall))', 'np.asarray(precision), np.asarray(recall)')
+>         new_lines.append(line)
+>         continue
+>     new_lines.append(line)
+>
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'w') as f:
+>     f.writelines(new_lines)
+> EOF
+root@5ade7ad11099:/app# python3 fix_backup.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 1, in <module>
+    import fasttext
+  File "/usr/local/lib/python3.13/site-packages/fasttext/__init__.py", line 12, in <module>
+    from .FastText import train_supervised
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 41
+    return np.asarray((y_scores, copy=False), np.asarray(y_true))
+                                 ^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# cat > fix_final.py << 'EOF'
+> import sys
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup', 'r') as f:
+>     lines = f.readlines()
+>
+> new_lines = []
+> for line in lines:
+>     # Pattern 1: np.array(y_scores, copy=False)
+>     if 'np.array(y_scores, copy=False)' in line:
+>         line = line.replace('np.array(y_scores, copy=False)', 'np.asarray(y_scores)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 2: np.array(y_true) (without copy=False)
+>     if 'np.array(y_true)' in line:
+>         line = line.replace('np.array(y_true)', 'np.asarray(y_true)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 3: np.array(precision, copy=False)
+>     if 'np.array(precision, copy=False)' in line:
+>         line = line.replace('np.array(precision, copy=False)', 'np.asarray(precision)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 4: np.array(recall, copy=False)
+>     if 'np.array(recall, copy=False)' in line:
+>         line = line.replace('np.array(recall, copy=False)', 'np.asarray(recall)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 5: np.array(probs, copy=False)
+>     if 'np.array(probs, copy=False)' in line:
+>         line = line.replace('np.array(probs, copy=False)', 'np.asarray(probs)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 6: the corrupted line at line 41 (we know it's the line with np.asarray((y_scores, copy=False), np.array(y_true)))
+>     if 'np.asarray((y_scores, copy=False), np.array(y_true))' in line:
+>         line = line.replace('np.asarray((y_scores, copy=False), np.array(y_true))', 'np.asarray(y_scores), np.asarray(y_true)')
+>         new_lines.append(line)
+>         continue
+>     # Pattern 7: the corrupted line at line 56 (we know it's the line with np.asarray((precision, copy=False), np.array(recall)))
+>     if 'np.asarray((precision, copy=False), np.array(recall))' in line:
+>         line = line.replace('np.asarray((precision, copy=False), np.array(recall))', 'np.asarray(precision), np.asarray(recall)')
+>         new_lines.append(line)
+>         continue
+>     new_lines.append(line)
+>
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'w') as f:
+>     f.writelines(new_lines)
+> EOF
+root@5ade7ad11099:/app# python3 fix_final.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 1, in <module>
+    import fasttext
+  File "/usr/local/lib/python3.13/site-packages/fasttext/__init__.py", line 12, in <module>
+    from .FastText import train_supervised
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 41
+    return np.asarray((y_scores, copy=False), np.asarray(y_true))
+                                 ^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# sed -n '41p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+        return np.asarray((y_scores, copy=False), np.asarray(y_true))
+root@5ade7ad11099:/app# sed -n '41p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup
+        return np.asarray((y_scores, copy=False), np.array(y_true))
+root@5ade7ad11099:/app# cat > fix_line.py << 'EOF'
+> import sys
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'r') as f:
+>     lines = f.readlines()
+>
+> # Replace line 41 (index 39) with the correct line
+> lines[39] = '        return np.asarray(y_scores), np.asarray(y_true)\n'
+>
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'w') as f:
+>     f.writelines(lines)
+> EOF
+root@5ade7ad11099:/app# python3 fix_line.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 1, in <module>
+    import fasttext
+  File "/usr/local/lib/python3.13/site-packages/fasttext/__init__.py", line 12, in <module>
+    from .FastText import train_supervised
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 41
+    return np.asarray((y_scores, copy=False), np.asarray(y_true))
+                                 ^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# sed -n '41p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+        return np.asarray((y_scores, copy=False), np.asarray(y_true))
+root@5ade7ad11099:/app# sed -n '41p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py.backup
+        return np.asarray((y_scores, copy=False), np.array(y_true))
+root@5ade7ad11099:/app# cat > fix_line.py << 'EOF'
+> import sys
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'r') as f:
+>     lines = f.readlines()
+>
+> # Replace line 41 (index 39) with the correct line
+> lines[39] = '        return np.asarray(y_scores), np.asarray(y_true)\n'
+>
+> with open('/usr/local/lib/python3.13/site-packages/fasttext/FastText.py', 'w') as f:
+>     f.writelines(lines)
+> EOF
+root@5ade7ad11099:/app# python3 fix_line.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Traceback (most recent call last):
+  File "/app/test_predict.py", line 1, in <module>
+    import fasttext
+  File "/usr/local/lib/python3.13/site-packages/fasttext/__init__.py", line 12, in <module>
+    from .FastText import train_supervised
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 41
+    return np.asarray((y_scores, copy=False), np.asarray(y_true))
+                                 ^^^^^^^^^^
+SyntaxError: invalid syntax. Maybe you meant '==' or ':=' instead of '='?
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# sed -i '41s/.*/        return np.asarray(y_scores), np.asarray(y_true)/' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+root@5ade7ad11099:/app# sed -i '56s/.*/        return np.asarray(precision), np.asarray(recall)/' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+root@5ade7ad11099:/app# python3 test_predict.py 2>&1
+Model loaded
+Prediction: (('__label__4',), array([0.67758948]))
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# sed -n '41p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+        return np.asarray(y_scores), np.asarray(y_true)
+root@5ade7ad11099:/app# sed -n '56p' /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+        return np.asarray(precision), np.asarray(recall)
+root@5ade7ad11099:/app# grep -n "np.array.*copy=False" /usr/local/lib/python3.13/site-packages/fasttext/FastText.py
+root@5ade7ad11099:/app# cat > test_full.py << 'EOF'
+> import fasttext
+> import tempfile
+> import os
+> # Train a simple model on dummy data
+> model = fasttext.train_supervised(tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False).name)
+> print('Model trained')
+> # Make a prediction
+> result = model.predict('Hello world')
+> print('Prediction:', result)
+> # Clean up
+> os.unlink(model.get_input_matrix().name)
+> print('All tests passed')
+> EOF
+root@5ade7ad11099:/app# python3 test_full.py 2>&1
+Read 0M words
+Number of words:  0
+Number of labels: 0
+Traceback (most recent call last):
+  File "/app/test_full.py", line 5, in <module>
+    model = fasttext.train_supervised(tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False).name)
+  File "/usr/local/lib/python3.13/site-packages/fasttext/FastText.py", line 560, in train_supervised
+    fasttext.train(ft.f, a)
+    ~~~~~~~~~~~~~~^^^^^^^^^
+ValueError: Empty vocabulary. Try a smaller -minCount value.
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# cat > final_test.py << 'EOF'
+> import fasttext
+> import sys
+> # Load the model
+> model = fasttext.load_model('model.bin')
+> print('Model loaded successfully')
+> # Make a prediction
+> result = model.predict('This is a test sentence')
+> print('Prediction result:', result)
+> # Check that the result is a tuple of (list, list) or (list, array)
+> if len(result) == 2:
+>     print('Prediction format: labels, probabilities')
+>     print('Labels:', result[0])
+>     print('Probabilities:', result[1])
+>     sys.exit(0)
+> else:
+>     print('Unexpected prediction format:', result)
+>     sys.exit(1)
+> EOF
+root@5ade7ad11099:/app# python3 final_test.py 2>&1
+Model loaded successfully
+Prediction result: (('__label__2',), array([0.50622904]))
+Prediction format: labels, probabilities
+Labels: ('__label__2',)
+Probabilities: [0.50622904]
+root@5ade7ad11099:/app# cd /app
+root@5ade7ad11099:/app# cat > final_test.py << 'EOF'
+> import fasttext
+> import sys
+> # Load the model
+> model = fasttext.load_model('model.bin')
+> print('Model loaded successfully')
+> # Make a prediction
+> result = model.predict('This is a test sentence')
+> print('Prediction result:', result)
+> # Check that the result is a tuple of (list, list) or (list, array)
+> if len(result) == 2:
+>     print('Prediction format: labels, probabilities')
+>     print('Labels:', result[0])
+>     print('Probabilities:', result[1])
+>     sys.exit(0)
+> else:
+>     print('Unexpected prediction format:', result)
+>     sys.exit(1)
+> EOF
+root@5ade7ad11099:/app# python3 final_test.py 2>&1
+Model loaded successfully
+Prediction result: (('__label__2',), array([0.50622904]))
+Prediction format: labels, probabilities
+Labels: ('__label__2',)
+Probabilities: [0.50622904]
+root@5ade7ad11099:/app#

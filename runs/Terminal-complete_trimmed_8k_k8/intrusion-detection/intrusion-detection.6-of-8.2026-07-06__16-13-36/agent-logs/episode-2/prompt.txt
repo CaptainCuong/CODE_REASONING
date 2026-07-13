@@ -1,0 +1,261 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@ce0c9143efbb:/app# which jq
+/usr/bin/jq
+root@ce0c9143efbb:/app# date
+Tue Jul  7 18:49:52 UTC 2026
+root@ce0c9143efbb:/app# cd /app
+root@ce0c9143efbb:/app# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> OUTPUT_DIR="/app/reports"
+>
+> # Ensure output directory exists
+> mkdir -p "$OUTPUT_DIR"
+>
+ > # Read rules
+> if [ ! -f "$RULES_FILE" ]; then
+>     echo "Rules file not found: $RULES_FILE"
+>     exit 1
+> fi
+>
+> # Parse JSON rules into associative array
+> rules=()
+> while IFS="" read -r line; do
+>     if [[ -n "$line" ]]; then
+>         rules+=("$line")
+>     fi
+> done < "$RULES_FILE"
+>
+> # We'll use jq if available, else parse with grep/sed
+> if command -v jq >/dev/null 2>&1; then
+>     # Use jq to get each rule
+>     jq -r '.rules[] | "\(.id):\(.pattern):\(.threshold):\(.timeframe):\(.severity)"' "$RULES_FILE" > /tmp/rules.txt
+> else
+>     # Fallback: parse manually
+>     grep -o '"id":"[^"]*"' "$RULES_FILE" | sed 's/"id":"//' | sed 's/"$//' > /tmp/rule_ids.txt
+>     grep -o '"pattern":"[^"]*"' "$RULES_FILE" | sed 's/"pattern":"//' | sed 's/"$//' > /tmp/patterns.txt
+>     grep -o '"threshold":"[^"]*"' "$RULES_FILE" | sed 's/"threshold":"//' | sed 's/"$//' > /tmp/thresholds.txt
+>     grep -o '"timeframe":"[^"]*"' "$RULES_FILE" | sed 's/"timeframe":"//' | sed 's/"$//' > /tmp/timeframes.txt
+>     grep -o '"severity":"[^"]*"' "$RULES_FILE" | sed 's/"severity":"//' | sed 's/"$//' > /tmp/severities.txt
+> fi
+>
+> # We'll use jq for simplicity; if not installed, we'll need to implement differently.
+> # Let's assume jq is installed.
+>
+> # Function to convert timestamp to epoch seconds
+> timestamp_to_epoch() {
+>     local ts="$1"
+>     # Convert to epoch using date command
+>     # For auth.log: "Apr 10 08:12:33"
+>     # For http.log: "10/Apr/2023:08:30:42 +0000"
+>     # We'll try to parse both.
+>     if [[ $ts =~ ^[A-Za-z]\ [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then
+>         # Format: Month DD HH:MM:SS
+>         local dt="${ts// /_}"
+>         date -Iseconds -d "$dt" +'%s'
+>     elif [[ $ts =~ ^[0-9]{2}/[A-Za-z]{3}/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}$ ]]; then
+>         # Format: DD/Mon/YYYY:HH:MM:SS +0000
+>         # Remove leading +
+>         local dt="${ts// /_}"
+>         date -Iseconds -d "$dt" +'%s'
+>     else
+>         echo "Warning: Unknown timestamp format: $ts"
+>         echo 0
+>     fi
+> }
+>
+> # Parse auth.log
+> echo "Parsing auth.log..."
+> auth_matches=()
+> while IFS= read -r line; do
+>     # Extract IP
+>     ip=$(echo "$line" | grep -oEo '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+>     if [ -z "$ip" ]; then
+>         continue
+>     fi
+>     # Extract timestamp
+>     # Example: Apr 10 08:12:33
+>     ts=$(echo "$line" | grep -oEo '[A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}')
+>     epoch=$(timestamp_to_epoch "$ts")
+>     # Store match
+>     auth_matches+=("$epoch|$ip|$line")
+> done < "$LOG_DIR/auth.log"
+>
+> # Parse http.log
+> echo "Parsing http.log..."
+> http_matches=()
+> while IFS= read -r line; do
+>     # Extract IP (first token)
+>     ip=$(echo "$line" | awk '{print $1}')
+>     if [ -z "$ip" ]; then
+>         continue
+>     fi
+>     # Extract timestamp: between '[' and ']' after date
+>     ts=$(echo "$line" | grep -oEo '\[[^]]*\]' | grep -oEo '[0-9]{2}/[A-Za-z]{3}/[0-9]{4}:[0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}' | head -1)
+>     epoch=$(timestamp_to_epoch "$ts")
+>     # Store match
+>     http_matches+=("$epoch|$ip|$line")
+> done < "$LOG_DIR/http.log"
+>
+t> # Combine matches
+> all_matches=("${auth_matches[@]}" "${http_matches[@]}")
+>
+> # Now process each rule
+> alerts=()
+> events=()
+> # We'll use associative arrays to store per rule data
+> # rule_id -> list of matches (epoch, ip, line)
+> # We'll use jq to parse rules and loop
+> if command -v jq >/dev/null 2>&1; then
+>     # Use jq to iterate over rules
+>     jq -c '.rules[] | .id, .pattern, .threshold, .timeframe, .severity' "$RULES_FILE" > /tmp/rule_entries.txt
+>     while IFS="" read -r rule_id pattern threshold timeframe severity; do
+>         # Collect matches for this rule
+>         matches_for_rule=()
+>         for match in "${all_matches[@]}"; do
+>             epoch=$(echo "$match" | cut -d'|' -f1)
+>             ip=$(echo "$match" | cut -d'|' -f2)
+>             line=$(echo "$match" | cut -d'|' -f3)
+>             if [[ $line =~ $pattern ]]; then
+>                 matches_for_rule+=("$epoch|$ip|$line")
+>             fi
+>         done
+>         # Now check each match within timeframe
+>         # We'll sort matches by epoch and then for each match, count matches within the last timeframe seconds
+>         # We'll store matches sorted by epoch
+>         sorted_matches=($(echo "${matches_for_rule[@]}" | sort -t'|' -k1,1n))
+>         # For each match, we check the window from epoch - timeframe to epoch
+>         # We'll use a sliding window approach
+>         for match in "${sorted_matches[@]}"; do
+>             epoch=$(echo "$ma
+[... output limited to 10000 bytes; 70 interior bytes omitted ...]
+ "ips": \"$ips\"}"
+>         if [ $rule_id != "${events[-1]%|$*}" ]; then
+>             events_array+=",
+> "
+>         fi
+>     done
+>     # Create JSON object with events and statistics
+>     jq -n --arg events "$events_array" --arg timestamp "$(date -Iseconds)" '{timestamp: $timestamp, events: ($events | from_json), statistics: {}}' > "$OUTPUT
+_DIR/report.json"
+>     # Now add statistics
+>     stats_json="$(jq -n --arg stats_json "$(cat "$OUTPUT_DIR/report.json" | grep -A 10 'statistics')" '' 2>/dev/null || true)
+>     # We'll just replace the file with a properly formatted one.
+>     # Let's do a simpler approach: create a temporary file with events array and then add statistics.
+>     echo "{\"timestamp\": \"$(date -Iseconds)\", \"events\": [$events_array], \"statistics\": {" > "$OUTPUT_DIR/report.json"
+>     for stat in "${stats[@]}"; do
+>         rule_id=$(echo $stat | cut -d':' -f1)
+>         count=$(echo $stat | cut -d':' -f2)
+>         echo "    \"$rule_id\": $count" >> "$OUTPUT_DIR/report.json"
+>     done
+>     echo "  }}" >> "$OUTPUT_DIR/report.json"
+> else
+>     # Fallback
+>     echo "{\"timestamp\": \"$(date -Iseconds)\", \"events\": [], \"statistics\": {" > "$OUTPUT_DIR/report.json"
+>     for stat in "${stats[@]}"; do
+>         rule_id=$(echo $stat | cut -d':' -f1)
+>         count=$(echo $stat | cut -d':' -f2)
+>         echo "    \"$rule_id\": $count" >> "$OUTPUT_DIR/report.json"
+>     done
+>     echo "  }}" >> "$OUTPUT_DIR/report.json"
+> fi
+>
+> echo "Detection complete. Alerts written to $OUTPUT_DIR/"
+> EOF
+root@ce0c9143efbb:/app# chmod +x intrusion_detector.sh
+root@ce0c9143efbb:/app# cat > response.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_DIR="/app/rules"
+> OUTPUT_DIR="/app/reports"
+>
+> if [ $# -ne 1 ]; then
+>     echo "Usage: $0 <IP_ADDRESS>"
+>     exit 1
+> fi
+>
+> IP="$1"
+> TIMESTAMP=$(date -Iseconds)
+> INCIDENT_FILE="${OUTPUT_DIR}/incident_${IP}_${TIMESTAMP}.txt"
+>
+> # Check if IP exists in logs
+> if [ ! -f "$LOG_DIR/auth.log" ] || [ ! -f "$LOG_DIR/http.log" ]; then
+>     echo "Log files not found."
+>     exit 1
+> fi
+>
+> # Function to extract IPs from log lines
+> echo "Extracting activity for IP: $IP" > "$INCIDENT_FILE"
+> echo "=============================" >> "$INCIDENT_FILE"
+> echo "Timestamp: $TIMESTAMP" >> "$INCIDENT_FILE"
+> echo "" >> "$INCIDENT_FILE"
+>
+> # Extract lines from auth.log with this IP
+> grep -E "from $IP" "$LOG_DIR/auth.log" >> "$INCIDENT_FILE"
+> if [ $? -eq 0 ]; then
+>     echo "" >> "$INCIDENT_FILE"
+>     echo "SSH auth.log matches:" >> "$INCIDENT_FILE"
+>     grep -E "from $IP" "$LOG_DIR/auth.log" | wc -l >> "$INCIDENT_FILE"
+> else
+>     echo "No matches in auth.log" >> "$INCIDENT_FILE"
+> fi
+>
+> echo "" >> "$INCIDENT_FILE"
+>
+> # Extract lines from http.log with this IP
+> grep -E "^$IP" "$LOG_DIR/http.log" >> "$INCIDENT_FILE"
+> if [ $? -eq 0 ]; then
+>     echo "" >> "$INCIDENT_FILE"
+>     echo "HTTP http.log matches:" >> "$INCIDENT_FILE"
+>     grep -E "^$IP" "$LOG_DIR/http.log" | wc -l >> "$INCIDENT_FILE"
+> else
+>     echo "No matches in http.log" >> "$INCIDENT_FILE"
+> fi
+>
+> # Check for suspicious activities (using detection rules)
+> echo "" >> "$INCIDENT_FILE"
+> echo "Suspicious activities detected:" >> "$INCIDENT_FILE"
+> # Read detection rules
+> cat "$RULES_DIR/detection_rules.json" | jq -r '.rules[] | "\(.id):\(.pattern):\(.severity)"' 2>/dev/null || cat "$RULES_DIR/detection_rules.json" | grep -o '"
+id":"[^"]*"' | sed 's/"id":"//' | sed 's/"$//' > /tmp/rule_ids.txt
+> cat "$RULES_DIR/detection_rules.json" | grep -o '"pattern":"[^"]*"' | sed 's/"pattern":"//' | sed 's/"$//' > /tmp/patterns.txt
+> cat "$RULES_DIR/detection_rules.json" | grep -o '"severity":"[^"]*"' | sed 's/"severity":"//' | sed 's/"$//' > /tmp/severities.txt
+>
+> while IFS="" read -r rule_id pattern severity; do
+>     # Check auth.log lines for this rule pattern
+>     matches_auth=$(grep -c "$pattern" "$LOG_DIR/auth.log" 2>/dev/null || true)
+>     # Check http.log lines for this rule pattern
+>     matches_http=$(grep -c "$pattern" "$LOG_DIR/http.log" 2>/dev/null || true)
+>     total_matches=$((matches_auth + matches_http))
+>     if [ $total_matches -gt 0 ]; then
+>         echo "Rule $rule_id ($severity): $total_matches matches" >> "$INCIDENT_FILE"
+>     fi
+> done < /tmp/rule_ids.txt
+>
+> # Clean up temporary files
+> rm -f /tmp/rule_ids.txt /tmp/patterns.txt /tmp/severities.txt
+>
+> echo "Incident report generated: $INCIDENT_FILE"
+> EOF
+root@ce0c9143efbb:/app# chmod +x response.sh
+root@ce0c9143efbb:/app# ls -la
+total 16
+drwxr-xr-x 1 root root   66 Jul  7 18:49 .
+drwxr-xr-x 1 root root   72 Jul  7 18:49 ..
+-rwxr-xr-x 1 root root 9648 Jul  7 18:49 intrusion_detector.sh
+drwxr-xr-x 1 root root   22 Jul  7 18:33 logs
+drwxr-xr-x 2 root root   10 Jul  7 18:33 reports
+-rwxr-xr-x 1 root root 2652 Jul  7 18:49 response.sh
+drwxr-xr-x 1 root root   42 Jul  7 18:33 rules
+root@ce0c9143efbb:/app# head -20 /app/reports/
+head: error reading '/app/reports/': Is a directory
+root@ce0c9143efbb:/app#

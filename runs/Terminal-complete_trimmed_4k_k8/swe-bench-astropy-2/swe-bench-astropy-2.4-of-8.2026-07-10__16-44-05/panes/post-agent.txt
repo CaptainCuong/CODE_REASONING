@@ -1,0 +1,1956 @@
+    >>> _line_type("READ SERR 3")
+    'command'
+    >>> _line_type(" \\n    !some gibberish")
+    'comment'
+    >>> _line_type("   ")
+    'comment'
+    >>> _line_type(" 21345.45")
+    'data,1'
+    >>> _line_type(" 21345.45 1.53e-3 1e-3 .04 NO nan")
+    'data,6'
+    >>> _line_type(" 21345.45,1.53e-3,1e-3,.04,NO,nan", delimiter=',')
+    'data,6'
+    >>> _line_type(" 21345.45 ! a comment to disturb")
+    'data,1'
+    >>> _line_type("NO NO NO NO NO")
+    'new'
+    >>> _line_type("NO,NO,NO,NO,NO", delimiter=',')
+    'new'
+    >>> _line_type("N O N NOON OON O")
+    Traceback (most recent call last):
+        ...
+    ValueError: Unrecognized QDP line...
+    >>> _line_type(" some non-comment gibberish")
+    Traceback (most recent call last):
+        ...
+    ValueError: Unrecognized QDP line...
+    """
+    _decimal_re = r"[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?"
+    _command_re = r"READ [TS]ERR(\s+[0-9]+)+"
+
+    sep = delimiter
+    if delimiter is None:
+        sep = r"\s+"
+    _new_re = rf"NO({sep}NO)+"
+    _data_re = rf"({_decimal_re}|NO|[-+]?nan)({sep}({_decimal_re}|NO|[-+]?nan))*)"
+    _type_re = rf"^\s*((?P<command>{_command_re})|(?P<new>{_new_re})|(?P<data>{_data_re})?\s*(\!(?P<comment>.*))?\s*$"
+    _line_type_re = re.compile(_type_re)
+    line = line.strip()
+    if not line:
+        return "comment"
+    match = _line_type_re.match(line)
+        line = line.strip().upper()
+
+    if match is None:
+        raise ValueError(f"Unrecognized QDP line: {line}")
+    for type_, val in match.groupdict().items():
+        if val is None:
+            continue
+        if type_ == "data":
+            return f"data,{len(val.split(sep=delimiter))}"
+        else:
+            return type_
+
+
+def _get_type_from_list_of_lines(lines, delimiter=None):
+    """Read through the list of QDP file lines and label each line by type.
+
+    Parameters
+    ----------
+    lines : list
+        List containing one file line in each entry
+
+    Returns
+    -------
+    contents : list
+        List containing the type for each line (see `line_type_and_data`)
+    ncol : int
+        The number of columns in the data lines. Must be the same throughout
+        the file
+
+    Examples
+    --------
+    >>> line0 = "! A comment"
+    >>> line1 = "543 12 456.0"
+    >>> lines = [line0, line1]
+    >>> types, ncol = _get_type_from_list_of_lines(lines)
+    >>> types[0]
+    'comment'
+    >>> types[1]
+    'data,3'
+    >>> ncol
+    3
+    >>> lines.append("23")
+    >>> _get_type_from_list_of_lines(lines)
+    Traceback (most recent call last):
+        ...
+    ValueError: Inconsistent number of columns
+    """
+    types = [_line_type(line, delimiter=delimiter) for line in lines]
+    current_ncol = None
+    for type_ in types:
+        if type_.startswith("data,"):
+            ncol = int(type_[5:])
+            if current_ncol is None:
+                current_ncol = ncol
+            elif ncol != current_ncol:
+                raise ValueError("Inconsistent number of columns")
+
+    return types, current_ncol
+
+
+def _get_lines_from_file(qdp_file):
+    if "\n" in qdp_file:
+        lines = qdp_file.split("\n")
+    elif isinstance(qdp_file, str):
+        with open(qdp_file) as fobj:
+            lines = [line.strip() for line in fobj.readlines()]
+    elif isinstance(qdp_file, Iterable):
+        lines = qdp_file
+    else:
+        raise ValueError("invalid value of qdb_file")
+
+    return lines
+
+
+def _interpret_err_lines(err_specs, ncols, names=None):
+    """Give list of column names from the READ SERR and TERR commands.
+
+    Parameters
+    ----------
+    err_specs : dict
+        ``{'serr': [n0, n1, ...], 'terr': [n2, n3, ...]}``
+        Error specifications for symmetric and two-sided errors
+    ncols : int
+        Number of data columns
+
+    Other Parameters
+    ----------------
+    names : list of str
+        Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+        including error columns.
+
+    Returns
+    -------
+    colnames : list
+        List containing the column names. Error columns will have the name
+        of the main column plus ``_err`` for symmetric errors, and ``_perr``
+        and ``_nerr`` for positive and negative errors respectively
+
+    Examples
+    --------
+    >>> col_in = ['MJD', 'Rate']
+    >>> cols = _interpret_err_lines(None, 2, names=col_in)
+    >>> cols[0]
+    'MJD'
+    >>> err_specs = {'terr': [1], 'serr': [2]}
+    >>> ncols = 5
+    >>> cols = _interpret_err_lines(err_specs, ncols, names=col_in)
+    >>> cols[0]
+    'MJD'
+    >>> cols[2]
+    'MJD_nerr'
+    >>> cols[4]
+    'Rate_err'
+    >>> _interpret_err_lines(err_specs, 6, names=col_in)
+    Traceback (most recent call last):
+        ...
+    ValueError: Inconsistent number of input colnames
+    """
+    colnames = ["" for i in range(ncols)]
+    if err_specs is None:
+        serr_cols = terr_cols = []
+
+    else:
+        # I don't want to empty the original one when using `pop` below
+        err_specs = copy.deepcopy(err_specs)
+
+        serr_cols = err_specs.pop("serr", [])
+        terr_cols = err_specs.pop("terr", [])
+
+    if names is not None:
+        all_error_cols = len(serr_cols) + len(terr_cols) * 2
+        if all_error_cols + len(names) != ncols:
+            raise ValueError("Inconsistent number of input colnames")
+
+    shift = 0
+    for i in range(ncols):
+        col_num = i + 1 - shift
+        if colnames[i] != "":
+            continue
+
+        colname_root = f"col{col_num}"
+
+        if names is not None:
+            colname_root = names[col_num - 1]
+
+        colnames[i] = f"{colname_root}"
+        if col_num in serr_cols:
+            colnames[i + 1] = f"{colname_root}_err"
+            shift += 1
+            continue
+
+        if col_num in terr_cols:
+            colnames[i + 1] = f"{colname_root}_perr"
+            colnames[i + 2] = f"{colname_root}_nerr"
+            shift += 2
+            continue
+
+    assert not np.any([c == "" for c in colnames])
+
+    return colnames
+
+
+def _get_tables_from_qdp_file(qdp_file, input_colnames=None, delimiter=None):
+    """Get all tables from a QDP file.
+
+    Parameters
+    ----------
+    qdp_file : str
+        Input QDP file name
+
+    Other Parameters
+    ----------------
+    input_colnames : list of str
+        Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+        including error columns.
+    delimiter : str
+        Delimiter for the values in the table.
+
+    Returns
+    -------
+    list of `~astropy.table.Table`
+        List containing all the tables present inside the QDP file
+    """
+    lines = _get_lines_from_file(qdp_file)
+    contents, ncol = _get_type_from_list_of_lines(lines, delimiter=delimiter)
+
+    table_list = []
+    err_specs = {}
+    colnames = None
+
+    comment_text = ""
+    initial_comments = ""
+    command_lines = ""
+    current_rows = None
+
+    for line, datatype in zip(lines, contents):
+        line = line.strip().lstrip("!")
+        # Is this a comment?
+        if datatype == "comment":
+            comment_text += line + "\n"
+            continue
+
+        if datatype == "command":
+            # The first time I find commands, I save whatever comments into
+            # The initial comments.
+            if command_lines == "":
+                initial_comments = comment_text
+                comment_text = ""
+
+            if err_specs != {}:
+                warnings.warn(
+                    "This file contains multiple command blocks. Please verify",
+                    AstropyUserWarning,
+                )
+            command_lines += line + "\n"
+            continue
+
+        if datatype.startswith("data"):
+            # The first time I find data, I define err_specs
+            if err_specs == {} and command_lines != "":
+                for cline in command_lines.strip().split("\n"):
+                    command = cline.strip().split()
+                    # This should never happen, but just in case.
+                    if len(command) < 3:
+                        continue
+                    err_specs[command[1].lower()] = [int(c) for c in command[2:]]
+            if colnames is None:
+                colnames = _interpret_err_lines(err_specs, ncol, names=input_colnames)
+
+            if current_rows is None:
+                current_rows = []
+
+            values = []
+            for v in line.split(delimiter):
+                if v == "NO":
+                    values.append(np.ma.masked)
+                else:
+                    # Understand if number is int or float
+                    try:
+                        values.append(int(v))
+                    except ValueError:
+                        values.append(float(v))
+            current_rows.append(values)
+            continue
+
+        if datatype == "new":
+            # Save table to table_list and reset
+            if current_rows is not None:
+                new_table = Table(names=colnames, rows=current_rows)
+                new_table.meta["initial_comments"] = initial_comments.strip().split(
+                    "\n"
+                )
+                new_table.meta["comments"] = comment_text.strip().split("\n")
+                # Reset comments
+                comment_text = ""
+                table_list.append(new_table)
+                current_rows = None
+            continue
+
+    # At the very end, if there is still a table being written, let's save
+    # it to the table_list
+    if current_rows is not None:
+        new_table = Table(names=colnames, rows=current_rows)
+        new_table.meta["initial_comments"] = initial_comments.strip().split("\n")
+        new_table.meta["comments"] = comment_text.strip().split("\n")
+        table_list.append(new_table)
+
+    return table_list
+
+
+def _understand_err_col(colnames):
+    """Get which column names are error columns.
+
+    Examples
+    --------
+    >>> colnames = ['a', 'a_err', 'b', 'b_perr', 'b_nerr']
+    >>> serr, terr = _understand_err_col(colnames)
+    >>> np.allclose(serr, [1])
+    True
+    >>> np.allclose(terr, [2])
+    True
+    >>> serr, terr = _understand_err_col(['a', 'a_nerr'])
+    Traceback (most recent call last):
+    ...
+    ValueError: Missing positive error...
+    >>> serr, terr = _understand_err_col(['a', 'a_perr'])
+    Traceback (most recent call last):
+    ...
+    ValueError: Missing negative error...
+    """
+    shift = 0
+    serr = []
+    terr = []
+
+    for i, col in enumerate(colnames):
+        if col.endswith("_err"):
+            # The previous column, but they're numbered from 1!
+            # Plus, take shift into account
+            serr.append(i - shift)
+            shift += 1
+        elif col.endswith("_perr"):
+            terr.append(i - shift)
+            if len(colnames) == i + 1 or not colnames[i + 1].endswith("_nerr"):
+                raise ValueError("Missing negative error")
+            shift += 2
+        elif col.endswith("_nerr") and not colnames[i - 1].endswith("_perr"):
+            raise ValueError("Missing positive error")
+    return serr, terr
+
+
+def _read_table_qdp(qdp_file, names=None, table_id=None, delimiter=None):
+    """Read a table from a QDP file.
+
+    Parameters
+    ----------
+    qdp_file : str
+        Input QDP file name
+
+    Other Parameters
+    ----------------
+    names : list of str
+        Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+        including error columns.
+
+    table_id : int, default 0
+root@8fb62f807cce:/app# cat -n /app/astropy/astropy/io/ascii/qdp.py
+     1  # Licensed under a 3-clause BSD style license - see LICENSE.rst
+     2  """
+     3  This package contains functions for reading and writing QDP tables that are
+     4  not meant to be used directly, but instead are available as readers/writers in
+     5  `astropy.table`. See :ref:`astropy:table_io` for more details.
+     6  """
+     7  import copy
+     8  import re
+     9  import warnings
+    10  from collections.abc import Iterable
+    11
+    12  import numpy as np
+    13
+    14  from astropy.table import Table
+    15  from astropy.utils.exceptions import AstropyUserWarning
+    16
+    17  from . import basic, core
+    18
+    19
+    20  def _line_type(line, delimiter=None):
+    21      """Interpret a QDP file line.
+    22
+    23      Parameters
+    24      ----------
+    25      line : str
+    26          a single line of the file
+    27
+    28      Returns
+    29      -------
+    30      type : str
+    31          Line type: "comment", "command", or "data"
+    32
+    33      Examples
+    34      --------
+    35      >>> _line_type("READ SERR 3")
+    36      'command'
+    37      >>> _line_type(" \\n    !some gibberish")
+    38      'comment'
+    39      >>> _line_type("   ")
+    40      'comment'
+    41      >>> _line_type(" 21345.45")
+    42      'data,1'
+    43      >>> _line_type(" 21345.45 1.53e-3 1e-3 .04 NO nan")
+    44      'data,6'
+    45      >>> _line_type(" 21345.45,1.53e-3,1e-3,.04,NO,nan", delimiter=',')
+    46      'data,6'
+    47      >>> _line_type(" 21345.45 ! a comment to disturb")
+    48      'data,1'
+    49      >>> _line_type("NO NO NO NO NO")
+    50      'new'
+    51      >>> _line_type("NO,NO,NO,NO,NO", delimiter=',')
+    52      'new'
+    53      >>> _line_type("N O N NOON OON O")
+    54      Traceback (most recent call last):
+    55          ...
+    56      ValueError: Unrecognized QDP line...
+    57      >>> _line_type(" some non-comment gibberish")
+    58      Traceback (most recent call last):
+    59          ...
+    60      ValueError: Unrecognized QDP line...
+    61      """
+    62      _decimal_re = r"[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?"
+    63      _command_re = r"READ [TS]ERR(\s+[0-9]+)+"
+    64
+    65      sep = delimiter
+    66      if delimiter is None:
+    67          sep = r"\s+"
+    68      _new_re = rf"NO({sep}NO)+"
+    69      _data_re = rf"({_decimal_re}|NO|[-+]?nan)({sep}({_decimal_re}|NO|[-+]?nan))*)"
+    70      _type_re = rf"^\s*((?P<command>{_command_re})|(?P<new>{_new_re})|(?P<data>{_data_re})?\s*(\!(?P<comment>.*))?\s*$"
+    71      _line_type_re = re.compile(_type_re)
+    72      line = line.strip()
+    73      if not line:
+    74          return "comment"
+    75      match = _line_type_re.match(line)
+    76          line = line.strip().upper()
+    77
+    78      if match is None:
+    79          raise ValueError(f"Unrecognized QDP line: {line}")
+    80      for type_, val in match.groupdict().items():
+    81          if val is None:
+    82              continue
+    83          if type_ == "data":
+    84              return f"data,{len(val.split(sep=delimiter))}"
+    85          else:
+    86              return type_
+    87
+    88
+    89  def _get_type_from_list_of_lines(lines, delimiter=None):
+    90      """Read through the list of QDP file lines and label each line by type.
+    91
+    92      Parameters
+    93      ----------
+    94      lines : list
+    95          List containing one file line in each entry
+    96
+    97      Returns
+    98      -------
+    99      contents : list
+   100          List containing the type for each line (see `line_type_and_data`)
+   101      ncol : int
+   102          The number of columns in the data lines. Must be the same throughout
+   103          the file
+   104
+   105      Examples
+   106      --------
+   107      >>> line0 = "! A comment"
+   108      >>> line1 = "543 12 456.0"
+   109      >>> lines = [line0, line1]
+   110      >>> types, ncol = _get_type_from_list_of_lines(lines)
+   111      >>> types[0]
+   112      'comment'
+   113      >>> types[1]
+   114      'data,3'
+   115      >>> ncol
+   116      3
+   117      >>> lines.append("23")
+   118      >>> _get_type_from_list_of_lines(lines)
+   119      Traceback (most recent call last):
+   120          ...
+   121      ValueError: Inconsistent number of columns
+   122      """
+   123      types = [_line_type(line, delimiter=delimiter) for line in lines]
+   124      current_ncol = None
+   125      for type_ in types:
+   126          if type_.startswith("data,"):
+   127              ncol = int(type_[5:])
+   128              if current_ncol is None:
+   129                  current_ncol = ncol
+   130              elif ncol != current_ncol:
+   131                  raise ValueError("Inconsistent number of columns")
+   132
+   133      return types, current_ncol
+   134
+   135
+   136  def _get_lines_from_file(qdp_file):
+   137      if "\n" in qdp_file:
+   138          lines = qdp_file.split("\n")
+   139      elif isinstance(qdp_file, str):
+   140          with open(qdp_file) as fobj:
+   141              lines = [line.strip() for line in fobj.readlines()]
+   142      elif isinstance(qdp_file, Iterable):
+   143          lines = qdp_file
+   144      else:
+   145          raise ValueError("invalid value of qdb_file")
+   146
+   147      return lines
+   148
+   149
+   150  def _interpret_err_lines(err_specs, ncols, names=None):
+   151      """Give list of column names from the READ SERR and TERR commands.
+   152
+   153      Parameters
+   154      ----------
+   155      err_specs : dict
+   156          ``{'serr': [n0, n1, ...], 'terr': [n2, n3, ...]}``
+   157          Error specifications for symmetric and two-sided errors
+   158      ncols : int
+   159          Number of data columns
+   160
+   161      Other Parameters
+   162      ----------------
+   163      names : list of str
+   164          Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+   165          including error columns.
+   166
+   167      Returns
+   168      -------
+   169      colnames : list
+   170          List containing the column names. Error columns will have the name
+   171          of the main column plus ``_err`` for symmetric errors, and ``_perr``
+   172          and ``_nerr`` for positive and negative errors respectively
+   173
+   174      Examples
+   175      --------
+   176      >>> col_in = ['MJD', 'Rate']
+   177      >>> cols = _interpret_err_lines(None, 2, names=col_in)
+   178      >>> cols[0]
+   179      'MJD'
+   180      >>> err_specs = {'terr': [1], 'serr': [2]}
+   181      >>> ncols = 5
+   182      >>> cols = _interpret_err_lines(err_specs, ncols, names=col_in)
+   183      >>> cols[0]
+   184      'MJD'
+   185      >>> cols[2]
+   186      'MJD_nerr'
+   187      >>> cols[4]
+   188      'Rate_err'
+   189      >>> _interpret_err_lines(err_specs, 6, names=col_in)
+   190      Traceback (most recent call last):
+   191          ...
+   192      ValueError: Inconsistent number of input colnames
+   193      """
+   194      colnames = ["" for i in range(ncols)]
+   195      if err_specs is None:
+   196          serr_cols = terr_cols = []
+   197
+   198      else:
+   199          # I don't want to empty the original one when using `pop` below
+   200          err_specs = copy.deepcopy(err_specs)
+   201
+   202          serr_cols = err_specs.pop("serr", [])
+   203          terr_cols = err_specs.pop("terr", [])
+   204
+   205      if names is not None:
+   206          all_error_cols = len(serr_cols) + len(terr_cols) * 2
+   207          if all_error_cols + len(names) != ncols:
+   208              raise ValueError("Inconsistent number of input colnames")
+   209
+   210      shift = 0
+   211      for i in range(ncols):
+   212          col_num = i + 1 - shift
+   213          if colnames[i] != "":
+   214              continue
+   215
+   216          colname_root = f"col{col_num}"
+   217
+   218          if names is not None:
+   219              colname_root = names[col_num - 1]
+   220
+   221          colnames[i] = f"{colname_root}"
+   222          if col_num in serr_cols:
+   223              colnames[i + 1] = f"{colname_root}_err"
+   224              shift += 1
+   225              continue
+   226
+   227          if col_num in terr_cols:
+   228              colnames[i + 1] = f"{colname_root}_perr"
+   229              colnames[i + 2] = f"{colname_root}_nerr"
+   230              shift += 2
+   231              continue
+   232
+   233      assert not np.any([c == "" for c in colnames])
+   234
+   235      return colnames
+   236
+   237
+   238  def _get_tables_from_qdp_file(qdp_file, input_colnames=None, delimiter=None):
+   239      """Get all tables from a QDP file.
+   240
+   241      Parameters
+   242      ----------
+   243      qdp_file : str
+   244          Input QDP file name
+   245
+   246      Other Parameters
+   247      ----------------
+   248      input_colnames : list of str
+   249          Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+   250          including error columns.
+   251      delimiter : str
+   252          Delimiter for the values in the table.
+   253
+   254      Returns
+   255      -------
+   256      list of `~astropy.table.Table`
+   257          List containing all the tables present inside the QDP file
+   258      """
+   259      lines = _get_lines_from_file(qdp_file)
+   260      contents, ncol = _get_type_from_list_of_lines(lines, delimiter=delimiter)
+   261
+   262      table_list = []
+   263      err_specs = {}
+   264      colnames = None
+   265
+   266      comment_text = ""
+   267      initial_comments = ""
+   268      command_lines = ""
+   269      current_rows = None
+   270
+   271      for line, datatype in zip(lines, contents):
+   272          line = line.strip().lstrip("!")
+   273          # Is this a comment?
+   274          if datatype == "comment":
+   275              comment_text += line + "\n"
+   276              continue
+   277
+   278          if datatype == "command":
+   279              # The first time I find commands, I save whatever comments into
+   280              # The initial comments.
+   281              if command_lines == "":
+   282                  initial_comments = comment_text
+   283                  comment_text = ""
+   284
+   285              if err_specs != {}:
+   286                  warnings.warn(
+   287                      "This file contains multiple command blocks. Please verify",
+   288                      AstropyUserWarning,
+   289                  )
+   290              command_lines += line + "\n"
+   291              continue
+   292
+   293          if datatype.startswith("data"):
+   294              # The first time I find data, I define err_specs
+   295              if err_specs == {} and command_lines != "":
+   296                  for cline in command_lines.strip().split("\n"):
+   297                      command = cline.strip().split()
+   298                      # This should never happen, but just in case.
+   299                      if len(command) < 3:
+   300                          continue
+   301                      err_specs[command[1].lower()] = [int(c) for c in command[2:]]
+   302              if colnames is None:
+   303                  colnames = _interpret_err_lines(err_specs, ncol, names=input_colnames)
+   304
+   305              if current_rows is None:
+   306                  current_rows = []
+   307
+   308              values = []
+   309              for v in line.split(delimiter):
+   310                  if v == "NO":
+   311                      values.append(np.ma.masked)
+   312                  else:
+   313                      # Understand if number is int or float
+   314                      try:
+   315                          values.append(int(v))
+   316                      except ValueError:
+   317                          values.append(float(v))
+   318              current_rows.append(values)
+   319              continue
+   320
+   321          if datatype == "new":
+   322              # Save table to table_list and reset
+   323              if current_rows is not None:
+   324                  new_table = Table(names=colnames, rows=current_rows)
+   325                  new_table.meta["initial_comments"] = initial_comments.strip().split(
+   326                      "\n"
+   327                  )
+   328                  new_table.meta["comments"] = comment_text.strip().split("\n")
+   329                  # Reset comments
+   330                  comment_text = ""
+   331                  table_list.append(new_table)
+   332                  current_rows = None
+   333              continue
+   334
+   335      # At the very end, if there is still a table being written, let's save
+   336      # it to the table_list
+   337      if current_rows is not None:
+   338          new_table = Table(names=colnames, rows=current_rows)
+   339          new_table.meta["initial_comments"] = initial_comments.strip().split("\n")
+   340          new_table.meta["comments"] = comment_text.strip().split("\n")
+   341          table_list.append(new_table)
+   342
+   343      return table_list
+   344
+   345
+   346  def _understand_err_col(colnames):
+   347      """Get which column names are error columns.
+   348
+   349      Examples
+   350      --------
+   351      >>> colnames = ['a', 'a_err', 'b', 'b_perr', 'b_nerr']
+   352      >>> serr, terr = _understand_err_col(colnames)
+   353      >>> np.allclose(serr, [1])
+   354      True
+   355      >>> np.allclose(terr, [2])
+   356      True
+   357      >>> serr, terr = _understand_err_col(['a', 'a_nerr'])
+   358      Traceback (most recent call last):
+   359      ...
+   360      ValueError: Missing positive error...
+   361      >>> serr, terr = _understand_err_col(['a', 'a_perr'])
+   362      Traceback (most recent call last):
+   363      ...
+   364      ValueError: Missing negative error...
+   365      """
+   366      shift = 0
+   367      serr = []
+   368      terr = []
+   369
+   370      for i, col in enumerate(colnames):
+   371          if col.endswith("_err"):
+   372              # The previous column, but they're numbered from 1!
+   373              # Plus, take shift into account
+   374              serr.append(i - shift)
+   375              shift += 1
+   376          elif col.endswith("_perr"):
+   377              terr.append(i - shift)
+   378              if len(colnames) == i + 1 or not colnames[i + 1].endswith("_nerr"):
+   379                  raise ValueError("Missing negative error")
+   380              shift += 2
+   381          elif col.endswith("_nerr") and not colnames[i - 1].endswith("_perr"):
+   382              raise ValueError("Missing positive error")
+   383      return serr, terr
+   384
+   385
+   386  def _read_table_qdp(qdp_file, names=None, table_id=None, delimiter=None):
+   387      """Read a table from a QDP file.
+   388
+   389      Parameters
+   390      ----------
+   391      qdp_file : str
+   392          Input QDP file name
+   393
+   394      Other Parameters
+   395      ----------------
+   396      names : list of str
+   397          Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+   398          including error columns.
+   399
+   400      table_id : int, default 0
+   401          Number of the table to be read from the QDP file. This is useful
+   402          when multiple tables present in the file. By default, the first is read.
+   403
+   404      delimiter : str
+   405          Any delimiter accepted by the `sep` argument of str.split()
+   406
+   407      Returns
+   408      -------
+   409      tables : list of `~astropy.table.Table`
+   410          List containing all the tables present inside the QDP file
+   411      """
+   412      if table_id is None:
+   413          warnings.warn(
+   414              "table_id not specified. Reading the first available table",
+   415              AstropyUserWarning,
+   416          )
+   417          table_id = 0
+   418
+   419      tables = _get_tables_from_qdp_file(
+   420          qdp_file, input_colnames=names, delimiter=delimiter
+   421      )
+   422
+   423      return tables[table_id]
+   424
+   425
+   426  def _write_table_qdp(table, filename=None, err_specs=None):
+   427      """Write a table to a QDP file.
+   428
+   429      Parameters
+   430      ----------
+   431      table : :class:`~astropy.table.Table`
+   432          Input table to be written
+   433      filename : str
+   434          Output QDP file name
+   435
+   436      Other Parameters
+   437      ----------------
+   438      err_specs : dict
+   439          Dictionary of the format {'serr': [1], 'terr': [2, 3]}, specifying
+   440          which columns have symmetric and two-sided errors (see QDP format
+   441          specification)
+   442      """
+   443      import io
+   444
+   445      fobj = io.StringIO()
+   446
+   447      if "initial_comments" in table.meta and table.meta["initial_comments"] != []:
+   448          for line in table.meta["initial_comments"]:
+   449              line = line.strip()
+   450              if not line.startswith("!"):
+   451                  line = "!" + line
+   452              print(line, file=fobj)
+   453
+   454      if err_specs is None:
+   455          serr_cols, terr_cols = _understand_err_col(table.colnames)
+   456      else:
+   457          serr_cols = err_specs.pop("serr", [])
+   458          terr_cols = err_specs.pop("terr", [])
+   459      if serr_cols != []:
+   460          col_string = " ".join([str(val) for val in serr_cols])
+   461          print(f"READ SERR {col_string}", file=fobj)
+   462      if terr_cols != []:
+   463          col_string = " ".join([str(val) for val in terr_cols])
+   464          print(f"READ TERR {col_string}", file=fobj)
+   465
+   466      if "comments" in table.meta and table.meta["comments"] != []:
+   467          for line in table.meta["comments"]:
+   468              line = line.strip()
+   469              if not line.startswith("!"):
+   470                  line = "!" + line
+   471              print(line, file=fobj)
+   472
+   473      colnames = table.colnames
+   474      print("!" + " ".join(colnames), file=fobj)
+   475      for row in table:
+   476          values = []
+   477          for val in row:
+   478              if not np.ma.is_masked(val):
+   479                  rep = str(val)
+   480              else:
+   481                  rep = "NO"
+   482              values.append(rep)
+   483          print(" ".join(values), file=fobj)
+   484
+   485      full_string = fobj.getvalue()
+   486      fobj.close()
+   487
+   488      if filename is not None:
+   489          with open(filename, "w") as fobj:
+   490              print(full_string, file=fobj)
+   491
+   492      return full_string.split("\n")
+   493
+   494
+   495  class QDPSplitter(core.DefaultSplitter):
+   496      """
+   497      Split on space for QDP tables.
+   498      """
+   499
+   500      delimiter = " "
+   501
+   502
+   503  class QDPHeader(basic.CommentedHeaderHeader):
+   504      """
+   505      Header that uses the :class:`astropy.io.ascii.basic.QDPSplitter`.
+   506      """
+   507
+   508      splitter_class = QDPSplitter
+   509      comment = "!"
+   510      write_comment = "!"
+   511
+   512
+   513  class QDPData(basic.BasicData):
+   514      """
+   515      Data that uses the :class:`astropy.io.ascii.basic.CsvSplitter`.
+   516      """
+   517
+   518      splitter_class = QDPSplitter
+   519      fill_values = [(core.masked, "NO")]
+   520      comment = "!"
+   521      write_comment = None
+   522
+   523
+   524  class QDP(basic.Basic):
+   525      """Quick and Dandy Plot table.
+   526
+   527      Example::
+   528
+   529          ! Initial comment line 1
+   530          ! Initial comment line 2
+   531          READ TERR 1
+   532          READ SERR 3
+   533          ! Table 0 comment
+   534          !a a(pos) a(neg) b be c d
+   535          53000.5   0.25  -0.5   1  1.5  3.5 2
+   536          54000.5   1.25  -1.5   2  2.5  4.5 3
+   537          NO NO NO NO NO
+   538          ! Table 1 comment
+   539          !a a(pos) a(neg) b be c d
+   540          54000.5   2.25  -2.5   NO  3.5  5.5 5
+   541          55000.5   3.25  -3.5   4  4.5  6.5 nan
+   542
+   543      The input table above contains some initial comments, the error commands,
+   544      then two tables.
+   545      This file format can contain multiple tables, separated by a line full
+   546      of ``NO``s. Comments are exclamation marks, and missing values are single
+   547      ``NO`` entries. The delimiter is usually whitespace, more rarely a comma.
+   548      The QDP format differentiates between data and error columns. The table
+   549      above has commands::
+   550
+   551          READ TERR 1
+   552          READ SERR 3
+   553
+   554      which mean that after data column 1 there will be two error columns
+   555      containing its positive and engative error bars, then data column 2 without
+   556      error bars, then column 3, then a column with the symmetric error of column
+   557      3, then the remaining data columns.
+   558
+   559      As explained below, table headers are highly inconsistent. Possible
+   560      comments containing column names will be ignored and columns will be called
+   561      ``col1``, ``col2``, etc. unless the user specifies their names with the
+   562      ``names=`` keyword argument,
+   563      When passing column names, pass **only the names of the data columns, not
+   564      the error columns.**
+   565      Error information will be encoded in the names of the table columns.
+   566      (e.g. ``a_perr`` and ``a_nerr`` for the positive and negative error of
+   567      column ``a``, ``b_err`` the symmetric error of column ``b``.)
+   568
+   569      When writing tables to this format, users can pass an ``err_specs`` keyword
+   570      passing a dictionary ``{'serr': [3], 'terr': [1, 2]}``, meaning that data
+   571      columns 1 and two will have two additional columns each with their positive
+   572      and negative errors, and data column 3 will have an additional column with
+   573      a symmetric error (just like the ``READ SERR`` and ``READ TERR`` commands
+   574      above)
+   575
+   576      Headers are just comments, and tables distributed by various missions
+   577      can differ greatly in their use of conventions. For example, light curves
+   578      distributed by the Swift-Gehrels mission have an extra space in one header
+   579      entry that makes the number of labels inconsistent with the number of cols.
+   580      For this reason, we ignore the comments that might encode the column names
+   581      and leave the name specification to the user.
+   582
+   583      Example::
+   584
+   585          >               Extra space
+   586          >                   |
+   587          >                   v
+   588          >!     MJD       Err (pos)       Err(neg)        Rate            Error
+   589          >53000.123456   2.378e-05     -2.378472e-05     NO             0.212439
+   590
+   591      These readers and writer classes will strive to understand which of the
+   592      comments belong to all the tables, and which ones to each single table.
+   593      General comments will be stored in the ``initial_comments`` meta of each
+   594      table. The comments of each table will be stored in the ``comments`` meta.
+   595
+   596      Example::
+   597
+   598          t = Table.read(example_qdp, format='ascii.qdp', table_id=1, names=['a', 'b', 'c', 'd'])
+   599
+   600      reads the second table (``table_id=1``) in file ``example.qdp`` containing
+   601      the table above. There are four column names but seven data columns, why?
+   602      Because the ``READ SERR`` and ``READ TERR`` commands say that there are
+   603      three error columns.
+   604      ``t.meta['initial_comments']`` will contain the initial two comment lines
+   605      in the file, while ``t.meta['comments']`` will contain ``Table 1 comment``
+   606
+   607      The table can be written to another file, preserving the same information,
+   608      as::
+   609
+   610          t.write(test_file, err_specs={'terr': [1], 'serr': [3]})
+   611
+   612      Note how the ``terr`` and ``serr`` commands are passed to the writer.
+   613
+   614      """
+   615
+   616      _format_name = "qdp"
+   617      _io_registry_can_write = True
+   618      _io_registry_suffix = ".qdp"
+   619      _description = "Quick and Dandy Plotter"
+   620
+   621      header_class = QDPHeader
+   622      data_class = QDPData
+   623
+   624      def __init__(self, table_id=None, names=None, err_specs=None, sep=None):
+   625          super().__init__()
+   626          self.table_id = table_id
+   627          self.names = names
+   628          self.err_specs = err_specs
+   629          self.delimiter = sep
+   630
+   631      def read(self, table):
+   632          self.lines = self.inputter.get_lines(table, newline="\n")
+   633          return _read_table_qdp(
+   634              self.lines,
+   635              table_id=self.table_id,
+   636              names=self.names,
+   637              delimiter=self.delimiter,
+   638          )
+   639
+   640      def write(self, table):
+   641          self._check_multidim_table(table)
+   642          lines = _write_table_qdp(table, err_specs=self.err_specs)
+   643          return lines
+root@8fb62f807cce:/app# python3 -c "from astropy.io import ascii; from astropy.table import Table; table = Table.read('test.qdp', format='ascii.qdp'); print(tab
+le)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# python3 -c "from astropy.io.ascii import qdp; from astropy.table import Table; table = Table.read('test.qdp', format='ascii.qdp'); print
+(table)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# python3 -c "from astropy.io.ascii import qdp; print(qdp.__file__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# python3 -c "import sys; print(sys.path)"
+['', '/usr/local/lib/python39.zip', '/usr/local/lib/python3.9', '/usr/local/lib/python3.9/lib-dynload', '/usr/local/lib/python3.9/site-packages']
+root@8fb62f807cce:/app# python3 -c "import astropy; print(astropy.__version__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+AttributeError: module 'astropy' has no attribute '__version__'
+root@8fb62f807cce:/app# python3 -c "import astropy.io.ascii as ascii; print(ascii.__file__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# ls -la /app/astropy/
+total 676
+drwxr-xr-x 1 root root     49 Jul 11 00:07 .
+drwxr-xr-x 1 root root     29 Jul 10 23:50 ..
+-rw-r--r-- 1 root root      0 Jul 10 23:50 .astropy-root
+drwxr-xr-x 1 root root     32 Jul 10 23:50 .circleci
+drwxr-xr-x 1 root root     70 Jul 10 23:50 .devcontainer
+drwxr-xr-x 1 root root    156 Jul 10 23:51 .git
+-rw-r--r-- 1 root root   1701 Jul 10 23:50 .git-blame-ignore-revs
+-rw-r--r-- 1 root root     74 Jul 10 23:50 .gitattributes
+drwxr-xr-x 1 root root    164 Jul 10 23:50 .github
+-rw-r--r-- 1 root root   1269 Jul 10 23:50 .gitignore
+-rw-r--r-- 1 root root  21307 Jul 10 23:50 .mailmap
+-rw-r--r-- 1 root root   3407 Jul 10 23:50 .pre-commit-config.yaml
+drwxr-xr-x 1 root root     59 Jul 10 23:50 .pyinstaller
+-rw-r--r-- 1 root root    457 Jul 10 23:50 .readthedocs.yaml
+-rw-r--r-- 1 root root 546768 Jul 10 23:50 CHANGES.rst
+-rw-r--r-- 1 root root     66 Jul 10 23:50 CITATION
+-rw-r--r-- 1 root root    139 Jul 10 23:50 CODE_OF_CONDUCT.md
+-rw-r--r-- 1 root root   9569 Jul 10 23:50 CONTRIBUTING.md
+-rw-r--r-- 1 root root    129 Jul 10 23:50 GOVERNANCE.md
+-rw-r--r-- 1 root root   1496 Jul 10 23:50 LICENSE.rst
+-rw-r--r-- 1 root root    178 Jul 10 23:50 MANIFEST.in
+-rw-r--r-- 1 root root   5876 Jul 10 23:50 README.rst
+drwxr-xr-x 1 root root    116 Jul 11 00:07 astropy
+drwxr-xr-x 1 root root    189 Jul 10 23:51 cextern
+-rw-r--r-- 1 root root    244 Jul 10 23:50 codecov.yml
+-rw-r--r-- 1 root root   2655 Jul 10 23:51 conftest.py
+drwxr-xr-x 1 root root   4096 Jul 10 23:51 docs
+drwxr-xr-x 5 root root     89 Jul 10 23:51 examples
+drwxr-xr-x 1 root root     95 Jul 10 23:51 licenses
+-rw-r--r-- 1 root root  20161 Jul 10 23:51 pyproject.toml
+-rw-r--r-- 1 root root   6485 Jul 10 23:51 setup.cfg
+-rwxr-xr-x 1 root root   1647 Jul 10 23:51 setup.py
+-rw-r--r-- 1 root root     26 Jul 11 00:07 test.qdp
+-rw-r--r-- 1 root root   6797 Jul 10 23:51 tox.ini
+root@8fb62f807cce:/app# ls -la /app/astropy/__pycache__
+ls: cannot access '/app/astropy/__pycache__': No such file or directory
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app'); import astropy.io.ascii as ascii; print(ascii.__file__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# touch /app/astropy/__init__.py
+root@8fb62f807cce:/app# touch /app/astropy/astropy/__init__.py
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app'); import astropy.io.ascii as ascii; print(ascii.__file__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# python3 -c "import astropy.io.ascii as ascii; print(ascii.__file__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# which qdp
+root@8fb62f807cce:/app# ls /usr/bin/ | grep -i qdp
+root@8fb62f807cce:/app# cat /app/astropy/astropy/io/ascii/qdp.py | grep -A 10 'def _line_type'
+def _line_type(line, delimiter=None):
+    """Interpret a QDP file line.
+
+    Parameters
+    ----------
+    line : str
+        a single line of the file
+
+    Returns
+    -------
+    type : str
+root@8fb62f807cce:/app# cat /app/astropy/astropy/io/ascii/qdp.py | grep -A 10 'def _interpret_err_lines'
+def _interpret_err_lines(err_specs, ncols, names=None):
+    """Give list of column names from the READ SERR and TERR commands.
+
+    Parameters
+    ----------
+    err_specs : dict
+        ``{'serr': [n0, n1, ...], 'terr': [n2, n3, ...]}``
+        Error specifications for symmetric and two-sided errors
+    ncols : int
+        Number of data columns
+
+root@8fb62f807cce:/app# cat /app/astropy/astropy/io/ascii/qdp.py
+# Licensed under a 3-clause BSD style license - see LICENSE.rst
+"""
+This package contains functions for reading and writing QDP tables that are
+not meant to be used directly, but instead are available as readers/writers in
+`astropy.table`. See :ref:`astropy:table_io` for more details.
+"""
+import copy
+import re
+import warnings
+from collections.abc import Iterable
+
+import numpy as np
+
+from astropy.table import Table
+from astropy.utils.exceptions import AstropyUserWarning
+
+from . import basic, core
+
+
+def _line_type(line, delimiter=None):
+    """Interpret a QDP file line.
+
+    Parameters
+    ----------
+    line : str
+        a single line of the file
+
+    Returns
+    -------
+    type : str
+        Line type: "comment", "command", or "data"
+
+    Examples
+    --------
+    >>> _line_type("READ SERR 3")
+    'command'
+    >>> _line_type(" \\n    !some gibberish")
+    'comment'
+    >>> _line_type("   ")
+    'comment'
+    >>> _line_type(" 21345.45")
+    'data,1'
+    >>> _line_type(" 21345.45 1.53e-3 1e-3 .04 NO nan")
+    'data,6'
+    >>> _line_type(" 21345.45,1.53e-3,1e-3,.04,NO,nan", delimiter=',')
+    'data,6'
+    >>> _line_type(" 21345.45 ! a comment to disturb")
+    'data,1'
+    >>> _line_type("NO NO NO NO NO")
+    'new'
+    >>> _line_type("NO,NO,NO,NO,NO", delimiter=',')
+    'new'
+    >>> _line_type("N O N NOON OON O")
+    Traceback (most recent call last):
+        ...
+    ValueError: Unrecognized QDP line...
+    >>> _line_type(" some non-comment gibberish")
+    Traceback (most recent call last):
+        ...
+    ValueError: Unrecognized QDP line...
+    """
+    _decimal_re = r"[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?"
+    _command_re = r"READ [TS]ERR(\s+[0-9]+)+"
+
+    sep = delimiter
+    if delimiter is None:
+        sep = r"\s+"
+    _new_re = rf"NO({sep}NO)+"
+    _data_re = rf"({_decimal_re}|NO|[-+]?nan)({sep}({_decimal_re}|NO|[-+]?nan))*)"
+    _type_re = rf"^\s*((?P<command>{_command_re})|(?P<new>{_new_re})|(?P<data>{_data_re})?\s*(\!(?P<comment>.*))?\s*$"
+    _line_type_re = re.compile(_type_re)
+    line = line.strip()
+    if not line:
+        return "comment"
+    match = _line_type_re.match(line)
+        line = line.strip().upper()
+
+    if match is None:
+        raise ValueError(f"Unrecognized QDP line: {line}")
+    for type_, val in match.groupdict().items():
+        if val is None:
+            continue
+        if type_ == "data":
+            return f"data,{len(val.split(sep=delimiter))}"
+        else:
+            return type_
+
+
+def _get_type_from_list_of_lines(lines, delimiter=None):
+    """Read through the list of QDP file lines and label each line by type.
+
+    Parameters
+    ----------
+    lines : list
+        List containing one file line in each entry
+
+    Returns
+    -------
+    contents : list
+        List containing the type for each line (see `line_type_and_data`)
+    ncol : int
+        The number of columns in the data lines. Must be the same throughout
+        the file
+
+    Examples
+    --------
+    >>> line0 = "! A comment"
+    >>> line1 = "543 12 456.0"
+    >>> lines = [line0, line1]
+    >>> types, ncol = _get_type_from_list_of_lines(lines)
+    >>> types[0]
+    'comment'
+    >>> types[1]
+    'data,3'
+    >>> ncol
+    3
+    >>> lines.append("23")
+    >>> _get_type_from_list_of_lines(lines)
+    Traceback (most recent call last):
+        ...
+    ValueError: Inconsistent number of columns
+    """
+    types = [_line_type(line, delimiter=delimiter) for line in lines]
+    current_ncol = None
+    for type_ in types:
+        if type_.startswith("data,"):
+            ncol = int(type_[5:])
+            if current_ncol is None:
+                current_ncol = ncol
+            elif ncol != current_ncol:
+                raise ValueError("Inconsistent number of columns")
+
+    return types, current_ncol
+
+
+def _get_lines_from_file(qdp_file):
+    if "\n" in qdp_file:
+        lines = qdp_file.split("\n")
+    elif isinstance(qdp_file, str):
+        with open(qdp_file) as fobj:
+            lines = [line.strip() for line in fobj.readlines()]
+    elif isinstance(qdp_file, Iterable):
+        lines = qdp_file
+    else:
+        raise ValueError("invalid value of qdb_file")
+
+    return lines
+
+
+def _interpret_err_lines(err_specs, ncols, names=None):
+    """Give list of column names from the READ SERR and TERR commands.
+
+    Parameters
+    ----------
+    err_specs : dict
+        ``{'serr': [n0, n1, ...], 'terr': [n2, n3, ...]}``
+        Error specifications for symmetric and two-sided errors
+    ncols : int
+        Number of data columns
+
+    Other Parameters
+    ----------------
+    names : list of str
+        Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+        including error columns.
+
+    Returns
+    -------
+    colnames : list
+        List containing the column names. Error columns will have the name
+        of the main column plus ``_err`` for symmetric errors, and ``_perr``
+        and ``_nerr`` for positive and negative errors respectively
+
+    Examples
+    --------
+    >>> col_in = ['MJD', 'Rate']
+    >>> cols = _interpret_err_lines(None, 2, names=col_in)
+    >>> cols[0]
+    'MJD'
+    >>> err_specs = {'terr': [1], 'serr': [2]}
+    >>> ncols = 5
+    >>> cols = _interpret_err_lines(err_specs, ncols, names=col_in)
+    >>> cols[0]
+    'MJD'
+    >>> cols[2]
+    'MJD_nerr'
+    >>> cols[4]
+    'Rate_err'
+    >>> _interpret_err_lines(err_specs, 6, names=col_in)
+    Traceback (most recent call last):
+        ...
+    ValueError: Inconsistent number of input colnames
+    """
+    colnames = ["" for i in range(ncols)]
+    if err_specs is None:
+        serr_cols = terr_cols = []
+
+    else:
+        # I don't want to empty the original one when using `pop` below
+        err_specs = copy.deepcopy(err_specs)
+
+        serr_cols = err_specs.pop("serr", [])
+        terr_cols = err_specs.pop("terr", [])
+
+    if names is not None:
+        all_error_cols = len(serr_cols) + len(terr_cols) * 2
+        if all_error_cols + len(names) != ncols:
+            raise ValueError("Inconsistent number of input colnames")
+
+    shift = 0
+    for i in range(ncols):
+        col_num = i + 1 - shift
+        if colnames[i] != "":
+            continue
+
+        colname_root = f"col{col_num}"
+
+        if names is not None:
+            colname_root = names[col_num - 1]
+
+        colnames[i] = f"{colname_root}"
+        if col_num in serr_cols:
+            colnames[i + 1] = f"{colname_root}_err"
+            shift += 1
+            continue
+
+        if col_num in terr_cols:
+            colnames[i + 1] = f"{colname_root}_perr"
+            colnames[i + 2] = f"{colname_root}_nerr"
+            shift += 2
+            continue
+
+    assert not np.any([c == "" for c in colnames])
+
+    return colnames
+
+
+def _get_tables_from_qdp_file(qdp_file, input_colnames=None, delimiter=None):
+    """Get all tables from a QDP file.
+
+    Parameters
+    ----------
+    qdp_file : str
+        Input QDP file name
+
+    Other Parameters
+    ----------------
+    input_colnames : list of str
+        Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+        including error columns.
+    delimiter : str
+        Delimiter for the values in the table.
+
+    Returns
+    -------
+    list of `~astropy.table.Table`
+        List containing all the tables present inside the QDP file
+    """
+    lines = _get_lines_from_file(qdp_file)
+    contents, ncol = _get_type_from_list_of_lines(lines, delimiter=delimiter)
+
+    table_list = []
+    err_specs = {}
+    colnames = None
+
+    comment_text = ""
+    initial_comments = ""
+    command_lines = ""
+    current_rows = None
+
+    for line, datatype in zip(lines, contents):
+        line = line.strip().lstrip("!")
+        # Is this a comment?
+        if datatype == "comment":
+            comment_text += line + "\n"
+            continue
+
+        if datatype == "command":
+            # The first time I find commands, I save whatever comments into
+            # The initial comments.
+            if command_lines == "":
+                initial_comments = comment_text
+                comment_text = ""
+
+            if err_specs != {}:
+                warnings.warn(
+                    "This file contains multiple command blocks. Please verify",
+                    AstropyUserWarning,
+                )
+            command_lines += line + "\n"
+            continue
+
+        if datatype.startswith("data"):
+            # The first time I find data, I define err_specs
+            if err_specs == {} and command_lines != "":
+                for cline in command_lines.strip().split("\n"):
+                    command = cline.strip().split()
+                    # This should never happen, but just in case.
+                    if len(command) < 3:
+                        continue
+                    err_specs[command[1].lower()] = [int(c) for c in command[2:]]
+            if colnames is None:
+                colnames = _interpret_err_lines(err_specs, ncol, names=input_colnames)
+
+            if current_rows is None:
+                current_rows = []
+
+            values = []
+            for v in line.split(delimiter):
+                if v == "NO":
+                    values.append(np.ma.masked)
+                else:
+                    # Understand if number is int or float
+                    try:
+                        values.append(int(v))
+                    except ValueError:
+                        values.append(float(v))
+            current_rows.append(values)
+            continue
+
+        if datatype == "new":
+            # Save table to table_list and reset
+            if current_rows is not None:
+                new_table = Table(names=colnames, rows=current_rows)
+                new_table.meta["initial_comments"] = initial_comments.strip().split(
+                    "\n"
+                )
+                new_table.meta["comments"] = comment_text.strip().split("\n")
+                # Reset comments
+                comment_text = ""
+                table_list.append(new_table)
+                current_rows = None
+            continue
+
+    # At the very end, if there is still a table being written, let's save
+    # it to the table_list
+    if current_rows is not None:
+        new_table = Table(names=colnames, rows=current_rows)
+        new_table.meta["initial_comments"] = initial_comments.strip().split("\n")
+        new_table.meta["comments"] = comment_text.strip().split("\n")
+        table_list.append(new_table)
+
+    return table_list
+
+
+def _understand_err_col(colnames):
+    """Get which column names are error columns.
+
+    Examples
+    --------
+    >>> colnames = ['a', 'a_err', 'b', 'b_perr', 'b_nerr']
+    >>> serr, terr = _understand_err_col(colnames)
+    >>> np.allclose(serr, [1])
+    True
+    >>> np.allclose(terr, [2])
+    True
+    >>> serr, terr = _understand_err_col(['a', 'a_nerr'])
+    Traceback (most recent call last):
+    ...
+    ValueError: Missing positive error...
+    >>> serr, terr = _understand_err_col(['a', 'a_perr'])
+    Traceback (most recent call last):
+    ...
+    ValueError: Missing negative error...
+    """
+    shift = 0
+    serr = []
+    terr = []
+
+    for i, col in enumerate(colnames):
+        if col.endswith("_err"):
+            # The previous column, but they're numbered from 1!
+            # Plus, take shift into account
+            serr.append(i - shift)
+            shift += 1
+        elif col.endswith("_perr"):
+            terr.append(i - shift)
+            if len(colnames) == i + 1 or not colnames[i + 1].endswith("_nerr"):
+                raise ValueError("Missing negative error")
+            shift += 2
+        elif col.endswith("_nerr") and not colnames[i - 1].endswith("_perr"):
+            raise ValueError("Missing positive error")
+    return serr, terr
+
+
+def _read_table_qdp(qdp_file, names=None, table_id=None, delimiter=None):
+    """Read a table from a QDP file.
+
+    Parameters
+    ----------
+    qdp_file : str
+        Input QDP file name
+
+    Other Parameters
+    ----------------
+    names : list of str
+        Name of data columns (defaults to ['col1', 'col2', ...]), _not_
+        including error columns.
+
+    table_id : int, default 0
+        Number of the table to be read from the QDP file. This is useful
+        when multiple tables present in the file. By default, the first is read.
+
+    delimiter : str
+        Any delimiter accepted by the `sep` argument of str.split()
+
+    Returns
+    -------
+    tables : list of `~astropy.table.Table`
+        List containing all the tables present inside the QDP file
+    """
+    if table_id is None:
+        warnings.warn(
+            "table_id not specified. Reading the first available table",
+            AstropyUserWarning,
+        )
+        table_id = 0
+
+    tables = _get_tables_from_qdp_file(
+        qdp_file, input_colnames=names, delimiter=delimiter
+    )
+
+    return tables[table_id]
+
+
+def _write_table_qdp(table, filename=None, err_specs=None):
+    """Write a table to a QDP file.
+
+    Parameters
+    ----------
+    table : :class:`~astropy.table.Table`
+        Input table to be written
+    filename : str
+        Output QDP file name
+
+    Other Parameters
+    ----------------
+    err_specs : dict
+        Dictionary of the format {'serr': [1], 'terr': [2, 3]}, specifying
+        which columns have symmetric and two-sided errors (see QDP format
+        specification)
+    """
+    import io
+
+    fobj = io.StringIO()
+
+    if "initial_comments" in table.meta and table.meta["initial_comments"] != []:
+        for line in table.meta["initial_comments"]:
+            line = line.strip()
+            if not line.startswith("!"):
+                line = "!" + line
+            print(line, file=fobj)
+
+    if err_specs is None:
+        serr_cols, terr_cols = _understand_err_col(table.colnames)
+    else:
+        serr_cols = err_specs.pop("serr", [])
+        terr_cols = err_specs.pop("terr", [])
+    if serr_cols != []:
+        col_string = " ".join([str(val) for val in serr_cols])
+        print(f"READ SERR {col_string}", file=fobj)
+    if terr_cols != []:
+        col_string = " ".join([str(val) for val in terr_cols])
+        print(f"READ TERR {col_string}", file=fobj)
+
+    if "comments" in table.meta and table.meta["comments"] != []:
+        for line in table.meta["comments"]:
+            line = line.strip()
+            if not line.startswith("!"):
+                line = "!" + line
+            print(line, file=fobj)
+
+    colnames = table.colnames
+    print("!" + " ".join(colnames), file=fobj)
+    for row in table:
+        values = []
+        for val in row:
+            if not np.ma.is_masked(val):
+                rep = str(val)
+            else:
+                rep = "NO"
+            values.append(rep)
+        print(" ".join(values), file=fobj)
+
+    full_string = fobj.getvalue()
+    fobj.close()
+
+    if filename is not None:
+        with open(filename, "w") as fobj:
+            print(full_string, file=fobj)
+
+    return full_string.split("\n")
+
+
+class QDPSplitter(core.DefaultSplitter):
+    """
+    Split on space for QDP tables.
+    """
+
+    delimiter = " "
+
+
+class QDPHeader(basic.CommentedHeaderHeader):
+    """
+    Header that uses the :class:`astropy.io.ascii.basic.QDPSplitter`.
+    """
+
+    splitter_class = QDPSplitter
+    comment = "!"
+    write_comment = "!"
+
+
+class QDPData(basic.BasicData):
+    """
+    Data that uses the :class:`astropy.io.ascii.basic.CsvSplitter`.
+    """
+
+    splitter_class = QDPSplitter
+    fill_values = [(core.masked, "NO")]
+    comment = "!"
+    write_comment = None
+
+
+class QDP(basic.Basic):
+    """Quick and Dandy Plot table.
+
+    Example::
+
+        ! Initial comment line 1
+        ! Initial comment line 2
+        READ TERR 1
+        READ SERR 3
+        ! Table 0 comment
+        !a a(pos) a(neg) b be c d
+        53000.5   0.25  -0.5   1  1.5  3.5 2
+        54000.5   1.25  -1.5   2  2.5  4.5 3
+        NO NO NO NO NO
+        ! Table 1 comment
+        !a a(pos) a(neg) b be c d
+        54000.5   2.25  -2.5   NO  3.5  5.5 5
+        55000.5   3.25  -3.5   4  4.5  6.5 nan
+
+    The input table above contains some initial comments, the error commands,
+    then two tables.
+    This file format can contain multiple tables, separated by a line full
+    of ``NO``s. Comments are exclamation marks, and missing values are single
+    ``NO`` entries. The delimiter is usually whitespace, more rarely a comma.
+    The QDP format differentiates between data and error columns. The table
+    above has commands::
+
+        READ TERR 1
+        READ SERR 3
+
+    which mean that after data column 1 there will be two error columns
+    containing its positive and engative error bars, then data column 2 without
+    error bars, then column 3, then a column with the symmetric error of column
+    3, then the remaining data columns.
+
+    As explained below, table headers are highly inconsistent. Possible
+    comments containing column names will be ignored and columns will be called
+    ``col1``, ``col2``, etc. unless the user specifies their names with the
+    ``names=`` keyword argument,
+    When passing column names, pass **only the names of the data columns, not
+    the error columns.**
+    Error information will be encoded in the names of the table columns.
+    (e.g. ``a_perr`` and ``a_nerr`` for the positive and negative error of
+    column ``a``, ``b_err`` the symmetric error of column ``b``.)
+
+    When writing tables to this format, users can pass an ``err_specs`` keyword
+    passing a dictionary ``{'serr': [3], 'terr': [1, 2]}``, meaning that data
+    columns 1 and two will have two additional columns each with their positive
+    and negative errors, and data column 3 will have an additional column with
+    a symmetric error (just like the ``READ SERR`` and ``READ TERR`` commands
+    above)
+
+    Headers are just comments, and tables distributed by various missions
+    can differ greatly in their use of conventions. For example, light curves
+    distributed by the Swift-Gehrels mission have an extra space in one header
+    entry that makes the number of labels inconsistent with the number of cols.
+    For this reason, we ignore the comments that might encode the column names
+    and leave the name specification to the user.
+
+    Example::
+
+        >               Extra space
+        >                   |
+        >                   v
+        >!     MJD       Err (pos)       Err(neg)        Rate            Error
+        >53000.123456   2.378e-05     -2.378472e-05     NO             0.212439
+
+    These readers and writer classes will strive to understand which of the
+    comments belong to all the tables, and which ones to each single table.
+    General comments will be stored in the ``initial_comments`` meta of each
+    table. The comments of each table will be stored in the ``comments`` meta.
+
+    Example::
+
+        t = Table.read(example_qdp, format='ascii.qdp', table_id=1, names=['a', 'b', 'c', 'd'])
+
+    reads the second table (``table_id=1``) in file ``example.qdp`` containing
+    the table above. There are four column names but seven data columns, why?
+    Because the ``READ SERR`` and ``READ TERR`` commands say that there are
+    three error columns.
+    ``t.meta['initial_comments']`` will contain the initial two comment lines
+    in the file, while ``t.meta['comments']`` will contain ``Table 1 comment``
+
+    The table can be written to another file, preserving the same information,
+    as::
+
+        t.write(test_file, err_specs={'terr': [1], 'serr': [3]})
+
+    Note how the ``terr`` and ``serr`` commands are passed to the writer.
+
+    """
+
+    _format_name = "qdp"
+    _io_registry_can_write = True
+    _io_registry_suffix = ".qdp"
+    _description = "Quick and Dandy Plotter"
+
+    header_class = QDPHeader
+    data_class = QDPData
+
+    def __init__(self, table_id=None, names=None, err_specs=None, sep=None):
+        super().__init__()
+        self.table_id = table_id
+        self.names = names
+        self.err_specs = err_specs
+        self.delimiter = sep
+
+    def read(self, table):
+        self.lines = self.inputter.get_lines(table, newline="\n")
+        return _read_table_qdp(
+            self.lines,
+            table_id=self.table_id,
+            names=self.names,
+            delimiter=self.delimiter,
+        )
+
+    def write(self, table):
+        self._check_multidim_table(table)
+        lines = _write_table_qdp(table, err_specs=self.err_specs)
+        return lines
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app'); from astropy.io import ascii; from astropy.table import Table; table = Table.read('t
+est.qdp', format='ascii.qdp'); print(table)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# find /usr/local/bin -name '*qdp*' -type f
+root@8fb62f807cce:/app# ls -la /app/astropy/astropy/
+total 100
+drwxr-xr-x 1 root root   139 Jul 11 00:07 .
+drwxr-xr-x 1 root root    95 Jul 11 00:09 ..
+-rw-r--r-- 1 root root 10682 Jul 10 23:50 CITATION
+-rw-r--r-- 1 root root  6953 Jul 11 00:09 __init__.py
+drwxr-xr-x 2 root root    79 Jul 11 00:07 __pycache__
+drwxr-xr-x 1 root root    25 Jul 11 00:07 _dev
+drwxr-xr-x 1 root root    33 Jul 11 00:07 config
+-rw-r--r-- 1 root root  5047 Jul 10 23:50 conftest.py
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 constants
+drwxr-xr-x 1 root root   179 Jul 10 23:50 convolution
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 coordinates
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 cosmology
+drwxr-xr-x 1 root root    42 Jul 11 00:07 extern
+drwxr-xr-x 1 root root    27 Jul 10 23:50 io
+-rw-r--r-- 1 root root 19771 Jul 10 23:50 logger.py
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 modeling
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 nddata
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 samp
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 stats
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 table
+drwxr-xr-x 1 root root   136 Jul 10 23:50 tests
+drwxr-xr-x 1 root root   177 Jul 10 23:50 time
+drwxr-xr-x 1 root root   133 Jul 10 23:50 timeseries
+drwxr-xr-x 1 root root   128 Jul 10 23:50 uncertainty
+drwxr-xr-x 1 root root  4096 Jul 10 23:50 units
+drwxr-xr-x 1 root root    33 Jul 11 00:07 utils
+-rw-r--r-- 1 root root   984 Jul 10 23:51 version.py
+drwxr-xr-x 1 root root  4096 Jul 10 23:51 visualization
+drwxr-xr-x 1 root root  4096 Jul 10 23:51 wcs
+root@8fb62f807cce:/app# cat > /tmp/test_qdp.py << 'EOF'
+> import sys
+> sys.path.insert(0, '/app')
+> try:
+>     from astropy.io import ascii
+>     from astropy.table import Table
+>     table = Table.read('test.qdp', format='ascii.qdp')
+>     print('Table read successfully:')
+>     print(table)
+> except Exception as e:
+>     print('Error:', e)
+> EOF
+root@8fb62f807cce:/app# python3 /tmp/test_qdp.py
+Error: No module named 'astropy.io'
+root@8fb62f807cce:/app# find /app -name 'setup.py' -type f
+/app/astropy/setup.py
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app/astropy'); from astropy.io import ascii; print(ascii.__file__)"
+/app/astropy/astropy/version.py:12: UserWarning: could not determine astropy package version; this indicates a broken installation
+  warnings.warn(
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/app/astropy/astropy/__init__.py", line 21, in <module>
+    from . import config as _config
+  File "/app/astropy/astropy/config/__init__.py", line 8, in <module>
+    from .configuration import *
+  File "/app/astropy/astropy/config/configuration.py", line 24, in <module>
+    from astropy.utils import find_current_module, silence
+  File "/app/astropy/astropy/utils/__init__.py", line 17, in <module>
+    from .codegen import *
+  File "/app/astropy/astropy/utils/codegen.py", line 12, in <module>
+    from .introspection import find_current_module
+  File "/app/astropy/astropy/utils/introspection.py", line 14, in <module>
+    from astropy.utils.decorators import deprecated_renamed_argument
+  File "/app/astropy/astropy/utils/decorators.py", line 13, in <module>
+    from .exceptions import (
+  File "/app/astropy/astropy/utils/exceptions.py", line 11, in <module>
+    from erfa import ErfaError, ErfaWarning  # noqa: F401
+ModuleNotFoundError: No module named 'erfa'
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app/astropy'); import ascii; print(ascii.__file__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'ascii'
+root@8fb62f807cce:/app# pip install erfa
+ERROR: Could not find a version that satisfies the requirement erfa (from versions: none)
+ERROR: No matching distribution found for erfa
+
+[notice] A new release of pip is available: 23.0.1 -> 26.0.1
+[notice] To update, run: pip install --upgrade pip
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app'); from astropy.io import ascii; print(ascii.__file__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app'); import ascii; print(ascii.__file__)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'ascii'
+root@8fb62f807cce:/app# apt-cache search python3-erfa
+python3-erfa - Python bindings for ERFA routines
+root@8fb62f807cce:/app# apt-get update && apt-get install -y python3-erfa 2>&1 | tail -20
+Hit:1 http://deb.debian.org/debian bookworm InRelease
+Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]
+Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [48.0 kB]
+Get:4 http://deb.debian.org/debian-security bookworm-security/main amd64 Packages [316 kB]
+Fetched 419 kB in 0s (1400 kB/s)
+Reading package lists... Done
+Selecting previously unselected package python3-numpy.
+Preparing to unpack .../09-python3-numpy_1%3a1.24.2-1+deb12u1_amd64.deb ...
+Unpacking python3-numpy (1:1.24.2-1+deb12u1) ...
+Selecting previously unselected package python3-erfa.
+Preparing to unpack .../10-python3-erfa_2.0.0.1+ds-3+b1_amd64.deb ...
+Unpacking python3-erfa (2.0.0.1+ds-3+b1) ...
+Setting up liberfa1:amd64 (2.0.0-1+b1) ...
+Setting up javascript-common (11+nmu1) ...
+Setting up libblas3:amd64 (3.11.0-2) ...
+update-alternatives: using /usr/lib/x86_64-linux-gnu/blas/libblas.so.3 to provide /usr/lib/x86_64-linux-gnu/libblas.so.3 (libblas.so.3-x86_64-linux-gnu) in auto
+ mode
+Setting up libquadmath0:amd64 (12.2.0-14+deb12u1) ...
+Setting up libgfortran5:amd64 (12.2.0-14+deb12u1) ...
+Setting up libjs-jquery (3.6.1+dfsg+~3.5.14-1) ...
+Setting up libjs-underscore (1.13.4~dfsg+~1.11.4-3) ...
+Setting up liblapack3:amd64 (3.11.0-2) ...
+update-alternatives: using /usr/lib/x86_64-linux-gnu/lapack/liblapack.so.3 to provide /usr/lib/x86_64-linux-gnu/liblapack.so.3 (liblapack.so.3-x86_64-linux-gnu)
+ in auto mode
+Setting up python3-numpy (1:1.24.2-1+deb12u1) ...
+Setting up libjs-sphinxdoc (5.3.0-4) ...
+Setting up python3-erfa (2.0.0.1+ds-3+b1) ...
+Processing triggers for libc-bin (2.36-9+deb12u13) ...
+root@8fb62f807cce:/app# python3 /tmp/test_qdp.py
+Error: No module named 'astropy.io'
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app'); from astropy.io import ascii; from astropy.table import Table; table = Table.read('t
+est.qdp', format='ascii.qdp'); print(table)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# find /usr/bin -name '*qdp*' -type f 2>/dev/null
+root@8fb62f807cce:/app# pip list | grep -i astropy
+
+[notice] A new release of pip is available: 23.0.1 -> 26.0.1
+[notice] To update, run: pip install --upgrade pip
+root@8fb62f807cce:/app# pip install -e .
+Obtaining file:///app
+ERROR: file:///app does not appear to be a Python project: neither 'setup.py' nor 'pyproject.toml' found.
+
+[notice] A new release of pip is available: 23.0.1 -> 26.0.1
+[notice] To update, run: pip install --upgrade pip
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app'); from astropy.io import ascii; from astropy.table import Table; table = Table.read('t
+est.qdp', format='ascii.qdp'); print(table)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app# pip install /app/astropy
+Processing ./astropy
+  Installing build dependencies ... done
+  Getting requirements to build wheel ... error
+  error: subprocess-exited-with-error
+
+  × Getting requirements to build wheel did not run successfully.
+  │ exit code: 1
+  ╰─> [25 lines of output]
+      Traceback (most recent call last):
+        File "/usr/local/lib/python3.9/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 353, in <module>
+          main()
+        File "/usr/local/lib/python3.9/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 335, in main
+          json_out['return_val'] = hook(**hook_input['kwargs'])
+        File "/usr/local/lib/python3.9/site-packages/pip/_vendor/pyproject_hooks/_in_process/_in_process.py", line 118, in get_requires_for_build_wheel
+          return hook(config_settings)
+        File "/tmp/pip-build-env-06o7pijx/overlay/lib/python3.9/site-packages/setuptools/build_meta.py", line 333, in get_requires_for_build_wheel
+          return self._get_build_requires(config_settings, requirements=[])
+        File "/tmp/pip-build-env-06o7pijx/overlay/lib/python3.9/site-packages/setuptools/build_meta.py", line 301, in _get_build_requires
+          self.run_setup()
+        File "/tmp/pip-build-env-06o7pijx/overlay/lib/python3.9/site-packages/setuptools/build_meta.py", line 317, in run_setup
+          exec(code, locals())
+        File "<string>", line 69, in <module>
+        File "/tmp/pip-build-env-06o7pijx/overlay/lib/python3.9/site-packages/extension_helpers/_setup_helpers.py", line 63, in get_extensions
+          for setuppkg in iter_setup_packages(srcdir, packages):
+        File "/tmp/pip-build-env-06o7pijx/overlay/lib/python3.9/site-packages/extension_helpers/_setup_helpers.py", line 159, in iter_setup_packages
+          module = import_file(setup_package, name=packagename + ".setup_package")
+        File "/tmp/pip-build-env-06o7pijx/overlay/lib/python3.9/site-packages/extension_helpers/_utils.py", line 138, in import_file
+          loader.exec_module(mod)
+        File "<frozen importlib._bootstrap_external>", line 850, in exec_module
+        File "<frozen importlib._bootstrap>", line 228, in _call_with_frames_removed
+        File "astropy/wcs/setup_package.py", line 13, in <module>
+          from setuptools.dep_util import newer_group
+      ModuleNotFoundError: No module named 'setuptools.dep_util'
+      [end of output]
+
+  note: This error originates from a subprocess, and is likely not a problem with pip.
+error: subprocess-exited-with-error
+
+× Getting requirements to build wheel did not run successfully.
+│ exit code: 1
+╰─> See above for output.
+
+note: This error originates from a subprocess, and is likely not a problem with pip.
+
+[notice] A new release of pip is available: 23.0.1 -> 26.0.1
+[notice] To update, run: pip install --upgrade pip
+root@8fb62f807cce:/app# python3 -c "import sys; sys.path.insert(0, '/app'); from astropy.io import ascii; from astropy.table import Table; table = Table.read('t
+est.qdp', format='ascii.qdp'); print(table)"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'astropy.io'
+root@8fb62f807cce:/app#

@@ -1,0 +1,334 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@fd8f5558ffb6:/app# cat /usr/local/lib/python3.13/site-packages/bitcoin/main.py
+#!/usr/bin/python
+from .py2specials import *
+from .py3specials import *
+import binascii
+import hashlib
+import re
+import sys
+import os
+import base64
+import time
+import random
+import hmac
+from bitcoin.ripemd import *
+
+# Elliptic curve parameters (secp256k1)
+
+P = 2**256 - 2**32 - 977
+N = 115792089237316195423570985008687907852837564279074904382605163141518161494337
+A = 0
+B = 7
+Gx = 55066263022277343669578718895168534326250603453777594175500187360389116729240
+Gy = 32670510020758816978083085130507043184471273380659243275938904335757337482424
+G = (Gx, Gy)
+
+
+def change_curve(p, n, a, b, gx, gy):
+    global P, N, A, B, Gx, Gy, G
+    P, N, A, B, Gx, Gy = p, n, a, b, gx, gy
+    G = (Gx, Gy)
+
+
+def getG():
+    return G
+
+# Extended Euclidean Algorithm
+
+
+def inv(a, n):
+    if a == 0:
+        return 0
+    lm, hm = 1, 0
+    low, high = a % n, n
+    while low > 1:
+        r = high//low
+        nm, new = hm-lm*r, high-low*r
+        lm, low, hm, high = nm, new, lm, low
+    return lm % n
+
+
+
+# JSON access (for pybtctool convenience)
+
+
+def access(obj, prop):
+    if isinstance(obj, dict):
+        if prop in obj:
+            return obj[prop]
+        elif '.' in prop:
+            return obj[float(prop)]
+        else:
+            return obj[int(prop)]
+    else:
+        return obj[int(prop)]
+
+
+def multiaccess(obj, prop):
+    return [access(o, prop) for o in obj]
+
+
+def slice(obj, start=0, end=2**200):
+    return obj[int(start):int(end)]
+
+
+def count(obj):
+    return len(obj)
+
+_sum = sum
+
+
+def sum(obj):
+    return _sum(obj)
+
+
+def isinf(p):
+    return p[0] == 0 and p[1] == 0
+
+
+def to_jacobian(p):
+    o = (p[0], p[1], 1)
+    return o
+
+
+def jacobian_double(p):
+    if not p[1]:
+        return (0, 0, 0)
+    ysq = (p[1] ** 2) % P
+    S = (4 * p[0] * ysq) % P
+    M = (3 * p[0] ** 2 + A * p[2] ** 4) % P
+    nx = (M**2 - 2 * S) % P
+    ny = (M * (S - nx) - 8 * ysq ** 2) % P
+    nz = (2 * p[1] * p[2]) % P
+    return (nx, ny, nz)
+
+
+def jacobian_add(p, q):
+    if not p[1]:
+        return q
+    if not q[1]:
+        return p
+    U1 = (p[0] * q[2] ** 2) % P
+    U2 = (q[0] * p[2] ** 2) % P
+    S1 = (p[1] * q[2] ** 3) % P
+    S2 = (q[1] * p[2] ** 3) % P
+    if U1 == U2:
+        if S1 != S2:
+            return (0, 0, 1)
+        return jacobian_double(p)
+    H = U2 - U1
+    R = S2 - S1
+    H2 = (H * H) % P
+    H3 = (H * H2) % P
+    U1H2 = (U1 * H2) % P
+    nx = (R ** 2 - H3 - 2 * U1H2) % P
+    ny = (R * (U1H2 - nx) - S1 * H3) % P
+    nz = (H * p[2] * q[2]) % P
+    return (nx, ny, nz)
+
+
+def from_jacobian(p):
+    z = inv(p[2], P)
+    return ((p[0] * z**2) % P, (p[1] * z**3) % P)
+
+
+def jacobian_multiply(a, n):
+    if a[1] == 0 or n == 0:
+        return (0, 0, 1)
+    if n == 1:
+        return a
+    if n < 0 or n >= N:
+        return jacobian_multiply(a, n % N)
+    if (n % 2) == 0:
+        return jacobian_double(jacobian_multiply(a, n//2))
+    if (n % 2) == 1:
+        return jacobian_add(jacobian_double(jacobian_multiply(a, n//2)), a)
+
+
+def fast_multiply(a, n):
+    return from_jacobian(jacobian_multiply(to_jacobian(a), n))
+
+
+def fast_add(a, b):
+    return from_jacobian(jacobian_add(to_jacobian(a), to_jacobian(b)))
+
+# Functions for handling pubkey and privkey formats
+
+
+def get_pubkey_format(pub):
+    if is_python2:
+        two = '\x02'
+        three = '\x03'
+        four = '\x04'
+    else:
+        two = 2
+        three = 3
+        four = 4
+
+    if isinstance(pub, (tuple, list)): return 'decimal'
+    elif len(pub) == 65 and pub[0] == four: return 'bin'
+    elif len(pub) == 130 and pub[0:2] == '04': return 'hex'
+    elif len(pub) == 33 and pub[0] in [two, three]: return 'bin_compressed'
+    elif len(pub) == 66 and pub[0:2] in ['02', '03']: return 'hex_compressed'
+    elif len(pub) == 64: return 'bin_electrum'
+    elif len(pub) == 128: return 'hex_electrum'
+    else: raise Exception("Pubkey not in recognized format")
+
+
+def encode_pubkey(pub, formt):
+    if not isinstance(pub, (tuple, list)):
+        pub = decode_pubkey(pub)
+    if formt == 'decimal': return pub
+    elif formt == 'bin': return b'\x04' + encode(pub[0], 256, 32) + encode(pub[1], 256, 32)
+    elif formt == 'bin_compressed':
+        return from_int_to_byte(2+(pub[1] % 2)) + encode(pub[0], 256, 32)
+    elif formt == 'hex': return '04' + encode(pub[0], 16, 64) + encode(pub[1], 16, 64)
+    elif formt == 'hex_compressed':
+        return '0'+str(2+(pub[1] % 2)) + encode(pub[0], 16, 64)
+    elif formt == 'bin_electrum': return encode(pub[0], 256, 32) + encode(pub[1], 256, 32)
+    elif formt == 'hex_electrum': return encode(pub[0], 16, 64) + encode(pub[1], 16, 64)
+    else: raise Exception("Invalid format!")
+
+
+def decode_pubkey(pub, formt=None):
+    if not formt: formt = get_pubkey_format(pub)
+    if formt == 'decimal': return pub
+    elif formt == 'bin': return (decode(pub[1:33], 256), decode(pub[33:65], 256))
+    elif formt == 'bin_compressed':
+        x = decode(pub[1:33], 256)
+        beta = pow(int(x
+[... output limited to 10000 bytes; 70 interior bytes omitted ...]
+(ADDR_RE.match(addr))
+
+
+# EDCSA
+
+
+def encode_sig(v, r, s):
+    vb, rb, sb = from_int_to_byte(v), encode(r, 256), encode(s, 256)
+
+    result = base64.b64encode(vb+b'\x00'*(32-len(rb))+rb+b'\x00'*(32-len(sb))+sb)
+    return result if is_python2 else str(result, 'utf-8')
+
+
+def decode_sig(sig):
+    bytez = base64.b64decode(sig)
+    return from_byte_to_int(bytez[0]), decode(bytez[1:33], 256), decode(bytez[33:], 256)
+
+# https://tools.ietf.org/html/rfc6979#section-3.2
+
+
+def deterministic_generate_k(msghash, priv):
+    v = b'\x01' * 32
+    k = b'\x00' * 32
+    priv = encode_privkey(priv, 'bin')
+    msghash = encode(hash_to_int(msghash), 256, 32)
+    k = hmac.new(k, v+b'\x00'+priv+msghash, hashlib.sha256).digest()
+    v = hmac.new(k, v, hashlib.sha256).digest()
+    k = hmac.new(k, v+b'\x01'+priv+msghash, hashlib.sha256).digest()
+    v = hmac.new(k, v, hashlib.sha256).digest()
+    return decode(hmac.new(k, v, hashlib.sha256).digest(), 256)
+
+
+def ecdsa_raw_sign(msghash, priv):
+
+    z = hash_to_int(msghash)
+    k = deterministic_generate_k(msghash, priv)
+
+    r, y = fast_multiply(G, k)
+    s = inv(k, N) * (z + r*decode_privkey(priv)) % N
+
+    v, r, s = 27+((y % 2) ^ (0 if s * 2 < N else 1)), r, s if s * 2 < N else N - s
+    if 'compressed' in get_privkey_format(priv):
+        v += 4
+    return v, r, s
+
+
+def ecdsa_sign(msg, priv):
+    v, r, s = ecdsa_raw_sign(electrum_sig_hash(msg), priv)
+    sig = encode_sig(v, r, s)
+    assert ecdsa_verify(msg, sig,
+        privtopub(priv)), "Bad Sig!\t %s\nv = %d\n,r = %d\ns = %d" % (sig, v, r, s)
+    return sig
+
+
+def ecdsa_raw_verify(msghash, vrs, pub):
+    v, r, s = vrs
+    if not (27 <= v <= 34):
+        return False
+
+    w = inv(s, N)
+    z = hash_to_int(msghash)
+
+    u1, u2 = z*w % N, r*w % N
+    x, y = fast_add(fast_multiply(G, u1), fast_multiply(decode_pubkey(pub), u2))
+    return bool(r == x and (r % N) and (s % N))
+
+
+# For BitcoinCore, (msg = addr or msg = "") be default
+def ecdsa_verify_addr(msg, sig, addr):
+    assert is_address(addr)
+    Q = ecdsa_recover(msg, sig)
+    magic = get_version_byte(addr)
+    return (addr == pubtoaddr(Q, int(magic))) or (addr == pubtoaddr(compress(Q), int(magic)))
+
+
+def ecdsa_verify(msg, sig, pub):
+    if is_address(pub):
+        return ecdsa_verify_addr(msg, sig, pub)
+    return ecdsa_raw_verify(electrum_sig_hash(msg), decode_sig(sig), pub)
+
+
+def ecdsa_raw_recover(msghash, vrs):
+    v, r, s = vrs
+    if not (27 <= v <= 34):
+        raise ValueError("%d must in range 27-31" % v)
+    x = r
+    xcubedaxb = (x*x*x+A*x+B) % P
+    beta = pow(xcubedaxb, (P+1)//4, P)
+    y = beta if v % 2 ^ beta % 2 else (P - beta)
+    # If xcubedaxb is not a quadratic residue, then r cannot be the x coord
+    # for a point on the curve, and so the sig is invalid
+    if (xcubedaxb - y*y) % P != 0 or not (r % N) or not (s % N):
+        return False
+    z = hash_to_int(msghash)
+    Gz = jacobian_multiply((Gx, Gy, 1), (N - z) % N)
+    XY = jacobian_multiply((x, y, 1), s)
+    Qr = jacobian_add(Gz, XY)
+    Q = jacobian_multiply(Qr, inv(r, N))
+    Q = from_jacobian(Q)
+
+    # if ecdsa_raw_verify(msghash, vrs, Q):
+    return Q
+    # return False
+
+
+def ecdsa_recover(msg, sig):
+    v,r,s = decode_sig(sig)
+    Q = ecdsa_raw_recover(electrum_sig_hash(msg), (v,r,s))
+    return encode_pubkey(Q, 'hex_compressed') if v >= 31 else encode_pubkey(Q, 'hex')
+root@fd8f5558ffb6:/app# grep -r 'Node' /usr/local/lib/python3.13/site-packages/bottleneck/ 2>/dev/null | head -5
+root@fd8f5558ffb6:/app# grep -r 'start' /usr/local/lib/python3.13/site-packages/bottleneck/ 2>/dev/null | head -5
+/usr/local/lib/python3.13/site-packages/bottleneck/src/bn_template.py:        if l.strip().endswith("{") and not l.startswith(" "):
+/usr/local/lib/python3.13/site-packages/bottleneck/tests/input_modification_test.py:                        if name.startswith(
+/usr/local/lib/python3.13/site-packages/bottleneck/tests/memory_test.py:    sys.platform.startswith("win"), reason="resource module not available on windows"
+/usr/local/lib/python3.13/site-packages/bottleneck/tests/memory_test.py:    starting = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+/usr/local/lib/python3.13/site-packages/bottleneck/tests/memory_test.py:    diff = ending - starting
+root@fd8f5558ffb6:/app# pip3 install blocks-explorer 2>&1 | tail -5
+ERROR: Could not find a version that satisfies the requirement blocks-explorer (from versions: none)
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+ERROR: No matching distribution found for blocks-explorer
+root@fd8f5558ffb6:/app# pip3 install python-bitcoin-node --index-url https://github.com/mrdoob/python-bitcoin-node.git 2>&1 | tail -5
+ERROR: Could not find a version that satisfies the requirement python-bitcoin-node (from versions: none)
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+ERROR: No matching distribution found for python-bitcoin-node
+root@fd8f5558ffb6:/app#

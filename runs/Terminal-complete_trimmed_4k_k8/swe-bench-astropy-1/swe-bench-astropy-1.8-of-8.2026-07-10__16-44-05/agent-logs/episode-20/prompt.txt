@@ -1,0 +1,105 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@7116ad56f6dd:/app# cat > /tmp/fix_separability.py << 'EOF'
+> import sys
+> import re
+>
+> with open('/usr/local/lib/python3.9/site-packages/astropy/modeling/separable.py', 'r') as f:
+>     lines = f.readlines()
+>
+> # Find the line numbers for _coord_matrix
+> start = None
+> for i, line in enumerate(lines):
+>     if line.strip().startswith('def _coord_matrix'):
+>         start = i
+>         break
+> if start is None:
+>     print('Function not found')
+>     sys.exit(1)
+>
+> # Find the end of the function (next line starting with 'def' or end of file)
+> end = None
+> for i in range(start, len(lines)):
+>     if lines[i].strip().startswith('def ') and i != start:
+>         end = i
+>         break
+> if end is None:
+>     end = len(lines)
+>
+> # Replace the function body
+> new_func = '''def _coord_matrix(model, pos, noutp):
+>     \"\"\"
+>     Create an array representing inputs and outputs of a simple model.
+>
+>     The array has a shape (noutp, model.n_inputs).
+>
+>     Parameters
+>     ----------
+>     model : `astropy.modeling.Model`
+>         model
+>     pos : str
+>         Position of this model in the expression tree.
+>         One of ['left', 'right'].
+>     noutp : int
+>         Number of outputs of the compound model of which the input model
+>         is a left or right child.
+>
+>     \"\"\"
+>     if isinstance(model, Mapping):
+>         axes = []
+>         for i in model.mapping:
+>             axis = np.zeros((model.n_inputs,))
+>             axis[i] = 1
+>             axes.append(axis)
+>         m = np.vstack(axes)
+>         return m
+>     if not model.separable:
+>         # this does not work for more than 2 coordinates
+>         result = np.zeros((noutp, model.n_inputs))
+>         if pos == \"left\":
+>             result[: model.n_outputs, : model.n_inputs] = 1
+>         else:
+>             result[-model.n_outputs :, -model.n_inputs :] = 1
+>         return result
+>     else:
+>         result = np.zeros((noutp, model.n_inputs))
+>         for i in range(model.n_inputs):
+>             result[i, i] = 1
+>         if pos == \"right\":
+>             result = np.roll(result, (noutp - model.n_outputs))
+>         return result
+> '''
+>
+> lines[start:end] = [new_func]
+>
+> with open('/usr/local/lib/python3.9/site-packages/astropy/modeling/separable.py', 'w') as f:
+>     f.writelines(lines)
+>
+> print('Replaced _coord_matrix function.')
+> EOF
+root@7116ad56f6dd:/app# python3 /tmp/fix_separability.py
+Replaced _coord_matrix function.
+root@7116ad56f6dd:/app# python3 /tmp/test_new2.py
+Simple model 1 coord_matrix: [[1.]
+ [0.]]
+Simple model 2 coord_matrix: [[0.]
+ [1.]]
+cstack result: [[1. 0.]
+ [0. 1.]]
+Expected identity matrix:
+[[1, 0], [0, 1]]
+
+Compound model _separable result: [[1. 0.]
+ [0. 1.]]
+Expected identity matrix:
+[[1, 0], [0, 1]]
+
+Nested compound _separable result: [[1. 1. 0. 0.]
+ [1. 1. 0. 0.]
+ [0. 0. 1. 0.]
+ [0. 0. 0. 1.]]
+Expected? Let's compute manually.
+

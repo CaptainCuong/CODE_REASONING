@@ -1,0 +1,48 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la\n'
+'head -20 /app/data.hex\n'
+'wc -l /app/data.hex\n'
+'file /app/data.hex\n'
+'which python3\n'
+'python3 --version\n'
+'cd /app\n'
+"cat > decode.py << 'EOF'\nimport sys\nhex_data = open('data.hex').read()\n# Split lines\nlines = hex_data.strip().split('\\n')\n# Each line has offset and hex pairs\nfor line in lines[:5]:\n    print(line)\n    # Extract hex part after the offset\n    parts = line.split()\n    offset = parts[0]\n    hex_pairs = parts[1:]\n    # Combine hex pairs into bytes\n    bytes_data = bytes.fromhex(''.join(hex_pairs))\n    ascii_str = bytes_data.decode('ascii', errors='ignore')\n    print('ASCII:', ascii_str)\n    print('Hex dump:', bytes_data.hex())\nEOF\n"
+'python3 decode.py\n'
+"cat > convert.py << 'EOF'\nimport sys\nhex_data = open('data.hex').read()\nlines = hex_data.strip().split('\\n')\nbytes_list = []\nfor line in lines:\n    parts = line.split()\n    hex_pairs = parts[1:]\n    # Combine hex pairs into bytes\n    bytes_data = bytes.fromhex(''.join(hex_pairs))\n    bytes_list.extend(bytes_data)\n# Write binary file\nwith open('reconstructed.bin', 'wb') as f:\n    f.write(bytes(bytes_list))\nprint(f'Reconstructed {len(bytes_list)} bytes')\nEOF\n"
+'python3 convert.py\n'
+'ls -l reconstructed.bin\n'
+'head -c 20 reconstructed.bin | xxd\n'
+"file reconstructed.bin 2>/dev/null || echo 'file command not found'\n"
+"cat > inspect.py << 'EOF'\nimport sys\nwith open('reconstructed.bin', 'rb') as f:\n    data = f.read(200)\nprint('First 200 bytes hex:')\nfor i in range(0, 200, 2):\n    print(f'{data[i]:02x}', end='')\n    if (i+1) % 16 == 0:\n        print()\nprint('\\nFirst 200 bytes ascii:')\nfor b in data:\n    if 32 <= b < 127:\n        print(chr(b), end='')\n    else:\n        print('.', end='')\nprint()\n# Check ELF\nif data[:8] == b'\\x7fELF\\x01':\n    print('ELF executable')\n    # Try to run\n    import subprocess\n    result = subprocess.run(['./reconstructed.bin'], capture_output=True, text=True)\n    print('STDOUT:', result.stdout)\n    print('STDERR:', result.stderr)\n    print('Return code:', result.returncode)\nelse:\n    # Check for shebang\n    if data.startswith(b'#!/'):\n        print('Shell script')\n        # Remove shebang? We'll just run with bash\n        import subprocess\n        result = subprocess.run(['bash', '-c', data.decode('ascii')], capture_output=True, text=True)\n        print('STDOUT:', result.stdout)\n        print('STDERR:', result.stderr)\n        print('Return code:', result.returncode)\n    else:\n        print('Unknown format')\nEOF\n"
+'python3 inspect.py\n'
+'cat > examine.py << \'EOF\'\nimport sys\nwith open(\'reconstructed.bin\', \'rb\') as f:\n    data = f.read(100)\nprint(\'First 100 bytes hex:\')\nfor i in range(0, 100, 2):\n    print(f\'{data[i]:02x}\', end=\'\')\n    if (i+1) % 16 == 0:\n        print()\nprint(\'\\nFirst 100 bytes ascii:\')\nfor b in data:\n    if 32 <= b < 127:\n        print(chr(b), end=\'\')\n    else:\n        print(\'.\', end=\'\')\nprint()\n# Check Python bytecode\nif data.startswith(b\'\\x0d\\x0a\\x17\\x00\'):\n    print(\'Python bytecode\')\n    # Try to run as module\n    import subprocess\n    result = subprocess.run([\'python3\', \'-c\', \'import sys; sys.path.insert(0, \\\'.\'); exec(open(\\"reconstructed.bin\\").read())\'], capture_output=True, text=True)\n    print(\'STDOUT:\', result.stdout)\n    print(\'STDERR:\', result.stderr)\n    print(\'Return code:\', result.returncode)\nelse:\n    # Try to run as executable\n    import subprocess\n    result = subprocess.run([\'./reconstructed.bin\'], capture_output=True, text=True)\n    print(\'STDOUT:\', result.stdout)\n    print(\'STDERR:\', result.stderr)\n    print(\'Return code:\', result.returncode)\nEOF\n'
+'python3 examine.py\n'
+'cat > examine2.py << \'EOF\'\nimport sys\nwith open(\'reconstructed.bin\', \'rb\') as f:\n    data = f.read(100)\nprint(\'First 100 bytes hex:\')\nfor i in range(0, 100, 2):\n    print(f\'{data[i]:02x}\', end=\'\')\n    if (i+1) % 16 == 0:\n        print()\nprint(\'\\nFirst 100 bytes ascii:\')\nfor b in data:\n    if 32 <= b < 127:\n        print(chr(b), end=\'\')\n    else:\n        print(\'.\', end=\'\')\nprint()\n# Check for shebang\nif data.startswith(b\'#!/\'):\n    print(\'Found shebang, trying to run as shell script\')\n    import subprocess\n    result = subprocess.run([\'bash\', \'-c\', data.decode(\'ascii\')], capture_output=True, text=True)\n    print(\'STDOUT:\', result.stdout)\n    print(\'STDERR:\', result.stderr)\n    print(\'Return code:\', result.returncode)\nelse:\n    # Check for Python bytecode\n    if data.startswith(b\'\\x0d\\x0a\\x17\\x00\'):\n        print(\'Python bytecode\')\n        import subprocess\n        result = subprocess.run([\'python3\', \'-c\', \'import sys; exec(open("reconstructed.bin").read())\'], capture_output=True, text=True)\n        print(\'STDOUT:\', result.stdout)\n        print(\'STDERR:\', result.stderr)\n        print(\'Return code:\', result.returncode)\n    else:\n        # Try to run as executable\n        import subprocess\n        result = subprocess.run([\'./reconstructed.bin\'], capture_output=True, text=True)\n        print(\'STDOUT:\', result.stdout)\n        print(\'STDERR:\', result.stderr)\n        print(\'Return code:\', result.returncode)\nEOF\n'
+'python3 examine2.py\n'
+"echo '--- First 100 bytes hex (alternative) ---'\n"
+'head -c 100 reconstructed.bin | xxd 2>/dev/null || cat > /dev/null && true\n'
+"echo '--- Checking for shebang line ---'\n"
+'head -c 20 reconstructed.bin | cat -A\n'
+'which od\n'
+'cat > examine3.py << \'EOF\'\nimport sys\nwith open(\'reconstructed.bin\', \'rb\') as f:\n    data = f.read()\nprint(\'Total bytes:\', len(data))\nprint(\'First 500 bytes hex:\')\nfor i in range(0, 500, 2):\n    print(f\'{data[i]:02x}\', end=\'\')\n    if (i+1) % 16 == 0:\n        print()\nprint(\'\\nFirst 500 bytes ascii:\')\nfor b in data[:500]:\n    if 32 <= b < 127:\n        print(chr(b), end=\'\')\n    else:\n        print(\'.\', end=\'\')\nprint()\n# Check for shebang\nif data.startswith(b\'#!/\'):\n    print(\'Found shebang, trying to run as shell script\')\n    import subprocess\n    result = subprocess.run([\'bash\', \'-c\', data.decode(\'ascii\')], capture_output=True, text=True)\n    print(\'STDOUT:\', result.stdout)\n    print(\'STDERR:\', result.stderr)\n    print(\'Return code:\', result.returncode)\nelse:\n    # Check for Python bytecode\n    if data.startswith(b\'\\x0d\\x0a\\x17\\x00\'):\n        print(\'Python bytecode\')\n        import subprocess\n        result = subprocess.run([\'python3\', \'-c\', \'import sys; exec(open("reconstructed.bin").read())\'], capture_output=True, text=True)\n        print(\'STDOUT:\', result.stdout)\n        print(\'STDERR:\', result.stderr)\n        print(\'Return code:\', result.returncode)\n    else:\n        # Check for ELF\n        if data[:8] == b\'\\x7fELF\\x01\':\n            print(\'ELF executable\')\n            import subprocess\n            result = subprocess.run([\'./reconstructed.bin\'], capture_output=True, text=True)\n            print(\'STDOUT:\', result.stdout)\n            print(\'STDERR:\', result.stderr)\n            print(\'Return code:\', result.returncode)\n        else:\n            print(\'Unknown format\')\nEOF\n'
+'python3 examine3.py\n'
+'which od\n'
+'head -c 20 reconstructed.bin | cat -A\n'
+'python3 examine3.py\n'
+'\n'
+'pwd\n'
+'which od\n'
+'which xxd\n'
+"head -c 1000 reconstructed.bin | od -c 2>/dev/null || echo 'od not available'\n"
+"head -c 1000 reconstructed.bin | xxd 2>/dev/null || echo 'xxd not available'\n"
+'C-c'
+'\n'
+'ls -la\n'
+'head -c 20 reconstructed.bin | cat -A\n'
+'python3 -c "import sys; data=open(\'reconstructed.bin\',\'rb\').read(); print(data[:500].hex())"\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

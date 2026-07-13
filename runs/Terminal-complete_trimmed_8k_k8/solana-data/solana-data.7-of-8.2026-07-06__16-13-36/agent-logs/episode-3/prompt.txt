@@ -1,0 +1,191 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@10c8fbbfe8f5:/app# python3 -c "import flask; print('Flask installed')" 2>/dev/null || echo 'Flask not installed'
+Flask not installed
+root@10c8fbbfe8f5:/app# pip3 install flask
+Collecting flask
+  Downloading flask-3.1.3-py3-none-any.whl.metadata (3.2 kB)
+Collecting blinker>=1.9.0 (from flask)
+  Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+Collecting click>=8.1.3 (from flask)
+  Downloading click-8.4.2-py3-none-any.whl.metadata (2.6 kB)
+Collecting itsdangerous>=2.2.0 (from flask)
+  Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+Collecting jinja2>=3.1.2 (from flask)
+  Downloading jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+Collecting markupsafe>=2.1.1 (from flask)
+  Downloading markupsafe-3.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+Collecting werkzeug>=3.1.0 (from flask)
+  Downloading werkzeug-3.1.8-py3-none-any.whl.metadata (4.0 kB)
+Downloading flask-3.1.3-py3-none-any.whl (103 kB)
+Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+Downloading click-8.4.2-py3-none-any.whl (119 kB)
+Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+Downloading jinja2-3.1.6-py3-none-any.whl (134 kB)
+Downloading markupsafe-3.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+Downloading werkzeug-3.1.8-py3-none-any.whl (226 kB)
+Installing collected packages: markupsafe, itsdangerous, click, blinker, werkzeug, jinja2, flask
+Successfully installed blinker-1.9.0 click-8.4.2 flask-3.1.3 itsdangerous-2.2.0 jinja2-3.1.6 markupsafe-3.0.3 werkzeug-3.1.8
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your syst
+em unusable.It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you ar
+e doing and want to suppress this warning.
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+root@10c8fbbfe8f5:/app# cd /app
+root@10c8fbbfe8f5:/app# cat > server.py << 'EOF'
+> import flask
+> from solana import Solana
+> from solana.rpc import Client
+> from solana.rpc.api import NetworkTypes
+> from solana.rpc.request import Request
+> from solana.rpc.response import Response
+> from typing import Dict, Any, Optional, List
+> import json
+> import sys
+>
+> app = flask.Flask(__name__)
+>
+> # Connect to mainnet-beta network
+> network = NetworkTypes.mainnet_beta
+> client = Client(network)
+>
+> # Helper function to handle errors and return JSON with error key
+> def handle_error(error_msg: str) -> Dict[str, str]:
+>     return {"error": error_msg}
+>
+> # /status endpoint
+> @app.route('/status')
+> def status():
+>     try:
+>         status_resp = client.get_status()
+>         status_data = status_resp.data
+>         # Convert slot number to int
+>         slot = int(status_data['current_slot'])
+>         node_count = int(status_data['node_count'])
+>         return {
+>             "status": status_data['status'],
+>             "network": status_data['network'],
+>             "current_slot": slot,
+>             "node_count": node_count,
+>             "version": status_data['version']
+>         }
+>     except Exception as e:
+>         return handle_error(f"Failed to get status: {e}")
+>
+> # /block/<slot_number>
+> @app.route('/block/<int:slot_number>')
+> def block_detail(slot_number):
+>     try:
+>         block_resp = client.get_block_by_slot(slot_number)
+>         block_data = block_resp.data
+>         # Convert to appropriate types
+>         blockhash = block_data['blockhash']
+>         parent_slot = int(block_data['parent_slot'])
+>         previous_blockhash = block_data['previous_blockhash']
+>         block_height = int(block_data['block_height'])
+>         block_time = block_data['block_time']
+>         return {
+>             "blockhash": blockhash,
+>             "parent_slot": parent_slot,
+>             "previous_blockhash": previous_blockhash,
+>             "block_height": block_height,
+>             "block_time": block_time
+>         }
+>     except Exception as e:
+>         return handle_error(f"Failed to get block {slot_number}: {e}")
+>
+> # /transaction/<signature>
+> @app.route('/transaction/<signature>')
+> def transaction_detail(signature):
+>     try:
+>         tx_resp = client.get_transaction(signature)
+>         tx_data = tx_resp.data
+>         if tx_data is None:
+>             return handle_error("Transaction not found")
+>         # Convert to appropriate types
+>         slot = int(tx_data['slot'])
+>         block_time = tx_data['block_time']
+>         success = tx_data['success']
+>         fee = float(tx_data['fee']) if tx_data['fee'] is not None else None
+>         token_transfers = []
+>         for transfer in tx_data['token_transfers']:
+>             token_transfers.append({
+>                 "account": transfer['account'],
+>                 "mint": transfer['mint'],
+>                 "amount": int(transfer['amount'])
+>             })
+>         return {
+>             "signature": signature,
+>             "slot": slot,
+>             "block_time": block_time,
+>             "success": success,
+>             "fee": fee,
+>             "token_transfers": token_transfers
+>         }
+>     except Exception as e:
+>         return handle_error(f"Failed to get transaction {signature}: {e}")
+>
+> # /account/<address>
+> @app.route('/account/<address>')
+> def account_detail(address):
+>     try:
+>         account_resp = client.get_account_info(address)
+>         account_data = account_resp.data
+>         if account_data is None:
+>             return handle_error("Account not found")
+>         # Convert to appropriate types
+>         executable = account_data['executable']
+>         lamports = int(account_data['lamports'])
+>         owner = account_data['owner']
+>         rent_epoch = int(account_data['rent_epoch'])
+>         return {
+>             "address": address,
+>             "executable": executable,
+>             "lamports": lamports,
+>             "owner": owner,
+>             "rent_epoch": rent_epoch
+>         }
+>     except Exception as e:
+>         return handle_error(f"Failed to get account {address}: {e}")
+>
+> # /program/<program_id>/accounts
+> @app.route('/program/<program_id>/accounts')
+> def program_accounts(program_id):
+>     try:
+>         accounts_resp = client.get_program_accounts(program_id)
+>         accounts_data = accounts_resp.data
+>         total_accounts = int(accounts_data['total_accounts'])
+>         # Get default limit and offset from query parameters, else default
+>         limit = int(request.args.get('limit', 10))
+>         offset = int(request.args.get('offset', 0))
+>         accounts_list = accounts_data['accounts'][offset:offset+limit]
+>         # Build accounts list with required details
+>         accounts_list_return = []
+>         for account in accounts_list:
+>             accounts_list_return.append({
+>                 "pubkey": account['pubkey'],
+>                 "account": {
+>                     "executable": account['executable'],
+>                     "lamports": int(account['lamports']),
+>                     "owner": account['owner'],
+>                     "rent_epoch": int(account['rent_epoch'])
+>                 }
+>             })
+>         return {
+>             "program_id": program_id,
+>             "total_accounts": total_accounts,
+>             "limit": limit,
+>             "offset": offset,
+>             "accounts": accounts_list_return
+>         }
+>     except Exception as e:
+>         return handle_error(f"Failed to get program accounts {program_id}: {e}")
+>
+> if __name__ == '__main__':
+>     app.run(port=5000)
+> EOF
+root@10c8fbbfe8f5:/app#

@@ -1,0 +1,41 @@
+<think>
+We are in a fresh environment with Python 3.13.1. No packages are installed yet. We need to install dependencies for Solana RPC and web server. We'll use Flask for the server and solana-rpc for interacting with the Solana blockchain. We also need to know the network we are connecting to (likely mainnet-beta). We'll need to set up the server with the required endpoints.
+
+Plan:
+1. Install Flask and solana-rpc (and maybe requests for fallback).
+2. Write a Python script that connects to the Solana network (we need to choose a network: let's use mainnet-beta for production). We'll use the RPC endpoint from solana-rpc (which provides a client). We'll need to get the current slot, network status, etc.
+3. Implement each endpoint with error handling (404 for missing data, and error key for other errors).
+4. Run the server on port 5000.
+
+Let's first install the packages. We'll use pip3. We'll also install json and other standard libraries (already included). We'll also need to handle pagination for program accounts.
+
+We'll write the script step by step. First, let's check if there is any existing file. We'll create a directory for the project and then write the script.
+
+We'll also need to decide on the network. We'll use the mainnet-beta RPC endpoint (https://rpc.mainnet-beta.solana.com) for the default. We can also allow the user to specify via environment variable, but for simplicity we'll hardcode.
+
+Let's start by installing packages.
+</think>
+
+{
+  "analysis": "We are in a fresh environment with Python 3.13.1. No packages are installed yet. We need to install dependencies for Solana RPC and web server. We'll use Flask for the server and solana-rpc for interacting with the Solana blockchain. We also need to know the network we are connecting to (likely mainnet-beta). We'll need to set up the server with the required endpoints.\n\nPlan:\n1. Install Flask and solana-rpc (and maybe requests for fallback).\n2. Write a Python script that connects to the Solana network (we need to choose a network: let's use mainnet-beta for production). We'll use the RPC endpoint from solana-rpc (which provides a client). We'll need to get the current slot, network status, etc.\n3. Implement each endpoint with error handling (404 for missing data, and error key for other errors).\n4. Run the server on port 5000.\n\nLet's first install the packages. We'll use pip3. We'll also install json and other standard libraries (already included). We'll also need to handle pagination for program accounts.\n\nWe'll write the script step by step. First, let's check if there is any existing file. We'll create a directory for the project and then write the script.\n\nWe'll also need to decide on the network. We'll use the mainnet-beta RPC endpoint (https://rpc.mainnet-beta.solana.com) for the default. We can also allow the user to specify via environment variable, but for simplicity we'll hardcode.\n\nLet's start by installing packages.",
+  "plan": "1. Install Flask and solana-rpc using pip3. 2. Create a Python script that sets up the server and endpoints. 3. Write the script to handle each endpoint with error handling. 4. Run the server and test with a simple curl to see if it works.",
+  "commands": [
+    {
+      "keystrokes": "pip3 install flask solana-rpc\n",
+      "duration": 10.0
+    },
+    {
+      "keystrokes": "mkdir -p /app/server\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "cd /app/server\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "cat > server.py << 'EOF'\nimport json\nimport sys\nfrom flask import Flask, request, abort\nfrom solana.rpc import client as rpc_client\nfrom solana.rpc.commitment import Commitment\nfrom solana.rpc.api import Namespace\nfrom solana import Solana\nfrom solana.account import Account\nfrom solana.block import Block\nfrom solana.signature import Signature\nfrom solana.transaction import Transaction\nfrom solana.token import Token\nfrom solana.token_account import TokenAccount\nfrom solana.program import Program\nfrom solana.pubkey import Pubkey\n\n# Set up Solana client\nsolana = Solana('https://rpc.mainnet-beta.solana.com', timeout=10)\n\napp = Flask(__name__)\n\n# Helper function to get network status\ndef get_network_status():\n    try:\n        status = solana.status()\n        # Extract network, current slot, node count, version\n        network = status['network']\n        current_slot = status['current_slot']\n        node_count = status['node_count']\n        version = status['version']\n        return {\n            'status': 'online',\n            'network': network,\n            'current_slot': current_slot,\n            'node_count': node_count,\n            'version': version\n        }\n    except Exception as e:\n        return {'error': str(e)}\n\n# /status endpoint\n@app.route('/status')\ndef status():\n    status_data = get_network_status()\n    if 'error' in status_data:\n        return json.dumps({'error': status_data['error']})\n    return json.dumps(status_data)\n\n# /block/<slot_number>\n@app.route('/block/<int:slot_number>')\ndef block_details(slot_number):\n    try:\n        block = Block(slot_number)\n        block_data = block.to_dict()\n        # Convert some fields to JSON-serializable\n        block_data['block_hash'] = block.block_hash\n        block_data['parent_slot'] = block.parent_slot\n        block_data['previous_block_hash'] = block.previous_block_hash\n        block_data['block_height'] = block.height\n        block_data['block_time'] = block.timestamp\n        return json.dumps(block_data)\n    except Exception as e:\n        return json.dumps({'error': str(e)})\n\n# /transaction/<signature>\n@app.route('/transaction/<signature>')\ndef transaction_details(signature):\n    try:\n        transaction = Transaction.from_signature(signature)\n        tx_data = transaction.to_dict()\n        # Convert some fields\n        tx_data['signature'] = transaction.signature\n        tx_data['slot'] = transaction.slot\n        tx_data['block_time'] = transaction.timestamp\n        tx_data['success'] = transaction.is_success\n        tx_data['fee'] = transaction.fee\n        # Token transfers\n        token_transfers = []\n        for transfer in transaction.token_transfers:\n            token_transfers.append({\n                'account': transfer.account.to_string(),\n                'mint': transfer.mint.to_string(),\n                'amount': str(transfer.amount)\n            })\n        tx_data['token_transfers'] = token_transfers\n        return json.dumps(tx_data)\n    except Exception as e:\n        return json.dumps({'error': str(e)})\n\n# /account/<address>\n@app.route('/account/<address>')\ndef account_details(address):\n    try:\n        account = Account(address)\n        account_data = account.to_dict()\n        return json.dumps(account_data)\n    except Exception as e:\n        return json.dumps({'error': str(e)})\n\n# /program/<program_id>/accounts\n@app.route('/program/<program_id>/accounts')\ndef program_accounts(program_id, limit=10, offset=0):\n    try:\n        program = Program(program_id)\n        accounts = program.get_accounts(limit, offset)\n        result = {\n            'program_id': program_id,\n            'total_accounts': len(accounts),\n            'limit': limit,\n            'offset': offset,\n            'accounts': []\n        }\n        for account in accounts:\n            account_info = account.to_dict()\n            result['accounts'].append(account_info)\n        return json.dumps(result)\n    except Exception as e:\n        return json.dumps({'error': str(e)})\n\nif __name__ == '__main__':\n    app.run(port=5000, debug=True)\nEOF\n",
+      "duration": 2.0
+    }
+  ],
+  "task_complete": false
+}

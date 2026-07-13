@@ -1,0 +1,157 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@643ba31915ab:/app# python3 -c "import scipy.optimize; print(dir(scipy.optimize))"
+['BFGS', 'Bounds', 'BroydenFirst', 'HessianUpdateStrategy', 'InverseJacobian', 'KrylovJacobian', 'LbfgsInvHessProduct', 'LinearConstraint', 'NoConvergence', 'No
+nlinearConstraint', 'OptimizeResult', 'OptimizeWarning', 'RootResults', 'SR1', '__all__', '__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__
+name__', '__package__', '__path__', '__spec__', '_basinhopping', '_bglu_dense', '_cobyla_py', '_cobyqa_py', '_constraints', '_dcsrch', '_differentiable_function
+s', '_differentialevolution', '_direct', '_direct_py', '_dual_annealing', '_group_columns', '_hessian_update_strategy', '_highspy', '_isotonic', '_lbfgsb', '_lb
+fgsb_py', '_linesearch', '_linprog', '_linprog_doc', '_linprog_highs', '_linprog_ip', '_linprog_rs', '_linprog_simplex', '_linprog_util', '_lsap', '_lsq', '_mil
+p', '_minimize', '_minpack', '_minpack_py', '_moduleTNC', '_nnls', '_nonlin', '_numdiff', '_optimize', '_pava_pybind', '_qap', '_remove_redundancy', '_root', '_
+root_scalar', '_shgo', '_shgo_lib', '_slsqp_py', '_slsqplib', '_spectral', '_tnc', '_trlib', '_trustregion', '_trustregion_constr', '_trustregion_dogleg', '_tru
+stregion_exact', '_trustregion_krylov', '_trustregion_ncg', '_zeros', '_zeros_py', 'anderson', 'approx_fprime', 'basinhopping', 'bisect', 'bracket', 'brent', 'b
+renth', 'brentq', 'broyden1', 'broyden2', 'brute', 'check_grad', 'cobyla', 'curve_fit', 'diagbroyden', 'differential_evolution', 'direct', 'dual_annealing', 'ex
+citingmixing', 'fixed_point', 'fmin', 'fmin_bfgs', 'fmin_cg', 'fmin_cobyla', 'fmin_l_bfgs_b', 'fmin_ncg', 'fmin_powell', 'fmin_slsqp', 'fmin_tnc', 'fminbound',
+'fsolve', 'golden', 'isotonic_regression', 'lbfgsb', 'least_squares', 'leastsq', 'line_search', 'linear_sum_assignment', 'linearmixing', 'linesearch', 'linprog'
+, 'linprog_verbose_callback', 'lsq_linear', 'milp', 'minimize', 'minimize_scalar', 'minpack', 'minpack2', 'moduleTNC', 'newton', 'newton_krylov', 'nnls', 'nonli
+n', 'optimize', 'quadratic_assignment', 'ridder', 'root', 'root_scalar', 'rosen', 'rosen_der', 'rosen_hess', 'rosen_hess_prod', 'shgo', 'show_options', 'slsqp',
+ 'test', 'tnc', 'toms748', 'zeros']
+root@643ba31915ab:/app# cat > /app/fit4.py << 'EOF'
+,
+    '2D': {
+        'x0': two_d_peak['x0'],
+        'gamma': two_d_peak['gamma'],
+        'amplitude': two_d_peak['amplitude'],
+        'offset': two_d_peak['offset']
+    }
+}
+
+# Write to file
+with open('/app/results.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+print('Results written to results.json')
+EOF
+> import numpy as np
+> import scipy
+> import json
+> from scipy import stats
+> from scipy.optimize import fmin
+>
+> def parse_line(line):
+>     line = line.strip()
+>     if not line:
+>         return None
+>     parts = line.split()
+>     if len(parts) != 2:
+>         return None
+>     x_str = parts[0].replace(',', '')
+>     y_str = parts[1].replace(',', '')
+>     try:
+>         x = float(x_str)
+>         y = float(y_str)
+>     except ValueError:
+>         return None
+>     return x, y
+>
+> def load_data(filename):
+>     x = []
+>     y = []
+>     with open(filename, 'r') as f:
+>         for line in f:
+>             parsed = parse_line(line)
+>             if parsed is not None:
+>                 x.append(parsed[0])
+>                 y.append(parsed[1])
+>     return np.array(x), np.array(y)
+>
+> def fit_peak(x, y, peak_pos):
+>     """Fit a single peak to the data."""
+>     # We'll use scipy's fmin to minimize the error
+>     # Function: y = offset + amplitude * (gamma / ( (x - x0)^2 + gamma^2 ))
+>     def lorentzian(x, x0, gamma, amplitude, offset):
+>         return offset + amplitude * (gamma / ( (x - x0)**2 + gamma**2 ))
+>
+>     # Initial guess for x0
+>     x0 = peak_pos
+>     # Initial guess for gamma (width)
+>     gamma = 50  # reasonable value
+>     # Initial guess for amplitude (peak height)
+>     amp = y.max()
+>     # Initial guess for offset (average background)
+>     offset = np.mean(y)
+>
+>     # Define the sum of squared errors
+>     def error(params, x, y):
+>         x0, gamma, amp, offset = params
+>         y_pred = offset + amp * (gamma / ( (x - x0)**2 + gamma**2 ))
+>         return np.sum((y - y_pred)**2)
+>
+>     # Use fmin to minimize the error
+>     params, _ = fmin(error, x0=[x0, gamma, amp, offset], xtol=1e-4, ftol=1e-4)
+>
+>     return {
+>         'x0': params[0],
+>         'gamma': params[1],
+>         'amplitude': params[2],
+>         'offset': params[3]
+>     }
+>
+> # Load data
+> x, y = load_data('/app/graphene.dat')
+>
+> # Find the positions of the two peaks
+> peak_indices = []
+> for i in range(1, len(y)-1):
+>     if y[i] > y[i-1] and y[i] > y[i+1]:
+>         peak_indices.append(i)
+>
+> # We expect two peaks: G around 1580 and 2D around 2700
+> # Let's find the indices corresponding to those ranges.
+> g_idx = None
+> two_d_idx = None
+> for idx in peak_indices:
+>     if 1580 < x[idx] < 1590:
+>         g_idx = idx
+>     elif 2700 < x[idx] < 2710:
+>         two_d_idx = idx
+>
+> if g_idx is not None and two_d_idx is not None:
+>     print(f'G peak index: {g_idx}, x: {x[g_idx]:.1f}')
+>     print(f'2D peak index: {two_d_idx}, x: {x[two_d_idx]:.1f}')
+>     g_peak = fit_peak(x, y, x[g_idx])
+>     two_d_peak = fit_peak(x, y, x[two_d_idx])
+> else:
+>     # If not found, we can try to find the two highest y values
+>     sorted_indices = sorted(peak_indices, key=lambda i: y[i], reverse=True)
+>     g_peak = fit_peak(x, y, x[sorted_indices[0]])
+>     two_d_peak = fit_peak(x, y, x[sorted_indices[1]])
+>     print('Could not locate peaks by position, using highest y values.')
+>
+> # Prepare results
+> results = {
+>     'G': {
+>         'x0': g_peak['x0'],
+>         'gamma': g_peak['gamma'],
+>         'amplitude': g_peak['amplitude'],
+>         'offset': g_peak['offset']
+>     },
+>     '2D': {
+>         'x0': two_d_peak['x0'],
+>         'gamma': two_d_peak['gamma'],
+>         'amplitude': two_d_peak['amplitude'],
+>         'offset': two_d_peak['offset']
+>     }
+> }
+>
+> # Write to file
+> with open('/app/results.json', 'w') as f:
+>     json.dump(results, f, indent=2)
+>
+> print('Results written to results.json')
+> EOF
+root@643ba31915ab:/app# python3 /app/fit4.py
+cat /app/results.json
+

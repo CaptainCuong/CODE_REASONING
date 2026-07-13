@@ -1,0 +1,115 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@f7f90cc28f7c:/app/ssl# cd /app/ssl
+root@f7f90cc28f7c:/app/ssl# SUBJECT=$(openssl x509 -in server.crt -text 2>/dev/null | grep '^Subject:' | cut -d: -f2- | sed 's/^ //')
+root@f7f90cc28f7c:/app/ssl# echo $SUBJECT
+
+root@f7f90cc28f7c:/app/ssl# VALIDITY=$(openssl x509 -in server.crt -text 2>/dev/null | grep -E 'Valid from:[^ ]+ to [^ ]+$' | cut -d' ' -f2- | sed 's/^ //')
+root@f7f90cc28f7c:/app/ssl# echo $VALIDITY
+
+root@f7f90cc28f7c:/app/ssl# FP=$(openssl x509 -in server.crt -fingerprint sha256 2>/dev/null | grep 'Fingerprint:' | cut -d: -f2- | sed 's/^ //')
+root@f7f90cc28f7c:/app/ssl# echo $FP
+
+root@f7f90cc28f7c:/app/ssl# cat > /app/ssl/verification.txt << EOF
+> Subject: $SUBJECT
+> Validity: $VALIDITY
+> Fingerprint: $FP
+> EOF
+root@f7f90cc28f7c:/app/ssl# chmod 600 /app/ssl/verification.txt
+root@f7f90cc28f7c:/app/ssl# cat /app/ssl/verification.txt
+Subject:
+Validity:
+Fingerprint:
+root@f7f90cc28f7c:/app/ssl# cat > /app/check_cert.py << 'EOF'
+> import sys
+> import subprocess
+> import os
+> from datetime import datetime
+>
+> def get_subject_common_name(subject_str):
+>     # subject_str like "O = DevOps Team, CN = dev-internal.company.local"
+>     # We'll split by ', ' and then by '='
+>     parts = subject_str.split(', ')
+>     for part in parts:
+>         if part.startswith('CN ='):
+>             return part.split('=', 1)[1].strip()
+>     return None
+>
+> def main():
+>     cert_path = '/app/ssl/server.crt'
+>     if not os.path.exists(cert_path):
+>         print('ERROR: Certificate file not found')
+>         sys.exit(1)
+>     # Subject
+>     try:
+>         result = subprocess.check_output(['openssl', 'x509', '-in', cert_path, '-text'], stderr=subprocess.STDOUT)
+>         lines = result.split('\n')
+>         subject_line = None
+>         for line in lines:
+>             if line.startswith('Subject:'):
+>                 subject_line = line.split(':')[1].strip()
+>                 break
+>         if subject_line:
+>             common = get_subject_common_name(subject_line)
+>             print(f'Subject: {subject_line}')
+>             print(f'Common Name: {common}')
+>         else:
+>             print('ERROR: Could not find subject line')
+>             sys.exit(1)
+>     except subprocess.CalledProcessError as e:
+>         print(f'ERROR: Failed to get subject: {e}', file=sys.stderr)
+>         sys.exit(1)
+>     except Exception as e:
+>         print(f'ERROR: Failed to get subject: {e}', file=sys.stderr)
+>         sys.exit(1)
+>     # Validity dates
+>     try:
+>         result = subprocess.check_output(['openssl', 'x509', '-in', cert_path, '-text'], stderr=subprocess.STDOUT)
+>         lines = result.split('\n')
+>         start = None
+>         end = None
+>         for line in lines:
+>             if line.startswith('Valid from:'):
+>                 start = line.split()[1].rstrip(' to')
+>             elif line.startswith('Valid to:'):
+>                 end = line.split()[-1]
+>         if start and end:
+>             print(f'Validity: {start} to {end}')
+>         else:
+>             print('ERROR: Could not determine validity dates')
+>             sys.exit(1)
+>     except subprocess.CalledProcessError as e:
+>         print(f'ERROR: Failed to get validity dates: {e}', file=sys.stderr)
+>         sys.exit(1)
+>     except Exception as e:
+>         print(f'ERROR: Failed to get validity dates: {e}', file=sys.stderr)
+>         sys.exit(1)
+>     # SHA-256 fingerprint
+>     try:
+>         result = subprocess.check_output(['openssl', 'x509', '-in', cert_path, '-fingerprint', 'sha256'], stderr=subprocess.STDOUT)
+>         lines = result.split('\n')
+>         fp = None
+>         for line in lines:
+>             if line.startswith('Fingerprint: SHA-256'):
+>                 fp = line.split()[1].strip()
+>                 break
+>         if fp:
+>             print(f'SHA-256 Fingerprint: {fp}')
+>         else:
+>             print('WARNING: Could not compute SHA-256 fingerprint')
+>     except subprocess.CalledProcessError as e:
+>         print(f'WARNING: Could not compute SHA-256 fingerprint: {e}', file=sys.stderr)
+>     except Exception as e:
+>         print(f'WARNING: Could not compute SHA-256 fingerprint: {e}', file=sys.stderr)
+>     print('Certificate verification successful')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f7f90cc28f7c:/app/ssl# chmod 755 /app/check_cert.py
+root@f7f90cc28f7c:/app/ssl# python3 /app/check_cert.py
+ERROR: Failed to get subject: a bytes-like object is required, not 'str'
+root@f7f90cc28f7c:/app/ssl#

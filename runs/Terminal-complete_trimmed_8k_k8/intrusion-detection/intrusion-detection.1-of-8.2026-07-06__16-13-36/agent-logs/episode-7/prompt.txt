@@ -1,0 +1,135 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@3b998ee63049:/app# cd /app
+root@3b998ee63049:/app# bash -x /app/scripts/intrusion_detector.sh 2>&1 | head -30
++ set -e
++ LOG_DIR=/app/logs
++ RULES_FILE=/app/rules/detection_rules.json
++ REPORT_DIR=/app/reports
++ ALERT_FILE=/app/reports/alert.json
++ REPORT_FILE=/app/reports/report.json
++ mkdir -p /app/reports
++ RULES_ID=()
++ RULES_PATTERN=()
++ RULES_SEVERITY=()
++ RULES_THRESHOLD=()
++ RULES_TIMEFRAME=()
++ command -v jq
++ jq -r '.rules[] | "\(.id) \(.pattern) \(.severity) \(.threshold) \(.timeframe)"' /app/rules/detection_rules.json
++ read -r line
++ [[ -z SSH-BRUTE-FORCE Failed password for high 5 60 ]]
++ IFS=' '
++ read -r id pattern severity threshold timeframe
++ RULES_ID+=("$id")
++ RULES_PATTERN+=("$pattern")
++ RULES_SEVERITY+=("$severity")
++ RULES_THRESHOLD+=("$threshold")
++ RULES_TIMEFRAME+=("$timeframe")
++ read -r line
++ [[ -z WEB-SCAN GET /admin|GET /phpmyadmin|GET /wp-admin|GET /manager/html|GET /.env|GET /config.php medium 3 300 ]]
++ IFS=' '
++ read -r id pattern severity threshold timeframe
++ RULES_ID+=("$id")
++ RULES_PATTERN+=("$pattern")
++ RULES_SEVERITY+=("$severity")
+root@3b998ee63049:/app# cd /app
+root@3b998ee63049:/app# cat > /app/scripts/intrusion_detector_fixed.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> REPORT_DIR="/app/reports"
+> ALERT_FILE="$REPORT_DIR/alert.json"
+> REPORT_FILE="$REPORT_DIR/report.json"
+>
+> mkdir -p "$REPORT_DIR"
+>
+> # Parse rules with jq and store in arrays
+> RULES_ID=()
+> RULES_PATTERN=()
+> RULES_SEVERITY=()
+> RULES_THRESHOLD=()
+> RULES_TIMEFRAME=()
+>
+> while read -r line; do
+>     if [[ -z "$line" ]]; then
+>         continue
+>     fi
+>     IFS=' ' read -r id pattern severity threshold timeframe <<< "$line"
+>     RULES_ID+=("$id")
+>     RULES_PATTERN+=("$pattern")
+>     RULES_SEVERITY+=("$severity")
+>     RULES_THRESHOLD+=("$threshold")
+>     RULES_TIMEFRAME+=("$timeframe")
+> done < <(jq -r '.rules[] | "\(.id) \(.pattern) \(.severity) \(.threshold) \(.timeframe)"' "$RULES_FILE")
+>
+> # Initialize associative arrays for matches and IPs
+> declare -A matches
+> declare -A ips
+>
+> TIMESTAMP=$(date -Iseconds)
+>
+> # Process logs
+> for i in "${!RULES_ID[@]}"; do
+>     rule_id="${RULES_ID[$i]}"
+>     pattern="${RULES_PATTERN[$i]}"
+>     # Count matches in auth.log
+>     auth_count=$(grep -c -E "$pattern" "$LOG_DIR/auth.log")
+>     # Count matches in http.log
+>     http_count=$(grep -c -E "$pattern" "$LOG_DIR/http.log")
+>     total=$((auth_count + http_count))
+>     matches["$rule_id"]=$total
+>     # Collect IPs from auth.log
+>     auth_ips=$(grep -o -E "${pattern}" "$LOG_DIR/auth.log" | sed 's/.* //' | tr '\n' ',' | sed 's/,$//')
+>     # Collect IPs from http.log
+>     http_ips=$(grep -o -E "${pattern}" "$LOG_DIR/http.log" | sed 's/.* //' | tr '\n' ',' | sed 's/,$//')
+>     # Combine and deduplicate
+>     all_ips="$auth_ips$http_ips"
+>     # Remove duplicates by using sort and uniq
+>     all_ips=$(echo $all_ips | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+>     ips["$rule_id"]="$all_ips"
+> done
+>
+> # Build arrays for alerts and events
+> alerts=()
+> events=()
+>
+> for i in "${!RULES_ID[@]}"; do
+>     rule_id="${RULES_ID[$i]}"
+>     severity="${RULES_SEVERITY[$i]}"
+>     match_count="${matches[$rule_id]}"
+>     ip_list="${ips[$rule_id]}"
+>
+>     # Build alert object
+>     alert_obj="${rule_id} ${severity} ${match_count} ${ip_list}"
+>     alerts+=("$alert_obj")
+>
+>     # Build event object (same as alert)
+>     event_obj="${rule_id} ${severity} ${match_count} ${ip_list}"
+>     events+=("$event_obj")
+>
+> done
+>
+> # Generate alert.json
+> jq -n --arg timestamp "$TIMESTAMP" --argjson alerts "$(jq -R . <<< "${alerts[*]}" | jq -s '.')" \
+>     '{timestamp: $timestamp, alerts: $alerts}' > "$ALERT_FILE"
+>
+> # Generate report.json
+> jq -n --arg timestamp "$TIMESTAMP" --argjson events "$(jq -R . <<< "${events[*]}" | jq -s '.')" \
+>     --argjson statistics "$(jq -R . <<< "${!matches[@]}|\(.key):\(.value)" | jq -s '.')" \
+>     '{timestamp: $timestamp, events: $events, statistics: $statistics}' > "$REPORT_FILE"
+>
+> echo "Detection complete. Alerts saved to $ALERT_FILE, report to $REPORT_FILE"
+> EOF
+root@3b998ee63049:/app# chmod +x /app/scripts/intrusion_detector_fixed.sh
+root@3b998ee63049:/app# cd /app
+root@3b998ee63049:/app# ./scripts/intrusion_detector_fixed.sh
+root@3b998ee63049:/app# cat /app/reports/alert.json
+cat: /app/reports/alert.json: No such file or directory
+root@3b998ee63049:/app# cat /app/reports/report.json
+cat: /app/reports/report.json: No such file or directory
+root@3b998ee63049:/app#

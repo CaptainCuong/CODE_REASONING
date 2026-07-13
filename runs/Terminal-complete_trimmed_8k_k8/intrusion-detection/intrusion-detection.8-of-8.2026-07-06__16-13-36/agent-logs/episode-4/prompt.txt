@@ -1,0 +1,242 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@1cbcccffc615:/app# cat /app/intrusion_detector.sh | head -50
+#!/bin/bash
+set -euo pipefail
+
+LOG_DIR="/app/logs"
+RULES_FILE="/app/rules/detection_rules.json"
+REPORT_DIR="/app/reports"
+
+# Parse JSON rules
+function parse_rules() {
+    jq -r '.rules[] | .id + "|" + .pattern + "|" + .severity + "|" + (.threshold|tostring) + "|" + (.timeframe|tostring)' "$RULES_FILE
+}
+
+# Parse log line for auth.log
+function parse_auth_line() {
+    line="$1"
+    # Extract timestamp (format: Apr 10 08:12:33)
+    if [[ "$line" =~ (\w{3}) (\d{2}) (\d{2}):(\d{2}):(\d{2}) ]]; then
+        date="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+        time="${BASH_REMATCH[3]}:${BASH_REMATCH[4]}:${BASH_REMATCH[5]}"
+        timestamp="$date $time"
+        # Extract IP: "from <IP>"
+        if [[ "$line" =~ from (\S+) ]]; then
+            ip="${BASH_REMATCH[1]}"
+        else
+            ip=""
+        fi
+    else
+        timestamp=""
+        ip=""
+    fi
+    echo "$timestamp|$ip|$line"
+}
+
+# Parse log line for http.log
+function parse_http_line() {
+    line="$1"
+    # Extract timestamp: [10/Apr/2023:08:30:42 +0000]
+    if [[ "$line" =~ \[(\d{2}/\w{3}/\d{4}):(\d{2}):(\d{2}):(\d{2}) ]]; then
+        date="${BASH_REMATCH[1]}"
+        time="${BASH_REMATCH[2]}:${BASH_REMATCH[3]}:${BASH_REMATCH[4]}"
+        timestamp="$date $time"
+        # Extract IP: first token after timestamp
+        ip=$(echo "$line" | awk '{print $1}')
+    else
+        timestamp=""
+        ip=""
+    fi
+    echo "$timestamp|$ip|$line"
+}
+
+root@1cbcccffc615:/app# wc -l /app/intrusion_detector.sh
+139 /app/intrusion_detector.sh
+root@1cbcccffc615:/app# rm /app/intrusion_detector.sh
+root@1cbcccffc615:/app# cat > /app/intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -euo pipefail
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> REPORT_DIR="/app/reports"
+>
+> # Parse JSON rules
+> function parse_rules() {
+>     jq -r '.rules[] | .id + "|" + .pattern + "|" + .severity + "|" + (.threshold|tostring) + "|" + (.timeframe|tostring)' "$RULES_FILE
+> }
+>
+> # Parse log line for auth.log
+> function parse_auth_line() {
+>     line="$1"
+>     # Extract timestamp (format: Apr 10 08:12:33)
+>     if [[ "$line" =~ (\w{3}) (\d{2}) (\d{2}):(\d{2}):(\d{2}) ]]; then
+>         date="${BASH_REMATCH[1]} ${BASH_REMATCH[2]}"
+>         time="${BASH_REMATCH[3]}:${BASH_REMATCH[4]}:${BASH_REMATCH[5]}"
+>         timestamp="$date $time"
+>         # Extract IP: "from <IP>"
+>         if [[ "$line" =~ from (\S+) ]]; then
+>             ip="${BASH_REMATCH[1]}"
+>         else
+>             ip=""
+>         fi
+>     else
+>         timestamp=""
+>         ip=""
+>     fi
+>     echo "$timestamp|$ip|$line"
+> }
+>
+> # Parse log line for http.log
+> function parse_http_line() {
+>     line="$1"
+>     # Extract timestamp: [10/Apr/2023:08:30:42 +0000]
+>     if [[ "$line" =~ \[(\d{2}/\w{3}/\d{4}):(\d{2}):(\d{2}):(\d{2}) ]]; then
+>         date="${BASH_REMATCH[1]}"
+>         time="${BASH_REMATCH[2]}:${BASH_REMATCH[3]}:${BASH_REMATCH[4]}"
+>         timestamp="$date $time"
+>         # Extract IP: first token after timestamp
+>         ip=$(echo "$line" | awk '{print $1}')
+>     else
+>         timestamp=""
+>         ip=""
+>     fi
+>     echo "$timestamp|$ip|$line"
+> }
+>
+O> # Main detection
+> function main() {
+>     # Ensure report directory exists
+>     mkdir -p "$REPORT_DIR"
+>
+>     # Get current time in epoch seconds
+>     current_time=$(date +%s)
+>
+>     # Parse rules
+>     rules=$(parse_rules)
+>     while IFS="|" read -r rule_id pattern severity threshold timeframe; do
+>         # Initialize data for this rule
+>         declare -A ip_counts
+>         # Scan auth.log
+>         while IFS= read -r auth_line; do
+>             parsed=$(parse_auth_line "$auth_line")
+>             if [[ -n "$parsed" ]]; then
+>                 ts_ip_line=$(echo "$parsed" | tr '|' '\n')
+>                 timestamp=$(echo "$ts_ip_line" | head -1)
+>                 ip=$(echo "$ts_ip_line" | tail -1)
+>                 if [[ "$timestamp" =~ ^[A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then
+>                     # Convert timestamp to epoch seconds
+>                     epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
+>                     if [[ $epoch -ge $((current_time - timeframe)) ]]; then
+>                         if [[ "$line" =~ $pattern ]]; then
+>                             ((ip_counts[$ip]++))
+>                         fi
+>                     fi
+>                 fi
+>             fi
+>         done < <(grep -h "$pattern" "$LOG_DIR/auth.log")
+>
+>         # Scan http.log
+>         while IFS= read -r http_line; do
+>             parsed=$(parse_http_line "$http_line")
+>             if [[ -n "$parsed" ]]; then
+>                 ts_ip_line=$(echo "$parsed" | tr '|' '\n')
+>                 timestamp=$(echo "$ts_ip_line" | head -1)
+>                 ip=$(echo "$ts_ip_line" | tail -1)
+>                 if [[ "$timestamp" =~ ^[A-Za-z]{3} [0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}$ ]]; then
+>                     epoch=$(date -d "$timestamp" +%s 2>/dev/null || echo 0)
+>                     if [[ $epoch -ge $((current_time - timeframe)) ]]; then
+>                         if [[ "$http_line" =~ $pattern ]]; then
+>                             ((ip_counts[$ip]++))
+>                         fi
+>                     fi
+>                 fi
+>             fi
+>         done < <(grep -h "$pattern" "$LOG_DIR/http.log")
+>
+>         # Prepare data for JSON
+>         # Build IPs list
+>         ips=$(echo "${!ip_counts[@]}" | tr '\n' ',' | sed 's/,$//')
+>         # Count total matches
+>         total=$(echo "${#ip_counts[@]}" | awk '{sum += $1} END {print sum}')
+>
+>         # Add to events array
+>         # We'll store in temporary files for JSON generation
+>         echo "$rule_id|$severity|$total|$ips" >> "$REPORT_DIR/events.txt"
+>
+>         # For alert generation, we need to check threshold
+>         if [[ $total -ge $threshold ]]; then
+>             echo "$rule_id|$severity|$total|$ips" >> "$REPORT_DIR/alerts.txt"
+>         fi
+>     done <<< "$rules"
+>
+>     # Generate report.json
+>     if [[ -f "$REPORT_DIR/events.txt" ]]; then
+>         # Build statistics dictionary
+>         stats=$(while IFS="|" read -r rule_id severity total ips; do
+>             echo "$rule_id:$total"
+>         done < "$REPORT_DIR/events.txt" | tr '\n' ',' | sed 's/,$//')
+>
+>         # Build events array
+>         events=$(cat "$REPORT_DIR/events.txt" | while IFS="|" read -r rule_id severity total ips; do
+>             echo "    {\n      "id": \"$rule_id\",\n      "severity": \"$severity\",\n      "matches": $total,\n      "ips": \"$ips\"\n    },"
+>         done | sed '$s/,$//')
+>
+>         # Create report.json
+>         cat > "$REPORT_DIR/report.json" << 'EOF'
+> {
+>   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+>   "events": [
+> $events
+>   ],
+>   "statistics": {
+>     $stats
+>   }
+> }
+> EOF
+root@1cbcccffc615:/app#     fi
+bash: syntax error near unexpected token `fi'
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app#     # Generate alert.json
+root@1cbcccffc615:/app#     if [[ -f "$REPORT_DIR/alerts.txt" ]]; then
+>         alerts=$(cat "$REPORT_DIR/alerts.txt" | while IFS="|" read -r rule_id severity total ips; do
+>             echo "    {\n      "id": \"$rule_id\",\n      "severity": \"$severity\",\n      "matches": $total,\n      "ips": \"$ips\"\n    },"
+>         done | sed '$s/,$//')
+>
+>         cat > "$REPORT_DIR/alert.json" << 'EOF'
+> {
+>   "timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')",
+>   "alerts": [
+> $alerts
+>   ]
+> }
+> EOF
+>     fi
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app#     echo "Detection complete. Reports written to $REPORT_DIR/"
+Detection complete. Reports written to /
+root@1cbcccffc615:/app# }
+bash: syntax error near unexpected token `}'
+root@1cbcccffc615:/app#
+root@1cbcccffc615:/app# # Execute main
+root@1cbcccffc615:/app# main
+bash: main: command not found
+root@1cbcccffc615:/app# EOF
+bash: EOF: command not found
+root@1cbcccffc615:/app# chmod +x /app/intrusion_detector.sh
+root@1cbcccffc615:/app# cd /app
+root@1cbcccffc615:/app# ./intrusion_detector.sh
+./intrusion_detector.sh: line 136: unexpected EOF while looking for matching `"'
+root@1cbcccffc615:/app# ls -la /app/reports/
+total 0
+drwxr-xr-x 2 root root 10 Jul  7 18:33 .
+drwxr-xr-x 1 root root 66 Jul  7 18:56 ..
+root@1cbcccffc615:/app# cat /app/reports/report.json
+cat: /app/reports/report.json: No such file or directory
+root@1cbcccffc615:/app# cat /app/reports/alert.json
+cat: /app/reports/alert.json: No such file or directory
+root@1cbcccffc615:/app#

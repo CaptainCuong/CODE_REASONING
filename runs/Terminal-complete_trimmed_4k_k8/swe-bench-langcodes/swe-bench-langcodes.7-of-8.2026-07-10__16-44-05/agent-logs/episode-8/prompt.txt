@@ -1,0 +1,153 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+ the distance.
+
+    >>> tag_distance('yue', 'zh')
+    64
+
+    When the supported script is a different one than desired, this is usually
+    a major difference with score of 50 or more.
+
+    >>> tag_distance('ja', 'ja-Latn-US-hepburn')
+    54
+
+    >>> # You can read the Shavian script, right?
+    >>> tag_distance('en', 'en-Shaw')
+    54
+    """
+    desired_obj = Language.get(desired)
+    supported_obj = Language.get(supported)
+    return desired_obj.distance(supported_obj)
+
+
+def best_match(
+    desired_language: Union[str, Language],
+    supported_languages: Sequence[str],
+    min_score: int = 75,
+) -> Tuple[str, int]:
+    """
+    DEPRECATED: use .closest_match() instead. This function emulates the old
+    matching behavior by subtracting the language distance from 100.
+
+    You have software that supports any of the `supported_languages`. You want
+    to use `desired_language`. This function lets you choose the right language,
+    even if there isn't an exact match.
+
+    Returns:
+
+    - The best-matching language code, which will be one of the
+      `supported_languages` or 'und'
+    - The score of the match, from 0 to 100; higher is better.
+
+    `min_score` sets the minimum match score. If all languages match with a lower
+    score than that, the result will be 'und' with a score of 0.
+    """
+    max_distance = 100 - min_score
+    supported, distance = closest_match(
+        desired_language, supported_languages, max_distance
+    )
+    score = max(0, 100 - distance)
+    return supported, score
+
+
+def closest_match(
+    desired_language: Union[str, Language],
+    supported_languages: Sequence[str],
+    max_distance: int = 25,
+) -> Tuple[str, int]:
+    """
+    You have software that supports any of the `supported_languages`. You want
+    to use `desired_language`. This function lets you choose the right language,
+    even if there isn't an exact match.
+
+    Returns:
+
+    - The best-matching language code, which will be one of the
+      `supported_languages` or 'und' for no match
+    - The distance of the match, which is 0 for a perfect match and increases
+      from there (see `tag_distance`)
+
+    `max_distance` sets the maximum match distance. If all matches are farther
+    than that, the result will be 'und' with a distance of 1000. The default
+    value is 25, and raising it can cause data to be processed in significantly
+    the wrong language. The documentation for `tag_distance` describes the
+    distance values in more detail.
+
+    When there is a tie for the best matching language, the first one in the
+    tie will be used.
+
+    >>> closest_match('fr', ['de', 'en', 'fr'])
+    ('fr', 0)
+
+    >>> closest_match('pt', ['pt-BR', 'pt-PT'])
+    ('pt-BR', 0)
+
+    >>> closest_match('en-AU', ['en-GB', 'en-US'])
+    ('en-GB', 3)
+
+    >>> closest_match('af', ['en', 'nl', 'zu'])
+    ('nl', 24)
+
+    >>> closest_match('ja', ['ja-Latn-hepburn', 'en'])
+    ('und', 1000)
+    """
+    desired_language = str(desired_language)
+
+    # Quickly return if the desired language is directly supported
+    if desired_language in supported_languages:
+        return desired_language, 0
+
+    # Reduce the desired language to a standard form that could also match
+    desired_language = standardize_tag(desired_language)
+    if desired_language in supported_languages:
+        return desired_language, 0
+
+    match_distances = [
+        (supported, tag_distance(desired_language, supported))
+        for supported in supported_languages
+    ]
+    match_distances = [
+        (supported, distance)
+        for (supported, distance) in match_distances
+        if distance <= max_distance
+    ] + [('und', 1000)]
+
+    match_distances.sort(key=itemgetter(1))
+    return match_distances[0]
+
+
+def closest_supported_match(
+    desired_language: Union[str, Language],
+    supported_languages: Sequence[str],
+    max_distance: int = 25,
+) -> Optional[str]:
+    """
+    Wraps `closest_match` with a simpler return type. Returns the language
+    tag of the closest match if there is one, or None if there is not.
+
+    >>> closest_supported_match('fr', ['de', 'en', 'fr'])
+    'fr'
+
+    >>> closest_supported_match('pt', ['pt-BR', 'pt-PT'])
+    'pt-BR'
+
+    >>> closest_supported_match('en-AU', ['en-GB', 'en-US'])
+    'en-GB'
+
+    >>> closest_supported_match('und', ['en', 'und'])
+    'und'
+
+    >>> closest_supported_match('af', ['en', 'nl', 'zu'])
+    'nl'
+
+    >>> print(closest_supported_match('af', ['en', 'nl', 'zu'], max_distance=10))
+    None
+    """
+    code, distance = closest_match(desired_language, supported_languages, max_distance)
+    if distance == 1000:
+        return None
+    else:
+        return code
+root@72c473e8f9ed:/app/langcodes/langcodes#

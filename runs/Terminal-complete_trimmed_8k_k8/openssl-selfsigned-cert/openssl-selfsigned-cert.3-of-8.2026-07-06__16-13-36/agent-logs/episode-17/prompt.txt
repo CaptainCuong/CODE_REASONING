@@ -1,0 +1,110 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+python3 -c "import ssl; print('ssl.Certificate exists:', ssl.Certificate)"
+openssl x509 -key server.key -days 365 -subj '/O=DevOps Team/CN=dev-internal.company.local' -out server.crt
+ls -l server.crt
+cat server.key server.crt > server.pem
+echo 'Subject:' > /app/ssl/verification.txt
+openssl x509 -in server.crt -subject >> /app/ssl/verification.txt
+echo 'Validity dates:' >> /app/ssl/verification.txt
+openssl x509 -in server.crt -dates >> /app/ssl/verification.txt
+echo 'SHA-256 fingerprint:' >> /app/ssl/verification.txt
+openssl x509 -in server.crt -sha256 -fingerprint >> /app/ssl/verification.txt
+cat /app/ssl/verification.txt
+cd /app
+cat > /app/check_cert.py << 'EOF'
+import subprocess
+import sys
+import os
+
+def get_certificate_details():
+    # Use OpenSSL to get details
+    cmd = ['openssl', 'x509', '-in', '/app/ssl/server.crt', '-subject']
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        subject = result.stdout.strip()
+    else:
+        subject = 'Failed to get subject'
+
+    cmd = ['openssl', 'x509', '-in', '/app/ssl/server.crt', '-dates']
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    dates = result.stdout.strip()
+
+    cmd = ['openssl', 'x509', '-in', '/app/ssl/server.crt', '-sha256', '-fingerprint']
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0:
+        fingerprint = result.stdout.strip()
+    else:
+        fingerprint = 'Failed to get SHA-256 fingerprint'
+
+    return subject, dates, fingerprint
+
+def main():
+    ssl_path = '/app/ssl/server.pem'
+    if not os.path.exists(ssl_path):
+        print(f'Error: PEM file not found at {ssl_path}')
+        sys.exit(1)
+    try:
+        # Load the PEM file to verify it's a valid certificate
+        with open(ssl_path, 'rb') as f:
+            cert_data = f.read()
+        # Try to load using OpenSSL via subprocess
+        cmd = ['openssl', 'x509', '-x509opt', 'no-CA-check', '-in', ssl_path, '-out', '/dev/null', '-noout', '-noenc']
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f'Error loading PEM file: {result.stderr}')
+            sys.exit(1)
+
+        subject, dates, fingerprint = get_certificate_details()
+        print('Subject:', subject)
+        print('Validity dates:', dates)
+        print('SHA-256 fingerprint:', fingerprint)
+        # Extract Common Name and expiration date from dates
+        # The dates output is like:
+        # Validity: Dec 31 00:00:00 2025 GMT
+        # Validity: Jan 1 00:00:00 2026 GMT
+        # We'll parse and output Common Name and expiration date in YYYY-MM-DD
+        # We'll use OpenSSL to get the Common Name
+        cmd = ['openssl', 'x509', '-in', '/app/ssl/server.crt', '-get_name']
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            line = result.stdout.strip()
+            if line:
+                import re
+                match = re.search(r'CN=([^\s]+)', line)
+                if match:
+                    common_name = match.group(1)
+                else:
+                    common_name = 'Unknown'
+        else:
+            common_name = 'Unknown'
+
+        # Parse dates to get expiration date
+        cmd = ['openssl', 'x509', '-in', '/app/ssl/server.crt', '-get-expired']
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            expired = result.stdout.strip()
+            from datetime import datetime
+            try:
+                dt = datetime.strptime(expired, '%b %d %H:%M:%S %Y %Z')
+                expiration_date = dt.strftime('%Y-%m-%d')
+            except ValueError:
+                expiration_date = 'Unknown'
+        else:
+            expiration_date = 'Unknown'
+
+        print(f'Common Name: {common_name}')
+        print(f'Expiration date: {expiration_date}')
+        print('Certificate verification successful')
+    except Exception as e:
+        print(f'Error loading certificate: {e}')
+        sys.exit(1)
+
+if __name__ == '__main__':
+    main()
+EOF
+python3 /app/check_cert.py
+

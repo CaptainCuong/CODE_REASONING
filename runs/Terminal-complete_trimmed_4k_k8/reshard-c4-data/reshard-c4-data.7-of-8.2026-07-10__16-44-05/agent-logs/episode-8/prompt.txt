@@ -1,0 +1,63 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@59512a75ecdd:/app# rm -rf c4_reshard
+root@59512a75ecdd:/app# mkdir -p c4_reshard
+root@59512a75ecdd:/app# cat > transform.py << 'EOF'
+> import json
+> import os
+> import zlib
+>
+> c4_sample = 'c4_sample'
+> c4_reshard = 'c4_reshard'
+>
+> # Read all files
+> all_objects = []
+> for fname in os.listdir(c4_sample):
+>     if fname.endswith('.jsonl'):
+>         with open(os.path.join(c4_sample, fname), 'r') as f:
+>             for line in f:
+>                 line = line.strip()
+>                 if line:
+>                     try:
+>                         obj = json.loads(line)
+>                         all_objects.append(obj)
+>                     except json.JSONDecodeError:
+>                         print(f"Warning: Invalid JSON in {fname}: {line}", file=sys.stderr)
+>
+> total = len(all_objects)
+> group_size = total // 30
+> if total % 30 != 0:
+>     group_size += 1
+> groups = []
+> for i in range(30):
+>     start = i * group_size
+>     end = start + group_size
+>     groups.append(all_objects[start:end])
+>
+> # Write each group as a file, compress
+> for idx, group in enumerate(groups):
+>     # Write lines separated by newline
+>     with open(os.path.join(c4_reshard, f'group_{idx:03d}.jsonl'), 'w') as f:
+>         for obj in group:
+>             f.write(json.dumps(obj) + '\n')
+>     # Read and compress
+>     with open(os.path.join(c4_reshard, f'group_{idx:03d}.jsonl'), 'r', encoding='utf-8') as f:
+>         content = f.read()
+>     # Remove whitespace
+>     content = content.replace(' ', '').replace('\t', '').replace('\r', '')
+>     compressed = zlib.compress(content.encode('utf-8'))
+>     with open(os.path.join(c4_reshard, f'group_{idx:03d}.jsonl'), 'wb') as f:
+>         f.write(compressed)
+>     size = os.path.getsize(os.path.join(c4_reshard, f'group_{idx:03d}.jsonl'))
+>     print(f"Group {idx}: {size} bytes")
+>     if size > 15 * 1024:
+>         print(f"ERROR: File size >15MB", file=sys.stderr)
+>         sys.exit(1)
+>
+> print(f"Done. Total groups: {len(groups)}")
+> EOF
+root@59512a75ecdd:/app# python3 transform.py
+

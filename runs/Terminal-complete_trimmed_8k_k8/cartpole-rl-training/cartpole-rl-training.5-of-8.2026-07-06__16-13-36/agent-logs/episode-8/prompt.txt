@@ -1,0 +1,123 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@00c1cfabb01a:/app# cd /app
+root@00c1cfabb01a:/app# cat > agent.py << 'EOF'
+> import torch
+> import torch.nn as nn
+> import torch.optim as optim
+> import numpy as np
+> import os
+>
+> class Agent:
+>     def __init__(self, env, state_dim=4, action_dim=2, hidden_dim=16, target_update=10, gamma=0.99):
+>         self.env = env
+>         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+>         self.model = nn.Sequential(
+>             nn.Linear(state_dim, hidden_dim),
+>             nn.ReLU(),
+>             nn.Linear(hidden_dim, hidden_dim),
+>             nn.ReLU(),
+>             nn.Linear(hidden_dim, action_dim)
+>         ).to(self.device)
+>         self.target_model = self.model  # start with same weights
+>         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
+>         self.criterion = nn.MSELoss()
+>         self.memory = []
+>         self.max_memory = 10000
+>         self.batch_size = 64
+>         self.target_update = target_update
+>         self.target_update_counter = 0
+>         self.gamma = gamma
+>
+>     def select_action(self, observation):
+>         with torch.no_grad():
+>             observation = torch.tensor(observation, device=self.device, dtype=torch.float32).view(1, -1)
+>             q_values = self.model(observation)
+>             action = q_values.argmax().item()
+>         return action
+>
+>     def train(self, num_episodes=500):
+>         for episode in range(num_episodes):
+>             current_observation, info = self.env.reset()
+>             total_reward = 0
+>             while True:
+>                 action = self.select_action(current_observation)
+>                 next_observation, reward, terminated, truncated, info = self.env.step(action)
+>                 total_reward += reward
+>                 current_observation = next_observation
+>
+>                 # Update target model every target_update steps
+>                 self.target_update_counter += 1
+>                 if self.target_update_counter >= self.target_update:
+>                     self.target_model.load_state_dict(self.model.state_dict())
+>                     self.target_update_counter = 0
+>
+>                 if terminated or truncated:
+>                     break
+>             self.memory.append((current_observation, action, total_reward))
+>             if len(self.memory) > self.max_memory:
+>                 self.memory.pop(0)
+>             if len(self.memory) >= self.batch_size:
+>                 self.update()
+>         self.save()
+>
+>     def update(self):
+>         if len(self.memory) < self.batch_size:
+>             return
+>         # Convert batch to torch tensor
+>         batch = self.memory[-self.batch_size:]
+>         batch = torch.tensor(batch, dtype=torch.float32)
+>         state = batch[:, 0]
+>         action = batch[:, 1]
+>         reward = batch[:, 2]
+>         next_state = []
+>         for s in state:
+>             _, _, terminated, truncated, _ = self.env.step(action)
+>             next_state.append(s)
+>         next_state = torch.tensor(next_state, dtype=torch.float32)
+>         current_q = self.model(state)
+>         next_q = self.target_model(next_state)
+>         target_q = current_q + self.gamma * next_q
+>         self.optimizer.zero_grad()
+>         loss = self.criterion(current_q, target_q)
+>         loss.backward()
+>         self.optimizer.step()
+>
+>     def save(self, model_dir="/app/trained_model"):
+>         os.makedirs(model_dir, exist_ok=True)
+>         torch.save(self.model, os.path.join(model_dir, "model.pth"))
+>         print(f"Model saved to {model_dir}")
+>
+>     def load(self, model_dir="/app/trained_model"):
+>         model_path = os.path.join(model_dir, "model.pth")
+>         if os.path.exists(model_path):
+>             self.model = torch.load(model_path, map_location=self.device)
+>             self.target_model = self.model
+>             print(f"Model loaded from {model_dir}")
+>         else:
+>             print(f"No model found at {model_path}")
+>
+> if __name__ == "__main__":
+>     import gymnasium as gym
+>     env = gym.make("CartPole-v1")
+>     agent = Agent(env)
+>     agent.train(num_episodes=100)
+> EOF
+root@00c1cfabb01a:/app# python3 agent.py
+/app/agent.py:65: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray
+with numpy.array() before converting to a tensor. (Triggered internally at /pytorch/torch/csrc/utils/tensor_new.cpp:254.)
+  batch = torch.tensor(batch, dtype=torch.float32)
+Traceback (most recent call last):
+  File "/app/agent.py", line 100, in <module>
+    agent.train(num_episodes=100)
+    ~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+  File "/app/agent.py", line 57, in train
+    self.update()
+    ~~~~~~~~~~~^^
+  File "/app/agent.py", line 65, in update
+    batch = torch.tensor(batch, dtype=torch.float32)
+TypeError: not a sequence
+root@00c1cfabb01a:/app#

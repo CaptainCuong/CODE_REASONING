@@ -1,0 +1,1116 @@
+root@95302c980052:/app# ls -la
+total 4
+drwxr-xr-x 1 root root  38 Jul 10 16:37 .
+drwxr-xr-x 1 root root  57 Jul 10 16:52 ..
+-rw-rw-r-- 1 root root 764 Jun 24 11:01 requirements.txt
+root@95302c980052:/app# cat /app/run.py
+cat: /app/run.py: No such file or directory
+root@95302c980052:/app# git clone https://github.com/wjn1996/UPET
+Cloning into 'UPET'...
+remote: Enumerating objects: 384, done.
+remote: Counting objects: 100% (19/19), done.
+remote: Compressing objects: 100% (17/17), done.
+remote: Total 384 (delta 5), reused 2 (delta 2), pack-reused 365 (from 1)
+Receiving objects: 100% (384/384), 576.99 KiB | 19.90 MiB/s, done.
+Resolving deltas: 100% (72/72), done.
+root@95302c980052:/app# ls -la
+total 8
+drwxr-xr-x  1 root root   26 Jul 10 16:53 .
+drwxr-xr-x  1 root root   72 Jul 10 16:52 ..
+drwxr-xr-x 12 root root 4096 Jul 10 16:53 UPET
+-rw-rw-r--  1 root root  764 Jun 24 11:01 requirements.txt
+root@95302c980052:/app# cat /app/UPET/run.py
+import logging
+import os
+import sys
+import numpy as np
+from typing import Dict
+
+import datasets
+import transformers
+from transformers import set_seed, Trainer
+from transformers.trainer_utils import get_last_checkpoint
+
+from arguments import get_args
+
+from tasks.utils import *
+
+os.environ["WANDB_DISABLED"] = "true"
+
+logger = logging.getLogger(__name__)
+
+def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    checkpoint = None
+    if resume_from_checkpoint is not None:
+        checkpoint = resume_from_checkpoint
+    elif last_checkpoint is not None:
+        checkpoint = last_checkpoint
+    train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    # trainer.save_model()，
+
+    try:
+        metrics = train_result.metrics
+
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
+
+        trainer.log_best_metrics()
+    except:
+        pass
+
+def evaluate(trainer):
+    logger.info("*** Evaluate ***")
+    metrics = trainer.evaluate()
+
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
+
+def predict(trainer, predict_dataset=None):
+    if predict_dataset is None:
+        logger.info("No dataset is available for testing")
+
+    elif isinstance(predict_dataset, dict):
+
+        for dataset_name, d in predict_dataset.items():
+            logger.info("*** Predict: %s ***" % dataset_name)
+            predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+            predictions = np.argmax(predictions, axis=2)
+
+            trainer.log_metrics("predict", metrics)
+            trainer.save_metrics("predict", metrics)
+
+    else:
+        logger.info("*** Predict ***")
+        predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+        predictions = np.argmax(predictions, axis=2)
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
+
+if __name__ == '__main__':
+
+    args = get_args()
+
+    _, data_args, training_args, semi_training_args, _ = args
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    datasets.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
+
+
+    if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+        os.mkdir("checkpoints")
+
+    if data_args.task_name.lower() == "superglue":
+        assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+        from tasks.superglue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "glue":
+        assert data_args.dataset_name.lower() in GLUE_DATASETS
+        from tasks.glue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "ner":
+        assert data_args.dataset_name.lower() in NER_DATASETS
+        from tasks.ner.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "srl":
+        assert data_args.dataset_name.lower() in SRL_DATASETS
+        from tasks.srl.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "qa":
+        assert data_args.dataset_name.lower() in QA_DATASETS
+        from tasks.qa.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "other_cls":
+        assert data_args.dataset_name.lower() in OTHER_DATASETS
+        from tasks.other_cls.get_trainer import get_trainer
+
+    else:
+        raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+
+    set_seed(training_args.seed)
+
+    trainer, predict_dataset = get_trainer(args)
+
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+
+    if training_args.do_train:
+        train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+
+    # if training_args.do_eval:
+    #     evaluate(trainer)
+
+    # if training_args.do_predict:
+    #     predict(trainer, predict_dataset)
+
+   root@95302c980052:/app# find /app/UPET -type f -name '*.py' | head -20
+/app/UPET/PT-Retrieval/beir_eval/__init__.py
+/app/UPET/PT-Retrieval/beir_eval/evaluate_dpr_on_beir.py
+/app/UPET/PT-Retrieval/beir_eval/models.py
+/app/UPET/PT-Retrieval/calibration/calibration_beir.py
+/app/UPET/PT-Retrieval/calibration/calibration_ece_openqa.py
+/app/UPET/PT-Retrieval/calibration/calibration_plot_openqa.py
+/app/UPET/PT-Retrieval/calibration/utils.py
+/app/UPET/PT-Retrieval/colbert/colbert/__init__.py
+/app/UPET/PT-Retrieval/colbert/colbert/beir_eval.py
+/app/UPET/PT-Retrieval/colbert/colbert/data_prep.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/__init__.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/load_model.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/loaders.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/metrics.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/ranking.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/ranking_logger.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/slow.py
+/app/UPET/PT-Retrieval/colbert/colbert/filter_model.py
+/app/UPET/PT-Retrieval/colbert/colbert/index.py
+/app/UPET/PT-Retrieval/colbert/colbert/index_faiss.py
+find: ‘standard output’: Broken pipe
+find: write error
+root@95302c980052:/app# cat /app/UPET/run.py | tail -100
+            predictions, labels, metrics = trainer.predict(d, metric_key_prefix="predict")
+            predictions = np.argmax(predictions, axis=2)
+
+            trainer.log_metrics("predict", metrics)
+            trainer.save_metrics("predict", metrics)
+
+    else:
+        logger.info("*** Predict ***")
+        predictions, labels, metrics = trainer.predict(predict_dataset, metric_key_prefix="predict")
+        predictions = np.argmax(predictions, axis=2)
+
+        trainer.log_metrics("predict", metrics)
+        trainer.save_metrics("predict", metrics)
+
+if __name__ == '__main__':
+
+    args = get_args()
+
+    _, data_args, training_args, semi_training_args, _ = args
+
+    logging.basicConfig(
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        datefmt="%m/%d/%Y %H:%M:%S",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+    log_level = training_args.get_process_log_level()
+    logger.setLevel(log_level)
+    datasets.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.set_verbosity(log_level)
+    transformers.utils.logging.enable_default_handler()
+    transformers.utils.logging.enable_explicit_format()
+
+    # Log on each process the small summary:
+    logger.warning(
+        f"Process rank: {training_args.local_rank}, device: {training_args.device}, n_gpu: {training_args.n_gpu}"
+        + f"distributed training: {bool(training_args.local_rank != -1)}, 16-bits training: {training_args.fp16}"
+    )
+    logger.info(f"Training/evaluation parameters {training_args}")
+
+
+    if not os.path.isdir("checkpoints") or not os.path.exists("checkpoints"):
+        os.mkdir("checkpoints")
+
+    if data_args.task_name.lower() == "superglue":
+        assert data_args.dataset_name.lower() in SUPERGLUE_DATASETS
+        from tasks.superglue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "glue":
+        assert data_args.dataset_name.lower() in GLUE_DATASETS
+        from tasks.glue.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "ner":
+        assert data_args.dataset_name.lower() in NER_DATASETS
+        from tasks.ner.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "srl":
+        assert data_args.dataset_name.lower() in SRL_DATASETS
+        from tasks.srl.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "qa":
+        assert data_args.dataset_name.lower() in QA_DATASETS
+        from tasks.qa.get_trainer import get_trainer
+
+    elif data_args.task_name.lower() == "other_cls":
+        assert data_args.dataset_name.lower() in OTHER_DATASETS
+        from tasks.other_cls.get_trainer import get_trainer
+
+    else:
+        raise NotImplementedError('Task {} is not implemented. Please choose a task from: {}'.format(data_args.task_name, ", ".join(TASKS)))
+
+    set_seed(training_args.seed)
+
+    trainer, predict_dataset = get_trainer(args)
+
+    last_checkpoint = None
+    if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
+        last_checkpoint = get_last_checkpoint(training_args.output_dir)
+        if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
+            raise ValueError(
+                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+                "Use --overwrite_output_dir to overcome."
+            )
+        elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
+            logger.info(
+                f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
+                "the `--output_dir` or add `--overwrite_output_dir` to train from scratch."
+            )
+
+
+    if training_args.do_train:
+        train(trainer, training_args.resume_from_checkpoint, last_checkpoint)
+
+    # if training_args.do_eval:
+    #     evaluate(trainer)
+
+    # if training_args.do_predict:
+    #     predict(trainer, predict_dataset)
+
+   root@95302c980052:/app# head -50 /app/UPET/run.py
+import logging
+import os
+import sys
+import numpy as np
+from typing import Dict
+
+import datasets
+import transformers
+from transformers import set_seed, Trainer
+from transformers.trainer_utils import get_last_checkpoint
+
+from arguments import get_args
+
+from tasks.utils import *
+
+os.environ["WANDB_DISABLED"] = "true"
+
+logger = logging.getLogger(__name__)
+
+def train(trainer, resume_from_checkpoint=None, last_checkpoint=None):
+    checkpoint = None
+    if resume_from_checkpoint is not None:
+        checkpoint = resume_from_checkpoint
+    elif last_checkpoint is not None:
+        checkpoint = last_checkpoint
+    train_result = trainer.train(resume_from_checkpoint=checkpoint)
+    # trainer.save_model()，
+
+    try:
+        metrics = train_result.metrics
+
+        trainer.log_metrics("train", metrics)
+        trainer.save_metrics("train", metrics)
+        trainer.save_state()
+
+        trainer.log_best_metrics()
+    except:
+        pass
+
+def evaluate(trainer):
+    logger.info("*** Evaluate ***")
+    metrics = trainer.evaluate()
+
+    trainer.log_metrics("eval", metrics)
+    trainer.save_metrics("eval", metrics)
+
+def predict(trainer, predict_dataset=None):
+    if predict_dataset is None:
+        logger.info("No dataset is available for testing")
+
+root@95302c980052:/app# cat /app/UPET/arguments.py
+from enum import Enum
+import argparse
+import dataclasses
+from dataclasses import dataclass, field
+from typing import Optional
+
+from transformers import HfArgumentParser, TrainingArguments
+
+from tasks.utils import *
+
+
+@dataclass
+class DataTrainingArguments:
+    """
+    Arguments pertaining to what data we are going to input our model for training and eval.
+
+    Using `HfArgumentParser` we can turn this class
+    into argparse arguments to be able to specify them on
+    the command line.training_args
+    """
+    task_name: str = field(
+        metadata={
+            "help": "The name of the task to train on: " + ", ".join(TASKS),
+            "choices": TASKS
+        },
+    )
+    dataset_name: str = field(
+        metadata={
+            "help": "The name of the dataset to use: " + ", ".join(DATASETS),
+            "choices": DATASETS
+        }
+    )
+    # add by wjn
+    num_examples_per_label: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Randomly sampling k-shot examples for each label "
+        },
+    )
+    dataset_config_name: Optional[str] = field(
+        default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
+    )
+    max_seq_length: int = field(
+        default=128,
+        metadata={
+            "help": "The maximum total input sequence length after tokenization. Sequences longer "
+            "than this will be truncated, sequences shorter will be padded."
+        },
+    )
+    overwrite_cache: bool = field(
+        default=False, metadata={"help": "Overwrite the cached preprocessed datasets or not."}
+    )
+    pad_to_max_length: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to pad all samples to `max_seq_length`. "
+            "If False, will pad the samples dynamically when batching to the maximum length in the batch."
+        },
+    )
+    max_train_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of training examples to this "
+            "value if set."
+        },
+    )
+    max_eval_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of evaluation examples to this "
+            "value if set."
+        },
+    )
+    max_predict_samples: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "For debugging purposes or quicker training, truncate the number of prediction examples to this "
+            "value if set."
+        },
+    )
+    train_file: Optional[str] = field(
+        default=None, metadata={"help": "A csv or a json file containing the training data."}
+    )
+    validation_file: Optional[str] = field(
+        default=None, metadata={"help": "A csv or a json file containing the validation data."}
+    )
+    test_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "A csv or a json file containing the test data."}
+    )
+    template_id: Optional[int] = field(
+        default=0,
+        metadata={
+            "help": "The specific prompt string to use"
+        }
+    )
+
+
+@dataclass
+class ModelArguments:
+    """
+    Arguments pertaining to which model/config/tokenizer we are going to fine-tune from.
+    """
+    model_name_or_path: str = field(
+        metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
+    )
+    config_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained config name or path if not the same as model_name"}
+    )
+    tokenizer_name: Optional[str] = field(
+        default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
+    )
+    cache_dir: Optional[str] = field(
+        default=None,
+        metadata={"help": "Where do you want to store the pretrained models downloaded from huggingface.co"},
+    )
+    use_fast_tokenizer: bool = field(
+        default=True,
+        metadata={"help": "Whether to use one of the fast tokenizer (backed by the tokenizers library) or not."},
+    )
+    model_revision: str = field(
+        default="main",
+        metadata={"help": "The specific model version to use (can be a branch name, tag name or commit id)."},
+    )
+    use_auth_token: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use the token generated when running `transformers-cli login` (necessary to use this script "
+            "with private models)."
+        },
+    )
+    use_pe: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to use parameter-efficient settings. If true, that means fix the parameters of the backbone, and only"
+            "tune the new initialized modules (e.g., adapter, prefix, ptuning, etc.)"
+        }
+    )
+    head_prefix: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Head-tuning Prefix (P-tuning v2) during training"
+        }
+    )
+    prompt_prefix: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Prompt-tuning Prefix (P-tuning v2) during training"
+        }
+    )
+    head_only: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Head Fine-tuning during training (w/o. any new modules)"
+        }
+    )
+    prompt_only: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Prompt Fine-tuning during training (w/o. any new modules)"
+        }
+    )
+    head_ptuning: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Head-tuning P-tuning during training (w. parameter-efficient)"
+        }
+    )
+    prompt_ptuning: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Prompt-tuning P-tuning during training (w. parameter-efficient)"
+        }
+    )
+    head_adapter: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Head-tuning Adapter tuning during training (w. parameter-efficient)"
+        }
+    )
+    prompt_adapter: bool = field(
+        default=False,
+        metadata={
+            "help": "Will use Prompt-tuning Adapter tuning during training (w. parameter-efficient)"
+        }
+    )
+    adapter_choice: str = field(
+        default="LiST",
+        metadata={"help": "The choice of adapter, list, lora, houlsby."},
+    )
+    adapter_dim: int = field(
+        default=128,
+        metadata={"help": "The hidden size of adapter. default is 128."},
+    )
+    pre_seq_len: int = field(
+        default=4,
+        metadata={
+            "help": "The length of prompt"
+        }
+    )
+    prefix_projection: bool = field(
+        default=False,
+        metadata={
+            "help": "Apply a two-layer MLP head over the prefix embeddings"
+        }
+    )
+    prefix_hidden_size: int = field(
+        default=512,
+        metadata={
+            "help": "The hidden size of the MLP projection head in Prefix Encoder if prefix projection is used"
+        }
+    )
+    hidden_dropout_prob: float = field(
+        default=0.1,
+        metadata={
+            "help": "The dropout probability used in the models"
+        }
+    )
+
+
+@dataclass
+class SemiSupervisedArguments:
+    use_semi: bool = field(
+        default=False, metadata={"help": "If true, the training process will be transformed into self-training framework."}
+    )
+    unlabeled_data_num: int = field(
+        default=-1,
+        metadata={
+            "help": "The total number of unlabeled data. If set -1 means all the training data (expect of few-shot labeled data)"
+        }
+    )
+    unlabeled_data_batch_size: int = field(
+        default=16,
+        metadata={
+            "help": "The number of unlabeled data in one batch."
+        }
+    )
+    pseudo_sample_num_or_ratio: float = field(
+        default=0.1,
+        metadata={
+            "help": "The number / ratio of pseudo-labeled data sampling. For example, if have 1000 unlabeled data, 0.1 / 100 means sampling 100 pseduo-labeled d
+ata."
+        }
+    )
+    teacher_training_epoch: int = field(
+        default=10,
+        metadata={
+            "help": "The epoch number of teacher training at the beginning of self-training."
+        }
+    )
+    teacher_tuning_epoch: int = field(
+        default=10,
+        metadata={
+            "help": "The epoch number of teacher tuning in each self-training iteration."
+        }
+    )
+    student_training_epoch: int = field(
+        default=16,
+        metadata={
+            "help": "The epoch number of student training in each self-training iteration."
+        }
+    )
+    student_learning_rate: float = field(
+        default=1e-5,
+        metadata={
+            "help": "The learning rate of student training in each self-training iteration."
+        }
+    )
+    self_training_epoch: int = field(
+        default=30,
+        metadata={
+            "help": "The number of teacher-student iteration ."
+        }
+    )
+    # self-training过程中，unlabeled data会先采样一个子集，因此student模型学习的样本数量只有不到1024个
+    # post_student_train设置后，即允许在self-training后，选择最佳的teacher模型，并在全部的unlabeled data上打标和mc dropout
+    # 此时student模型将会在更多的样本上训练（样本数量不超过20k）
+    post_student_train: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to train a student model on large pseudo-labeled data after self-training iteration"
+        }
+    )
+    student_pre_seq_len: int = field(
+        default=4,
+        metadata={
+            "help": "The length of prompt"
+        }
+    )
+
+
+
+
+
+@dataclass
+class QuestionAnwseringArguments:
+    n_best_size: int = field(
+        default=20,
+        metadata={"help": "The total number of n-best predictions to generate when looking for an answer."},
+    )
+    max_answer_length: int = field(
+        default=30,
+        metadata={
+            "help": "The maximum length of an answer that can be generated. This is needed because the start "
+            "and end predictions are not conditioned on one another."
+        },
+    )
+    version_2_with_negative: bool = field(
+        default=False, metadata={"help": "If true, some of the examples do not have an answer."}
+    )
+    null_score_diff_threshold: float = field(
+        default=0.0,
+        metadata={
+            "help": "The threshold used to select the null answer: if the best answer has a score that is less than "
+            "the score of the null answer minus this threshold, the null answer is selected for this example. "
+            "Only useful when `version_2_with_negative=True`."
+        },
+    )
+
+
+
+
+def get_args():
+    """Parse all the args."""
+    parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments, SemiSupervisedArguments, QuestionAnwseringArguments))
+
+    args = parser.parse_args_into_dataclasses()
+
+    return argsroot@95302c980052:/app# grep -A 20 'class TrainingArguments' /app/UPET/arguments.py
+root@95302c980052:/app# cat /app/UPET/README.md
+# UPET: Uncertainty-aware Parameter-Efficient Tuning for Semi-supervised Language Understanding
+
+
+Head Tuning: Training the model with CLS head, whith or whitout prefix / adapter
+Prompt Tuning: Training the model with prompt and verbalizer (MLM head), whith or whitout prefix / adapter
+
+augment definition：
+e.g.,
+--prefix -> --head-prefix or --prompt-prefix
+--prompt -> --head-ptuning or --prompt-ptuning
+
+### Setup
+We conduct our experiment with Anaconda3. If you have installed Anaconda3, then create the environment for P-tuning v2:
+
+```shell
+conda create -n pt2 python=3.8.5
+conda activate pt2
+```
+
+After we setup basic conda environment, install pytorch related packages via:
+
+```shell
+conda install -n pt2 pytorch==1.7.1 torchvision==0.8.2 torchaudio==0.7.2 cudatoolkit=11.0 -c pytorch
+```
+
+Finally, install other python packages we need:
+
+```shell
+pip install -r requirements.txt
+```
+
+### Data
+For SuperGLUE and SQuAD datasets, we download them from the Huggingface Datasets APIs (embedded in our codes).
+
+For sequence tagging (NER, SRL) datasets, we prepare a non-official packup [here](https://zenodo.org/record/6318701/files/P-tuning-v2_data.tar.gz?download=1).
+After downloading, unzip the packup to the project root.
+Please use at your own risk.
+
+### Training
+Run training scripts in [run_script](run_script) (e.g., RoBERTa for RTE):
+
+You can change the augments and run:
+```shell
+bash run_script/run_rte_roberta.sh
+```
+or
+
+```shell
+export TASK_NAME=superglue
+export DATASET_NAME=rte
+export CUDA_VISIBLE_DEVICES=0
+bs=32
+lr=5e-3
+dropout=0.1
+psl=128
+epoch=100
+python3 run.py \
+  --model_name_or_path /wjn/pre-trained-lm/roberta-large \
+  --task_name $TASK_NAME \
+  --dataset_name $DATASET_NAME \
+  --do_train \
+  --do_eval \
+  --max_seq_length 128 \
+  --per_device_train_batch_size $bs \
+  --learning_rate $lr \
+  --num_train_epochs $epoch \
+  --output_dir checkpoints/$DATASET_NAME-roberta/ \
+  --overwrite_output_dir \
+  --hidden_dropout_prob $dropout \
+  --seed 11 \
+  --save_strategy no \
+  --evaluation_strategy epoch \
+  --prefix
+```
+This script is run for Full-data Full-supervised Pre-fix Tuning.
+
+We provide the following kinds of settings:
+- Full-data v.s. Few-shot: The training data is full / few-shot
+- Full-supervised v.s. Semi-supervised: We use full-supervised / self-training
+- Full-Tuning v.s. Patameter-efficient Tuning: Only tuning the full parameters / Tuning the few parameters
+- One-stage v.s. Two-stage: directly tuning / tuning the few paraemters and then tuning the full
+- Head-Tuning v.s. Prompt-Tuning: Prefix/Adapter + CLS head / Prefix/Adapter + Prompt + Vaberlizer
+
+The specific augments for different scenarios:
+
+
+#### Few-shot Head Tuning
+
+### Implemented Results
+Currently we have released our reimplementation on following tasks and datasets. More implementation will be released soon.
+
+Released results on BERT-large
+
+|              | BoolQ | COPA | RTE  | WiC  | WSC  | CoNLL04 | OntoNotes 5.0 | CoNLL12 |
+|--------------|-------|------|------|------|------|---------|---------------|---------|
+| Result       | 74.3  | 77.0 | 80.1 | 75.1 | 68.3 | 84.5    | 86.4          | 85.3    |
+| Total Epochs | 100   | 80   | 60   | 80   | 80   | 40      | 30            | 45      |
+| Best Epoch   | 58    | 12   | 30   | 56   | 17   | 33      | 24            | 43      |
+
+Released results on RoBERTa-large
+
+|              | BoolQ | COPA | RTE  | WiC  | WSC  | CoNLL03 | CoNLL04 | OntoNotes 5.0 | CoNLL12 | CoNLL05 WSJ | CoNLL05 Brown | SQuAD 1.1 | SQuAD 2.0 |
+|--------------|-------|------|------|------|------|---------|---------|---------------|---------|-------------|---------------|-----------|-----------|
+| Results      | 84.0  | 92.0 | 86.6 | 73.7 | 64.4 | 91.8    | 88.4    | 90.1          | 84.7    | 89.4        | 83.9          | 88.1/94.2 | 81.3/84.7 |
+| Total Epochs | 100   | 120  | 100  | 50   | 10   | 30      | 80      | 60            | 45      | 15          | -             | 30        | 10        |
+| Best Epoch   | 86    | 78   | 65   | 31   | 3    | 28      | 45      | 59            | 37      | 13          | -             | 24        | 9         |
+
+For other hyper-parameters, please refer to the training scripts.
+If you can not achieve the reported results at the best epoch, there is probably an environmental mismatch and hyper-parameter search is needed.
+
+## Citation
+
+If you find our work useful, please kindly cite our paper:
+
+
+
+
+
+
+---
+
+use_prompt
+sst-2,mr,cr,mnli,snli,qnli,rte,mrpc,qqp,cola,trec
+
+
+
+superglue
+BoolQ   CB      COPA    MultiRC ReCoRD  RTE     WiC     WSC     AX-b    AX-g
+glue
+CoLA    SST-2   MRPC    STS-B   QQP     MNLI-m  MNLI-mm QNLI    RTE     WNLI    AX
+
+
+root@95302c980052:/app# find /app/UPET -name '*.md' -o -name '*.txt' | head -5
+/app/UPET/PT-Retrieval/README.md
+/app/UPET/PT-Retrieval/requirements.txt
+/app/UPET/README.md
+/app/UPET/metrics/accuracy/README.md
+/app/UPET/metrics/bertscore/README.md
+root@95302c980052:/app# find /app/UPET -name '*.py' | grep -E 'get_trainer|utils' | head -10
+/app/UPET/PT-Retrieval/calibration/utils.py
+/app/UPET/PT-Retrieval/colbert/colbert/modeling/tokenization/utils.py
+/app/UPET/PT-Retrieval/colbert/colbert/training/utils.py
+/app/UPET/PT-Retrieval/colbert/colbert/utils/__init__.py
+/app/UPET/PT-Retrieval/colbert/colbert/utils/amp.py
+/app/UPET/PT-Retrieval/colbert/colbert/utils/distributed.py
+/app/UPET/PT-Retrieval/colbert/colbert/utils/logging.py
+/app/UPET/PT-Retrieval/colbert/colbert/utils/parser.py
+/app/UPET/PT-Retrieval/colbert/colbert/utils/runs.py
+/app/UPET/PT-Retrieval/colbert/colbert/utils/utils.py
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/*.py 2>/dev/null
+root@95302c980052:/app# cat /app/UPET/utils.py
+cat: /app/UPET/utils.py: No such file or directory
+root@95302c980052:/app# find /app/UPET -type f -name '*.py' | grep -v 'test' | grep -v 'run_script' | head -20
+/app/UPET/PT-Retrieval/beir_eval/__init__.py
+/app/UPET/PT-Retrieval/beir_eval/evaluate_dpr_on_beir.py
+/app/UPET/PT-Retrieval/beir_eval/models.py
+/app/UPET/PT-Retrieval/calibration/calibration_beir.py
+/app/UPET/PT-Retrieval/calibration/calibration_ece_openqa.py
+/app/UPET/PT-Retrieval/calibration/calibration_plot_openqa.py
+/app/UPET/PT-Retrieval/calibration/utils.py
+/app/UPET/PT-Retrieval/colbert/colbert/__init__.py
+/app/UPET/PT-Retrieval/colbert/colbert/beir_eval.py
+/app/UPET/PT-Retrieval/colbert/colbert/data_prep.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/__init__.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/load_model.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/loaders.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/metrics.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/ranking.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/ranking_logger.py
+/app/UPET/PT-Retrieval/colbert/colbert/evaluation/slow.py
+/app/UPET/PT-Retrieval/colbert/colbert/filter_model.py
+/app/UPET/PT-Retrieval/colbert/colbert/index.py
+/app/UPET/PT-Retrieval/colbert/colbert/index_faiss.py
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/*.py 2>/dev/null
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/PT-Retrieval/*.py 2>/dev/null
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/colbert/*.py 2>/dev/null
+root@95302c980052:/app# ls -la /app/UPET/tasks
+total 16
+drwxr-xr-x  8 root root  153 Jul 10 16:53 .
+drwxr-xr-x 12 root root 4096 Jul 10 16:53 ..
+-rw-r--r--  1 root root 6148 Jul 10 16:53 .DS_Store
+drwxr-xr-x  2 root root   58 Jul 10 16:53 glue
+drwxr-xr-x  3 root root   78 Jul 10 16:53 ner
+drwxr-xr-x  2 root root   58 Jul 10 16:53 other_cls
+drwxr-xr-x  2 root root   81 Jul 10 16:53 qa
+drwxr-xr-x  3 root root   78 Jul 10 16:53 srl
+drwxr-xr-x  2 root root  107 Jul 10 16:53 superglue
+-rw-r--r--  1 root root 1456 Jul 10 16:53 utils.py
+root@95302c980052:/app# find /app/UPET -type f -name '*.py' | grep -v 'test' | grep -v 'run_script' | grep -v 'colbert' | grep -v 'beir_eval' | grep -v 'calibra
+tion' | head -20
+/app/UPET/PT-Retrieval/convert_openqa_data.py
+/app/UPET/PT-Retrieval/dense_retriever.py
+/app/UPET/PT-Retrieval/download_data.py
+/app/UPET/PT-Retrieval/dpr/__init__.py
+/app/UPET/PT-Retrieval/dpr/data/__init__.py
+/app/UPET/PT-Retrieval/dpr/data/qa_validation.py
+/app/UPET/PT-Retrieval/dpr/data/qasper_reader.py
+/app/UPET/PT-Retrieval/dpr/data/reader_data.py
+/app/UPET/PT-Retrieval/dpr/indexer/faiss_indexers.py
+/app/UPET/PT-Retrieval/dpr/models/__init__.py
+/app/UPET/PT-Retrieval/dpr/models/biencoder.py
+/app/UPET/PT-Retrieval/dpr/models/hf_led.py
+/app/UPET/PT-Retrieval/dpr/models/hf_models.py
+/app/UPET/PT-Retrieval/dpr/models/prefix.py
+/app/UPET/PT-Retrieval/dpr/models/reader.py
+/app/UPET/PT-Retrieval/dpr/options.py
+/app/UPET/PT-Retrieval/dpr/utils/__init__.py
+/app/UPET/PT-Retrieval/dpr/utils/data_utils.py
+/app/UPET/PT-Retrieval/dpr/utils/dist_utils.py
+/app/UPET/PT-Retrieval/dpr/utils/model_utils.py
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/*.py 2>/dev/null
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/tasks/*.py 2>/dev/null
+root@95302c980052:/app# cat /app/UPET/tasks/other_cls/get_trainer.py
+import logging
+import os
+import random
+import sys
+
+from transformers import (
+    AutoConfig,
+    AutoTokenizer,
+)
+
+from model.utils import get_model, TaskType
+from tasks.other_cls.dataset import OtherCLSDataset
+from training.trainer_base import BaseTrainer
+from training.self_trainer import SelfTrainer
+
+logger = logging.getLogger(__name__)
+
+def get_trainer(args):
+    model_args, data_args, training_args, semi_training_args, _ = args
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_args.model_name_or_path,
+        use_fast=model_args.use_fast_tokenizer,
+        revision=model_args.model_revision,
+    )
+
+    # add by wjn check if use prompt template
+    use_prompt = False
+    if model_args.prompt_prefix or model_args.prompt_ptuning or model_args.prompt_adapter or model_args.prompt_only:
+        use_prompt = True
+
+    dataset = OtherCLSDataset(tokenizer, data_args, training_args, semi_training_args=semi_training_args, use_prompt=use_prompt)
+
+    data_args.label_word_list = None # add by wjn
+    if use_prompt:
+        data_args.label_word_list = dataset.label_word_list # add by wjn
+
+    if training_args.do_train:
+        for index in random.sample(range(len(dataset.train_dataset)), 3):
+            logger.info(f"Sample {index} of the training set: {dataset.train_dataset[index]}.")
+
+    if not dataset.is_regression:
+        config = AutoConfig.from_pretrained(
+            model_args.model_name_or_path,
+            num_labels=dataset.num_labels,
+            label2id=dataset.label2id,
+            id2label=dataset.id2label,
+            finetuning_task=data_args.dataset_name,
+            revision=model_args.model_revision,
+        )
+    else:
+        config = AutoConfig.from_pretrained(
+            model_args.model_name_or_path,
+            num_labels=dataset.num_labels,
+            finetuning_task=data_args.dataset_name,
+            revision=model_args.model_revision,
+        )
+
+    model = get_model(data_args, model_args, TaskType.SEQUENCE_CLASSIFICATION, config)
+
+    # Initialize our Trainer
+
+    if semi_training_args.use_semi:
+        model_args.pre_seq_len = semi_training_args.student_pre_seq_len
+        student_model = get_model(data_args, model_args, TaskType.SEQUENCE_CLASSIFICATION, config)
+        trainer = SelfTrainer(
+            teacher_base_model=model,
+            student_base_model=student_model,
+            training_args=training_args,
+            semi_training_args=semi_training_args,
+            train_dataset=dataset.train_dataset if training_args.do_train else None,
+            unlabeled_dataset=dataset.unlabeled_dataset,
+            eval_dataset=dataset.eval_dataset if training_args.do_eval else None,
+            compute_metrics=dataset.compute_metrics,
+            tokenizer=tokenizer,
+            teacher_data_collator=dataset.data_collator,
+            student_data_collator=dataset.data_collator,
+            test_key=dataset.test_key,
+            task_type="cls",
+            num_classes=len(dataset.label2id),
+        )
+
+        return trainer, None
+
+    trainer = BaseTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset.train_dataset if training_args.do_train else None,
+        eval_dataset=dataset.eval_dataset if training_args.do_eval else None,
+        compute_metrics=dataset.compute_metrics,
+        tokenizer=tokenizer,
+        data_collator=dataset.data_collator,
+        test_key=dataset.test_key,
+    )
+
+    return trainer, Noneroot@95302c980052:/app# ls -la /app/UPET/run_script
+total 88
+drwxr-xr-x  2 root root 4096 Jul 10 16:53 .
+drwxr-xr-x 12 root root 4096 Jul 10 16:53 ..
+-rw-r--r--  1 root root  607 Jul 10 16:53 run_boolq_bert.sh
+-rw-r--r--  1 root root  606 Jul 10 16:53 run_boolq_roberta.sh
+-rw-r--r--  1 root root  613 Jul 10 16:53 run_conll03_roberta.sh
+-rw-r--r--  1 root root  619 Jul 10 16:53 run_conll04_bert.sh
+-rw-r--r--  1 root root  615 Jul 10 16:53 run_conll04_roberta.sh
+-rw-r--r--  1 root root  614 Jul 10 16:53 run_conll05_roberta.sh
+-rw-r--r--  1 root root  614 Jul 10 16:53 run_conll12_bert.sh
+-rw-r--r--  1 root root  613 Jul 10 16:53 run_conll12_roberta.sh
+-rw-r--r--  1 root root  605 Jul 10 16:53 run_copa_bert.sh
+-rw-r--r--  1 root root  605 Jul 10 16:53 run_copa_roberta.sh
+-rw-r--r--  1 root root  618 Jul 10 16:53 run_ontonotes_bert.sh
+-rw-r--r--  1 root root  621 Jul 10 16:53 run_ontonotes_roberta.sh
+-rw-r--r--  1 root root  604 Jul 10 16:53 run_rte_bert.sh
+-rw-r--r--  1 root root  633 Jul 10 16:53 run_rte_roberta.sh
+-rw-r--r--  1 root root  565 Jul 10 16:53 run_squad_roberta.sh
+-rw-r--r--  1 root root  588 Jul 10 16:53 run_squad_v2_roberta.sh
+-rw-r--r--  1 root root  648 Jul 10 16:53 run_wic_bert.sh
+-rw-r--r--  1 root root  603 Jul 10 16:53 run_wic_roberta.sh
+-rw-r--r--  1 root root  604 Jul 10 16:53 run_wsc_bert.sh
+-rw-r--r--  1 root root  600 Jul 10 16:53 run_wsc_roberta.sh
+root@95302c980052:/app# cat /app/UPET/run_script/run_rte_roberta.sh 2>/dev/null || echo 'No bash script found'
+export TASK_NAME=superglue
+export DATASET_NAME=rte
+export CUDA_VISIBLE_DEVICES=7
+
+bs=32
+lr=5e-3
+dropout=0.1
+psl=128
+epoch=100
+
+python3 run.py \
+  --model_name_or_path /wjn/pre-trained-lm/roberta-large \
+  --task_name $TASK_NAME \
+  --dataset_name $DATASET_NAME \
+  --do_train \
+  --do_eval \
+  --max_seq_length 128 \
+  --per_device_train_batch_size $bs \
+  --learning_rate $lr \
+  --num_train_epochs $epoch \
+  --pre_seq_len $psl \
+  --output_dir checkpoints/$DATASET_NAME-roberta/ \
+  --overwrite_output_dir \
+  --hidden_dropout_prob $dropout \
+  --seed 11 \
+  --save_strategy no \
+  --evaluation_strategy epoch \
+  --head_prefix \
+root@95302c980052:/app# grep -n 'def get_trainer' /app/UPET/*.py 2>/dev/null
+root@95302c980052:/app# cat /app/UPET/training/trainer_base.py
+import logging
+import os
+from typing import Dict, OrderedDict
+
+from transformers import Trainer
+
+logger = logging.getLogger(__name__)
+
+_default_log_level = logging.INFO
+logger.setLevel(_default_log_level)
+
+class BaseTrainer(Trainer):
+    def __init__(self, *args, predict_dataset = None, test_key = "accuracy", **kwargs):
+        super().__init__(*args, **kwargs)
+        self.predict_dataset = predict_dataset
+        self.test_key = test_key
+        self.best_metrics = OrderedDict({
+            "best_epoch": 0,
+            f"best_eval_{self.test_key}": 0,
+        })
+
+    def log_best_metrics(self):
+        self.log_metrics("best", self.best_metrics)
+        self.save_metrics("best", self.best_metrics, combined=False)
+
+
+
+    def _maybe_log_save_evaluate(self, tr_loss, model, trial, epoch, ignore_keys_for_eval):
+        if self.control.should_log:
+            logs: Dict[str, float] = {}
+
+
+            tr_loss_scalar = self._nested_gather(tr_loss).mean().item()
+
+            # reset tr_loss to zero
+            tr_loss -= tr_loss
+
+            logs["loss"] = round(tr_loss_scalar / (self.state.global_step - self._globalstep_last_logged), 4)
+            logs["learning_rate"] = self._get_learning_rate()
+
+            self._total_loss_scalar += tr_loss_scalar
+            self._globalstep_last_logged = self.state.global_step
+            self.store_flos()
+
+            self.log(logs)
+
+        eval_metrics = None
+        if self.control.should_evaluate:
+            eval_metrics = self.evaluate(ignore_keys=ignore_keys_for_eval)
+            self._report_to_hp_search(trial, epoch, eval_metrics)
+            print("eval_metrics=", eval_metrics)
+            if eval_metrics["eval_"+self.test_key] > self.best_metrics["best_eval_"+self.test_key]:
+                self.best_metrics["best_epoch"] = epoch
+                self.best_metrics["best_eval_"+self.test_key] = eval_metrics["eval_"+self.test_key]
+
+                if self.predict_dataset is not None:
+                    if isinstance(self.predict_dataset, dict):
+                        for dataset_name, dataset in self.predict_dataset.items():
+                            _, _, test_metrics = self.predict(dataset, metric_key_prefix="test")
+                            self.best_metrics[f"best_test_{dataset_name}_{self.test_key}"] = test_metrics["test_"+self.test_key]
+                    else:
+                        _, _, test_metrics = self.predict(self.predict_dataset, metric_key_prefix="test")
+                        self.best_metrics["best_test_"+self.test_key] = test_metrics["test_"+self.test_key]
+
+            logger.info(f"***** Epoch {epoch}: Best results *****")
+            for key, value in self.best_metrics.items():
+                logger.info(f"{key} = {value}")
+            self.log(self.best_metrics)
+
+        if self.control.should_save:
+            self._save_checkpoint(model, trial, metrics=eval_metrics)
+            self.control = self.callback_handler.on_save(self.args, self.state, self.control)
+root@95302c980052:/app#

@@ -1,0 +1,161 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@52d0e88ed9d4:/app# ls -la /app/model_cache/models--distilbert-base-uncased-finetuned-sst-2-english/
+total 0
+drwxr-xr-x 5 root root  64 Jul  7 15:57 .
+drwxr-xr-x 4 root root 119 Jul  7 15:57 ..
+drwxr-xr-x 2 root root 138 Jul  7 15:57 blobs
+drwxr-xr-x 2 root root  26 Jul  7 15:57 refs
+drwxr-xr-x 3 root root  62 Jul  7 15:57 snapshots
+root@52d0e88ed9d4:/app# mv /app/model_cache/models--distilbert-base-uncased-finetuned-sst-2-english/* /app/model_cache/sentiment_model/
+mv: target '/app/model_cache/sentiment_model/': No such file or directory
+root@52d0e88ed9d4:/app# ls -la /app/model_cache/sentiment_model/
+ls: cannot access '/app/model_cache/sentiment_model/': No such file or directory
+root@52d0e88ed9d4:/app# python3 -c "from transformers import AutoModelForSequenceClassification; model = AutoModelForSequenceClassification.from_pretrained('/ap
+p/model_cache/sentiment_model')"
+cat > /app/sentiment_api.py << 'EOF'
+from flask import Flask, request, json
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+import sys
+import torch
+
+def main():
+    app = Flask(__name__)
+
+    # Load model and tokenizer
+    model_path = '/app/model_cache/sentiment_model'
+    model = AutoModelForSequenceClassification.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+
+    @app.route('/sentiment', methods=['POST'])
+    def sentiment():
+        try:
+            data = request.get_json()
+            text = data.get('text', '')
+            if not text:
+                return {'error': 'Missing text field'}
+
+            # Tokenize and predict
+            inputs = tokenizer(text, return_tensors='pt')
+            outputs = model(**inputs)
+            # The model returns log probabilities for each class (positive, negative)
+            # For distilbert-base-uncased-finetuned-sst-2-english, the classes are 0: positive, 1: negative
+            # We'll compute confidence by taking the max of the two probabilities
+            confidence_positive = torch.exp(outputs.logits[0]).tolist()[0]
+            confidence_negative = torch.exp(outputs.logits[0]).tolist()[1]
+
+            # Determine sentiment
+            sentiment = 'positive' if confidence_positive > confidence_negative else 'negative'
+
+            return {
+                'sentiment': sentiment,
+                'confidence': {
+                    'positive': confidence_positive,
+                    'negative': confidence_negative
+                }
+            }
+        except Exception as e:
+            return {'error': str(e)}
+
+    if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=5000, debug=False)
+
+if __name__ == '__main__':
+    main()
+EOF
+cd /app
+python3 /app/sentiment_api.py 2>&1 | head -20
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/transformers/utils/hub.py", line 437, in cached_files
+    hf_hub_download(
+    ~~~~~~~~~~~~~~~^
+        path_or_repo_id,
+        ^^^^^^^^^^^^^^^^
+    ...<10 lines>...
+        tqdm_class=tqdm_class,
+        ^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/huggingface_hub/utils/_validators.py", line 84, in _inner_fn
+    validate_repo_id(arg_value)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/huggingface_hub/utils/_validators.py", line 132, in validate_repo_id
+    raise HFValidationError(
+    ...<2 lines>...
+    )
+huggingface_hub.errors.HFValidationError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': '/app/model_cache/sentiment_model'. Use `repo_type`
+argument if needed.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from transformers import AutoModelForSequenceClassification; model = AutoModelForSequenceClassification.from_pretrained('/app/model_cache/sentiment_model')
+                                                                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/transformers/models/auto/auto_factory.py", line 287, in from_pretrained
+    resolved_config_file = cached_file(
+        pretrained_model_name_or_path,
+    ...<4 lines>...
+        **hub_kwargs,
+    )
+  File "/usr/local/lib/python3.13/site-packages/transformers/utils/hub.py", line 293, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+  File "/usr/local/lib/python3.13/site-packages/transformers/utils/hub.py", line 488, in cached_files
+    raise OSError(f"{e}") from e
+OSError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': '/app/model_cache/sentiment_model'. Use `repo_type` argument if needed.
+root@52d0e88ed9d4:/app# cat > /app/sentiment_api.py << 'EOF'
+> from flask import Flask, request, json
+> from transformers import AutoModelForSequenceClassification, AutoTokenizer
+> import sys
+> import torch
+>
+> def main():
+>     app = Flask(__name__)
+>
+>     # Load model and tokenizer
+>     model_path = '/app/model_cache/sentiment_model'
+>     model = AutoModelForSequenceClassification.from_pretrained(model_path)
+>     tokenizer = AutoTokenizer.from_pretrained(model_path)
+>
+>     @app.route('/sentiment', methods=['POST'])
+>     def sentiment():
+>         try:
+>             data = request.get_json()
+>             text = data.get('text', '')
+>             if not text:
+>                 return {'error': 'Missing text field'}
+>
+>             # Tokenize and predict
+>             inputs = tokenizer(text, return_tensors='pt')
+>             outputs = model(**inputs)
+>             # The model returns log probabilities for each class (positive, negative)
+>             # For distilbert-base-uncased-finetuned-sst-2-english, the classes are 0: positive, 1: negative
+>             # We'll compute confidence by taking the max of the two probabilities
+>             confidence_positive = torch.exp(outputs.logits[0]).tolist()[0]
+>             confidence_negative = torch.exp(outputs.logits[0]).tolist()[1]
+>
+>             # Determine sentiment
+>             sentiment = 'positive' if confidence_positive > confidence_negative else 'negative'
+>
+>             return {
+>                 'sentiment': sentiment,
+>                 'confidence': {
+>                     'positive': confidence_positive,
+>                     'negative': confidence_negative
+>                 }
+>             }
+>         except Exception as e:
+>             return {'error': str(e)}
+>
+>     if __name__ == '__main__':
+>         app.run(host='0.0.0.0', port=5000, debug=False)
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@52d0e88ed9d4:/app# cd /app
+root@52d0e88ed9d4:/app# python3 /app/sentiment_api.py 2>&1 | head -20
+

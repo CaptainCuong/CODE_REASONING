@@ -1,0 +1,130 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@8fb62f807cce:/app# grep -n 'command' /app/astropy/astropy/io/ascii/qdp.py
+31:        Line type: "comment", "command", or "data"
+36:    'command'
+63:    _command_re = r"READ [TS]ERR(\s+[0-9]+)+"
+70:    _type_re = rf"^\s*((?P<command>{_command_re})|(?P<new>{_new_re})|(?P<data>{_data_re})?\s*(\!(?P<comment>.*))?\s*$"
+150:    """Give list of column names from the READ SERR and TERR commands.
+267:    command_lines = ""
+277:        if datatype == "command":
+278:            # The first time I find commands, I save whatever comments into
+280:            if command_lines == "":
+286:                    "This file contains multiple command blocks. Please verify",
+289:            command_lines += line + "\n"
+294:            if err_specs == {} and command_lines != "":
+295:                for cline in command_lines.strip().split("\n"):
+296:                    command = cline.strip().split()
+298:                    if len(command) < 3:
+300:                    err_specs[command[1].lower()] = [int(c) for c in command[2:]]
+542:    The input table above contains some initial comments, the error commands,
+548:    above has commands::
+572:    a symmetric error (just like the ``READ SERR`` and ``READ TERR`` commands
+601:    Because the ``READ SERR`` and ``READ TERR`` commands say that there are
+611:    Note how the ``terr`` and ``serr`` commands are passed to the writer.
+root@8fb62f807cce:/app# grep -n 'ALLOWED_COMMANDS' /app/astropy/astropy/io/ascii/qdp.py
+root@8fb62f807cce:/app# head -100 /app/astropy/astropy/io/ascii/qdp.py
+# Licensed under a 3-clause BSD style license - see LICENSE.rst
+"""
+This package contains functions for reading and writing QDP tables that are
+not meant to be used directly, but instead are available as readers/writers in
+`astropy.table`. See :ref:`astropy:table_io` for more details.
+"""
+import copy
+import re
+import warnings
+from collections.abc import Iterable
+
+import numpy as np
+
+from astropy.table import Table
+from astropy.utils.exceptions import AstropyUserWarning
+
+from . import basic, core
+
+
+def _line_type(line, delimiter=None):
+    """Interpret a QDP file line.
+
+    Parameters
+    ----------
+    line : str
+        a single line of the file
+
+    Returns
+    -------
+    type : str
+        Line type: "comment", "command", or "data"
+
+    Examples
+    --------
+    >>> _line_type("READ SERR 3")
+    'command'
+    >>> _line_type(" \\n    !some gibberish")
+    'comment'
+    >>> _line_type("   ")
+    'comment'
+    >>> _line_type(" 21345.45")
+    'data,1'
+    >>> _line_type(" 21345.45 1.53e-3 1e-3 .04 NO nan")
+    'data,6'
+    >>> _line_type(" 21345.45,1.53e-3,1e-3,.04,NO,nan", delimiter=',')
+    'data,6'
+    >>> _line_type(" 21345.45 ! a comment to disturb")
+    'data,1'
+    >>> _line_type("NO NO NO NO NO")
+    'new'
+    >>> _line_type("NO,NO,NO,NO,NO", delimiter=',')
+    'new'
+    >>> _line_type("N O N NOON OON O")
+    Traceback (most recent call last):
+        ...
+    ValueError: Unrecognized QDP line...
+    >>> _line_type(" some non-comment gibberish")
+    Traceback (most recent call last):
+        ...
+    ValueError: Unrecognized QDP line...
+    """
+    _decimal_re = r"[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?"
+    _command_re = r"READ [TS]ERR(\s+[0-9]+)+"
+
+    sep = delimiter
+    if delimiter is None:
+        sep = r"\s+"
+    _new_re = rf"NO({sep}NO)+"
+    _data_re = rf"({_decimal_re}|NO|[-+]?nan)({sep}({_decimal_re}|NO|[-+]?nan))*)"
+    _type_re = rf"^\s*((?P<command>{_command_re})|(?P<new>{_new_re})|(?P<data>{_data_re})?\s*(\!(?P<comment>.*))?\s*$"
+    _line_type_re = re.compile(_type_re)
+    line = line.strip()
+    if not line:
+        return "comment"
+    match = _line_type_re.match(line)
+
+    if match is None:
+        raise ValueError(f"Unrecognized QDP line: {line}")
+    for type_, val in match.groupdict().items():
+        if val is None:
+            continue
+        if type_ == "data":
+            return f"data,{len(val.split(sep=delimiter))}"
+        else:
+            return type_
+
+
+def _get_type_from_list_of_lines(lines, delimiter=None):
+    """Read through the list of QDP file lines and label each line by type.
+
+    Parameters
+    ----------
+    lines : list
+        List containing one file line in each entry
+
+    Returns
+    -------
+    contents : list
+        List containing the type for each line (see `line_type_and_data`)
+    ncol : int
+root@8fb62f807cce:/app#

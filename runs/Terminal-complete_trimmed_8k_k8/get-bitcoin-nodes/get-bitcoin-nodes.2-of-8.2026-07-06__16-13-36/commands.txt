@@ -1,0 +1,83 @@
+['asciinema rec --stdin /logs/agent.cast', 'Enter']
+['clear', 'Enter']
+'ls -la\n'
+'pip install requests flask jsonrpcclient\n'
+'cat > bitcoin_service.py << \'EOF\'\n#!/usr/bin/env python3\n"""\nBitcoin Service API\n"""\nimport json\nimport sys\nfrom flask import Flask, request, abort\nfrom jsonrpcclient import Client, Transport\nfrom jsonrpcclient.transports import HTTPTransport\nfrom jsonrpcclient.exceptions import JSONRPCClientError\n\ndef connect_to Bitcoin RPC server:\n    """Connect to local Bitcoin Core RPC server."""\n    # Default port for RPC is 8332, but task says 8333 (P2P).\n    # We\'ll assume RPC is on port 8332.\n    transport = HTTPTransport(\'http://localhost:8332\')\n    return Client(transport)\n\ndef main():\n    app = Flask(__name__)\n    client = connect_to Bitcoin RPC server()\n    \n    @app.route(\'/status\', methods=[\'GET\'])\n    def status():\n        try:\n            result = client.get(\'getnetworkinfo\')\n            status = result.get(\'status\', \'online\')\n            return {\'status\': \'online\'}\n        except JSONRPCClientError as e:\n            return {\'error\': str(e)}, 503\n    \n    @app.route(\'/block/<block_hash>\', methods=[\'GET\'])\n    def get_block(block_hash):\n        try:\n            result = client.get(\'getblock\', block_hash, 1)\n            # Build block response\n            block = {\n                \'hash\': block_hash,\n                \'height\': result[\'height\'],\n                \'merkleroot\': result[\'merkleroot\'],\n                \'time\': result[\'time\'],\n                \'nonce\': result[\'nonce\'],\n                \'tx\': result[\'txids\']\n            }\n            return block\n        except JSONRPCClientError as e:\n            if \'Block not found\' in str(e):\n                return {\'error\': \'Block not found\'}, 404\n            return {\'error\': str(e)}, 503\n    \n    @app.route(\'/transaction/<txid>\', methods=[\'GET\'])\n    def get_transaction(txid):\n        try:\n            result = client.get(\'getrawtransaction\', txid, 1)\n            # Parse raw transaction using bitcoinlib if available\n            # For simplicity, we\'ll just return the raw transaction as is\n            # but we need to format as per schema.\n            # We\'ll use a placeholder.\n            return {\'txid\': txid, \'blockhash\': result.get(\'blockhash\', \'\'), \'vin\': [], \'vout\': []}\n        except JSONRPCClientError as e:\n            if \'Transaction not found\' in str(e):\n                return {\'error\': \'Transaction not found\'}, 404\n            return {\'error\': str(e)}, 503\n    \n    if __name__ == \'__main__\':\n        app.run(host=\'0.0.0.0\', port=5000, debug=True)\n\nif __name__ == \'__main__\':\n    main()\nEOF\n'
+'chmod +x bitcoin_service.py\n'
+'python3 -c "import jsonrpcclient; print(\'jsonrpcclient installed\')"\n'
+'python3 -c "import requests, flask; print(\'requests and flask available\')"\n'
+'cd /app\n'
+'python3 bitcoin_service.py\n'
+'pip uninstall -y jsonrpcclient\n'
+'pip install python-bitcoinlib\n'
+'cd /app\n'
+'cat > bitcoin_service.py << \'EOF\'\n#!/usr/bin/env python3\n"""\n Bitcoin Service API\n"""\nimport json\nimport sys\nfrom flask import Flask, request, abort\nfrom bitcoinlib import BitcoinRPCClient\nfrom bitcoinlib.exceptions import JSONRPCError\n\ndef connect_to Bitcoin RPC server():\n    """Connect to local Bitcoin Core RPC server."""\n    # Default port for RPC is 8332\n    client = BitcoinRPCClient(\'localhost\', port=8332)\n    return client\n\ndef main():\n    app = Flask(__name__)\n    try:\n        client = connect_to Bitcoin RPC server()\n    except Exception as e:\n        client = None\n    \n    @app.route(\'/status\', methods=[\'GET\'])\n    def status():\n        if client is None:\n            return {\'error\': \'Not connected to Bitcoin network\'}, 503\n        try:\n            result = client.get(\'getnetworkinfo\')\n            return {\'status\': \'online\'}\n        except JSONRPCError as e:\n            return {\'error\': str(e)}, 503\n    \n    @app.route(\'/block/<block_hash>\', methods=[\'GET\'])\n    def get_block(block_hash):\n        if client is None:\n            return {\'error\': \'Not connected to Bitcoin network\'}, 503\n        try:\n            result = client.get(\'getblock\', block_hash)\n            # Build block response\n            block = {\n                \'hash\': block_hash,\n                \'height\': result[\'height\'],\n                \'merkleroot\': result[\'merkleroot\'],\n                \'time\': result[\'time\'],\n                \'nonce\': result[\'nonce\'],\n                \'tx\': result[\'txids\']\n            }\n            return block\n        except JSONRPCError as e:\n            if \'Block not found\' in str(e):\n                return {\'error\': \'Block not found\'}, 404\n            return {\'error\': str(e)}, 503\n    \n    @app.route(\'/transaction/<txid>\', methods=[\'GET\'])\n    def get_transaction(txid):\n        if client is None:\n            return {\'error\': \'Not connected to Bitcoin network\'}, 503\n        try:\n            result = client.get(\'getrawtransaction\', txid)\n            # Parse raw transaction\n            tx = {\n                \'txid\': txid,\n                \'blockhash\': result.get(\'blockhash\', \'\'),\n                \'vin\': [],\n                \'vout\': []\n            }\n            for vin in result[\'vin\']:\n                vin_obj = {\n                    \'coinbase\': vin.get(\'coinbase\', \'\'),\n                    \'sequence\': vin[\'sequence\']\n                }\n                tx[\'vin\'].append(vin_obj)\n            for vout in result[\'vout\']:\n                vout_obj = {\n                    \'value\': vout[\'value\'],\n                    \'n\': vout[\'n\'],\n                    \'scriptPubKey\': {\n                        \'asm\': vout[\'scriptPubKey\'][\'asm\'],\n                        \'hex\': vout[\'scriptPubKey\'][\'hex\'],\n                        \'type\': vout[\'scriptPubKey\'][\'type\']\n                    }\n                }\n                tx[\'vout\'].append(vout_obj)\n            return tx\n        except JSONRPCError as e:\n            if \'Transaction not found\' in str(e):\n                return {\'error\': \'Transaction not found\'}, 404\n            return {\'error\': str(e)}, 503\n    \n    if __name__ == \'__main__\':\n        app.run(host=\'0.0.0.0\', port=5000, debug=True)\n\nif __name__ == \'__main__\':\n    main()\nEOF\n'
+'python3 -c "import bitcoinlib; print(\' bitcoinlib version:\', bitcoinlib.__version__)"\n'
+'python3 -c "from bitcoinlib import BitcoinRPCClient; print(\'Client import ok\')"\n'
+'python3 bitcoin_service.py\n'
+'pip list\n'
+'python3 -c "import sys; print(sys.path)"\n'
+'cd /app\n'
+"cat > fix_syntax.py << 'EOF'\n#!/usr/bin/env python3\nprint('Testing import')\ntry:\n    import bitcoinlib\n    print(' bitcoinlib imported')\nexcept ImportError:\n    print(' bitcoinlib not found')\nEOF\n"
+'python3 fix_syntax.py\n'
+'pip search bitcoinlib 2>/dev/null | head -20\n'
+"pip install ' bitcoinlib' 2>&1 | head -5\n"
+"pip install ' bitcoinlib' --break-system-packages 2>&1 | head -5\n"
+'python3 -c "import sys; sys.path.insert(0, \'.\'); import bitcoinlib; print(\'Success\')" 2>&1\n'
+'cd /app\n'
+'sed -i "11s/def connect_to Bitcoin RPC server:/def connect_to_Bitcoin_RPC_server():/" bitcoin_service.py\n'
+'head -15 bitcoin_service.py\n'
+"pip install ' bitcoinlib' 2>&1 | tail -10\n"
+'python3 -c "import sys; sys.path.insert(0, \'.\'); import bitcoinlib; print(\'Success\')" 2>&1\n'
+'pip install bitcoinlib 2>&1 | tail -10\n'
+'python3 -c "import sys; sys.path.insert(0, \'.\'); import bitcoinlib; print(\'Success\')" 2>&1\n'
+'cd /app\n'
+'cat -n bitcoin_service.py | head -20\n'
+"sed -i '11s/.*/def connect_to_Bitcoin_RPC_server():/' bitcoin_service.py\n"
+'sed -i "s/connect_to Bitcoin RPC server/connect_to_Bitcoin_RPC_server/" bitcoin_service.py\n'
+'cat -n bitcoin_service.py | head -20\n'
+'python3 bitcoin_service.py\n'
+'python3 -c "import bitcoinlib; print([x for x in dir(bitcoinlib) if not x.startswith(\'_\')])" 2>&1\n'
+'python3 -c "import bitcoinlib; print(bitcoinlib.__all__)" 2>&1\n'
+'python3 -c "import bitcoinlib; print(dir(bitcoinlib))" 2>&1\n'
+'cd /app\n'
+"cat > test_import.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib\nprint('Module imported')\nprint('Dir:', dir(bitcoinlib))\nEOF\n"
+'python3 test_import.py\n'
+'python3 -c "import bitcoinlib; print([x for x in dir(bitcoinlib) if not x.startswith(\'_\')])" 2>&1\n'
+'python3 -c "import bitcoinlib.services; print([x for x in dir(bitcoinlib.services) if not x.startswith(\'_\')])" 2>&1\n'
+'python3 -c "import bitcoinlib.services; print([x for x in dir(bitcoinlib.services) if not x.startswith(\'_\')])" 2>&1\n'
+'cd /app\n'
+"cat > check_imports.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib\nprint('Available in bitcoinlib:', [x for x in dir(bitcoinlib) if not x.startswith('_')])\nprint('Available in bitcoinlib.services:', [x for x in dir(bitcoinlib.services) if not x.startswith('_')])\nprint('Available in bitcoinlib.wallets:', [x for x in dir(bitcoinlib.wallets) if not x.startswith('_')])\nEOF\n"
+'python3 check_imports.py\n'
+'python3 -c "import bitcoinlib.services; print([x for x in dir(bitcoinlib.services) if not x.startswith(\'_\')])" 2>&1\n'
+'cd /app\n'
+"cat > check_services.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services\nprint('Services module attributes:')\nfor attr in dir(bitcoinlib.services):\n    if not attr.startswith('_'):\n        print(attr)\nEOF\n"
+'python3 check_services.py\n'
+'cd /app\n'
+"cat > inspect_baseclient.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services.baseclient\nprint('Baseclient attributes:')\nfor attr in dir(bitcoinlib.services.baseclient):\n    if not attr.startswith('_'):\n        print(attr)\nEOF\n"
+'python3 inspect_baseclient.py\n'
+"cat > inspect_baseclient2.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services.baseclient\nprint('Is BaseClient a class?', isinstance(bitcoinlib.services.baseclient.BaseClient, type))\nprint('BaseClient:', bitcoinlib.services.baseclient.BaseClient)\nEOF\n"
+'python3 inspect_baseclient2.py\n'
+'cd /app\n'
+'python3 -c "import bitcoinlib.services.baseclient; print(\'Has BaseClient?\', hasattr(bitcoinlib.services.baseclient, \'BaseClient\')); print(\'BaseClient class?\', isinstance(bitcoinlib.services.baseclient.BaseClient, type)); print(\'BaseClient:\', bitcoinlib.services.baseclient.BaseClient)" 2>&1\n'
+'python3 -c "import bitcoinlib.services.baseclient; print(\'BaseClient attributes:\', dir(bitcoinlib.services.baseclient.BaseClient))" 2>&1\n'
+'cd /app\n'
+"cat > inspect_baseclient_methods.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services.baseclient\nbaseclient = bitcoinlib.services.baseclient.BaseClient\nprint('BaseClient methods:')\nfor method in dir(baseclient):\n    if not method.startswith('_'):\n        print(method)\nEOF\n"
+'python3 inspect_baseclient_methods.py\n'
+"cat > inspect_baseclient_doc.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services.baseclient\nbaseclient = bitcoinlib.services.baseclient.BaseClient\nprint('BaseClient doc:', baseclient.__doc__) if hasattr(baseclient, '__doc__') else None\nEOF\n"
+'python3 inspect_baseclient_doc.py\n'
+'cd /app\n'
+"cat > inspect_baseclient_doc.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services.baseclient\nbaseclient = bitcoinlib.services.baseclient.BaseClient\nprint('BaseClient doc:', baseclient.__doc__) if hasattr(baseclient, '__doc__') else None\nEOF\n"
+'python3 inspect_baseclient_doc.py\n'
+"cat > inspect_request_signature.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services.baseclient\nbaseclient = bitcoinlib.services.baseclient.BaseClient\nprint('Request method signature:')\nprint(baseclient.request.__doc__) if hasattr(baseclient.request, '__doc__') else 'No doc'\nEOF\n"
+'python3 inspect_request_signature.py\n'
+'cd /app\n'
+"cat > inspect_request.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services.baseclient\nbaseclient = bitcoinlib.services.baseclient.BaseClient\nprint('Request method signature:')\nprint(baseclient.request.__doc__) if hasattr(baseclient.request, '__doc__') else 'No doc'\nprint('Request method source:')\nprint(baseclient.request.__code__) if hasattr(baseclient.request, '__code__') else None\nEOF\n"
+'python3 inspect_request.py\n'
+"cat > inspect_request2.py << 'EOF'\nimport sys\nsys.path.insert(0, '.')\nimport bitcoinlib.services.baseclient\nbaseclient = bitcoinlib.services.baseclient.BaseClient\nprint('Request method signature:')\nprint(baseclient.request.__doc__) if hasattr(baseclient.request, '__doc__') else 'No doc'\nprint('Request method source:')\nprint(baseclient.request.__code__) if hasattr(baseclient.request, '__code__') else None\nEOF\n"
+'python3 inspect_request2.py\n'
+['asciinema rec --stdin /logs/tests.cast', 'Enter']
+['clear', 'Enter']
+['bash ', '/tests/run-tests.sh', 'Enter']
+['C-d']
+['C-d']

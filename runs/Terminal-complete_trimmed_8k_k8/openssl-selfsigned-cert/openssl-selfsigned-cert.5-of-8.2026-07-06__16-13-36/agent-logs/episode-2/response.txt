@@ -1,0 +1,262 @@
+<think>
+We have a few issues to fix:
+ 1. The script uses deprecated PROTOCOL_SSLv23 (should use PROTOCOL_TLSv1_2 or PROTOCOL_TLS).
+ 2. The date format in the OpenSSL output is "Jul  7 17:16:53 2027 GMT", which is not in the format we expected.
+    We can change the parsing to handle the date format from OpenSSL.
+
+ However, note that the verification.txt file contains the subject and dates in the expected format (with the OpenSSL date format).
+ We can also adjust the script to use the same date format as in verification.txt for the dates.
+
+ Alternatively, we can use the OpenSSL command to get the expiration date in YYYY-MM-DD format without the time and timezone.
+ But note: the OpenSSL command `-dates` outputs the date in the format "notBefore=YYYY-MM-DD HH:MM:SS GMT, notAfter=YYYY-MM-DD HH:MM:SS GMT".
+
+ We can extract the date part (without the time) by splitting the string.
+
+ Let's adjust the script to handle the date format correctly.
+
+ Steps:
+ 1. Use `ssl.PROTOCOL_TLS` (or `ssl.PROTOCOL_TLSv1_2` if available) to avoid deprecation warning.
+ 2. Parse the date string from OpenSSL by extracting the date part (YYYY-MM-DD) and then convert to datetime.
+
+ Since the date string is like "notAfter=Jul  7 17:16:53 2027 GMT", we can split by space and take the 4th part (index 3) which is the year, and the 3rd part (index 2) which is the day, etc.
+
+ Alternatively, we can use the `datetime.strptime` with the format "%b %d %H:%M:%S %Y %z" (if we include the timezone) or without the timezone.
+
+ Let's change the script to use the following for the date parsing:
+
+   not_after_str = dates.split('notAfter=')[1].split(',')[0].strip()
+   # This gives "Jul  7 17:16:53 2027 GMT"
+   # We can split by space and then reassemble the date part (first 3 parts and last 2 parts) and then use a custom parser.
+
+ However, it's easier to use the `datetime.strptime` with the format "%b %d %H:%M:%S %Y %z" (for the timezone) or without the timezone if we don't want the timezone.
+
+ But note: the timezone is "GMT", which is +00:00.
+
+ Alternatively, we can use the `datetime.strptime` with the format "%Y-%m-%d %H:%M:%S %z" but the string doesn't have the dash.
+
+ Let's change the script to use the following:
+
+   from datetime import datetime
+   # Parse the date string
+   # We'll split the string by space and then take the first 3 parts (date) and the last 2 parts (time and year) and then reassemble.
+   # Actually, the format is: "Jul  7 17:16:53 2027 GMT"
+   # We can do:
+   parts = not_after_str.split()
+   # parts[0]: month abbreviation
+   # parts[1]: day
+   # parts[2]: time
+   # parts[3]: year
+   # parts[4]: timezone
+
+   # We can use a dictionary to map month abbreviations to numbers.
+   month_map = {
+       'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04', 'May': '05', 'Jun': '06',
+       'Jul': '07', 'Aug': '08', 'Sep': '09', 'Oct': '10', 'Nov': '11', 'Dec': '12'
+   }
+   month = month_map.get(parts[0], parts[0])
+   day = parts[1]
+   time = parts[2]
+   year = parts[3]
+   timezone = parts[4]
+
+   # Then we can create a string in the format "%Y-%m-%d %H:%M:%S %z"
+   # But note: the time and year are in parts[2] and parts[3] (e.g., "17:16:53" and "2027")
+   # We can do: year, day, month, time = parts[3], parts[1], month, parts[2]
+
+   # Then create a string: f"{year}-{month}-{day} {time} {timezone}"
+   # But the timezone is "GMT", which is +00:00.
+
+   # Alternatively, we can use the `dateutil` parser, but we don't have it.
+
+   # Let's do:
+
+   from datetime import datetime
+   # We'll create a string in the format "%Y-%m-%d %H:%M:%S %z"
+   date_str = f"{year}-{month}-{day} {time} {timezone}"
+   # Then parse with the format
+   expiration_date = datetime.strptime(date_str, "%Y-%m-%d %H:%M:%S %z")
+
+ 3. Also, we are running the subject command twice (once for dates and once for common name). We can run it once and use it for both.
+
+ Let's restructure the script to:
+
+   - Run the subject command once and capture the output.
+   - Extract the common name from that output.
+   - Then run the dates command once.
+
+ 4. We should also handle the case where the timezone is not "GMT" (but in our case it is).
+
+ Let's rewrite the script accordingly.
+
+ Alternatively, we can use the `ssl` module to get the expiration date from the certificate without subprocess.
+
+ However, the task requires using OpenSSL commands for the verification.txt, but the Python script is allowed to use subprocess or the ssl module.
+
+ Let's change the script to use the ssl module for the date parsing and for the certificate loading.
+
+ Steps for the script:
+
+   - Load the certificate and key into an SSL context.
+   - Use the `ssl` module to get the expiration date (notAfter) and the subject.
+
+   We can do:
+
+      cert = context.get_certificate()
+      not_after = cert.get_not_after()
+      expiration_date = datetime.strptime(not_after, "%Y-%m-%d %H:%M:%S %z")
+
+   This will be cleaner and avoid the subprocess.
+
+   Then we can print the subject and the expiration date.
+
+   We can get the subject with:
+
+      subject = cert.get_subject()
+      common_name = subject.get('CN')
+
+   Let's do that.
+
+   We'll remove the subprocess commands and use the ssl module.
+
+   We'll also keep the subject and dates in the verification.txt (which we already have).
+
+   So the script will be simpler and more robust.
+
+ Let's rewrite the script accordingly.
+
+ However, note that the task says: "Create a simple Python script that imports the ssl and subprocess modules". We are allowed to use subprocess, but we can also use ssl.
+
+ We'll use the ssl module for the verification and subprocess for the verification.txt (which we already have).
+
+ Let's write the script as:
+
+   import ssl
+   import subprocess
+   import sys
+   from datetime import datetime
+
+   def verify_certificate():
+        cert_path = '/app/ssl/server.crt'
+        key_path = '/app/ssl/server.key'
+
+        # Check if files exist
+        try:
+            with open(cert_path, 'r') as f:
+                cert_data = f.read()
+        except FileNotFoundError:
+            print(f'ERROR: Certificate file not found: {cert_path}')
+            sys.exit(1)
+
+        try:
+            with open(key_path, 'r') as f:
+                key_data = f.read()
+        except FileNotFoundError:
+            print(f'ERROR: Private key file not found: {key_path}')
+            sys.exit(1)
+
+        # Load certificate into SSL context
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS)  # Use TLS
+        context.load_cert_chain(cert_path, key_path)
+
+        # Get the certificate object
+        cert = context.get_certificate()
+        subject = cert.get_subject()
+        common_name = subject.get('CN')
+
+        # Get the expiration date (notAfter)
+        not_after = cert.get_not_after()
+        expiration_date = datetime.strptime(not_after, "%Y-%m-%d %H:%M:%S %z")
+
+        # Current date
+        now = datetime.now()
+
+        # Verify certificate is not expired
+        if expiration_date < now:
+            print('ERROR: Certificate is expired')
+            sys.exit(1)
+
+        # Extract expiration date string in YYYY-MM-DD format
+        expiration_str = expiration_date.strftime('%Y-%m-%d')
+
+        # Print details
+        print(f'Subject: {subject}')
+        print(f'Dates: {cert.get_not_before()}, {cert.get_not_after()}')
+        print(f'Common Name: {common_name}')
+        print(f'Expiration Date: {expiration_str}')
+        print('Certificate verification successful')
+
+   if __name__ == '__main__':
+        verify_certificate()
+
+ 5. We must also fix the deprecation warning by using `ssl.PROTOCOL_TLS` (available in Python 3.11+).
+
+ Let's update the script accordingly.
+
+ We'll also remove the subprocess commands and use the ssl module for the dates and subject.
+
+ Let's write the script again.
+
+ However, note that the verification.txt file already has the subject and dates. We are not required to print them in the Python script, but the task says:
+
+   "Prints certificate details including the Common Name and expiration date in YYYY-MM-DD format"
+
+ We are printing the subject and dates as well.
+
+ Let's write the script and test it.
+
+ We'll also check that the permissions are correct.
+
+ Let's proceed.
+</think>
+
+{
+  "analysis": "The script failed due to date parsing issues. The OpenSSL date format is 'Jul  7 17:16:53 2027 GMT' (month abbreviation). Need to adjust parsing. Also there's a deprecation warning about PROTOCOL_SSLv23. We should use ssl.PROTOCOL_TLS (or PROTOCOL_TLSv1_2). Let's fix the script. Also note that verification.txt contains subject in format 'subject=C = US, O = DevOps Team, CN = dev-internal.company.local' and dates in same format. We'll adjust the script to parse dates using the format we have. We'll also simplify: we can use ssl module to get notBefore and notAfter directly (they are strings). Let's rewrite the script using ssl module for certificate loading and date parsing, and use subprocess for verification.txt (already created).",
+  "plan": "1. Update Python script to use ssl module for certificate loading and date parsing. 2. Parse dates using datetime.strptime with format '%b %d %H:%M:%S %Y %z'. 3. Use ssl.PROTOCOL_TLS (or PROTOCOL_TLSv1_2). 4. Print required details. 5. Test script. 6. Ensure all files are present and permissions correct.",
+  "commands": [
+    {
+      "keystrokes": "cat > /app/check_cert.py << 'EOF'\nimport ssl\nimport subprocess\nimport sys\nfrom datetime import datetime\n\ndef verify_certificate():\n    cert_path = '/app/ssl/server.crt'\n    key_path = '/app/ssl/server.key'\n    \n    # Check if files exist\n    try:\n        with open(cert_path, 'r') as f:\n            cert_data = f.read()\n    except FileNotFoundError:\n        print(f'ERROR: Certificate file not found: {cert_path}')\n        sys.exit(1)\n    \n    try:\n        with open(key_path, 'r') as f:\n            key_data = f.read()\n    except FileNotFoundError:\n        print(f'ERROR: Private key file not found: {key_path}')\n        sys.exit(1)\n    \n    # Load certificate into SSL context\n    context = ssl.SSLContext(ssl.PROTOCOL_TLSv1_2)  # Use TLSv1.2\n    context.load_cert_chain(cert_path, key_path)\n    \n    cert = context.get_certificate()\n    subject = cert.get_subject()\n    common_name = subject.get('CN')\n    \n    # Get dates (notBefore, notAfter) from cert\n    not_before = cert.get_not_before()\n    not_after = cert.get_not_after()\n    \n    # Parse dates using datetime.strptime with OpenSSL format\n    # OpenSSL format: 'Jul  7 17:16:53 2027 GMT'\n    # Use format: '%b %d %H:%M:%S %Y %z'\n    try:\n        expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y %z')\n    except ValueError:\n        # Try without timezone\n        expiration_date = datetime.strptime(not_after, '%b %d %H:%M:%S %Y')\n    \n    # Current date\n    now = datetime.now()\n    \n    # Verify certificate is not expired\n    if expiration_date < now:\n        print('ERROR: Certificate is expired')\n        sys.exit(1)\n    \n    # Extract expiration date string in YYYY-MM-DD format\n    expiration_str = expiration_date.strftime('%Y-%m-%d')\n    \n    # Print details\n    print(f'Subject: {subject}')\n    print(f'Not Before: {not_before}')\n    print(f'Not After: {not_after}')\n    print(f'Common Name: {common_name}')\n    print(f'Expiration Date: {expiration_str}')\n    print('Certificate verification successful')\n\nif __name__ == '__main__':\n    verify_certificate()\nEOF\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "chmod +x /app/check_cert.py\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "python3 /app/check_cert.py\n",
+      "duration": 1.0
+    },
+    {
+      "keystrokes": "echo $?\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "# Also test that verification.txt exists and contains correct info\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "cat /app/ssl/verification.txt\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "# Ensure permissions are correct (server.key should be 600)\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "ls -l /app/ssl/server.key\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "# Verify that server.pem contains both key and cert\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "head -5 /app/ssl/server.pem\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "tail -5 /app/ssl/server.pem\n",
+      "duration": 0.1
+    }
+  ],
+  "task_complete": false
+}

@@ -1,0 +1,27 @@
+<think>
+We need to fix the loading of the .ckpt file. TensorFlow 2.21 does not have ` checkpoint_reader`. We can use `tf.io.checkpoint_to_saved_model` directly? Actually, we can load the SavedModel directly. Let's check the structure of the .ckpt file: it's a TensorFlow 1.x style Checkpoint. We can use `tf.io.checkpoint_to_saved_model` as we did, but we need to pass a `Checkpoint` object. We can create a Checkpoint by passing the weights. Alternatively, we can use `tf.io.checkpoint_to_saved_model` without converting to SavedModel? Actually, we can load the SavedModel directly. Let's try to load the SavedModel without conversion.
+
+We'll change the load_ckpt function to just load the SavedModel. But the .ckpt file is a Checkpoint, not a SavedModel. However, TensorFlow can load a Checkpoint and save it as a SavedModel. We can use `tf.io.checkpoint_to_saved_model` with a temporary directory. That should work.
+
+Alternatively, we can use `tf.io.checkpoint_to_saved_model` without the CheckpointReader. Let's modify the script.
+
+We'll also need to handle the fact that the output might be a tensor of shape (batch, seq_len, vocab_size). We'll take the first token of the first sequence.
+
+Let's rewrite sample.py.
+</think>
+
+{
+  "analysis": "The error indicates that TensorFlow 2.21 does not have `tf.train.checkpoint_reader`. We need to use `tf.io.checkpoint_to_saved_model` as we attempted, but we didn't call it correctly. We should call `tf.io.checkpoint_to_saved_model(ckpt, tmpdir)`. However, we need to create a `Checkpoint` object first. We can create it by passing the weights, but that's complex. Alternatively, we can directly load the SavedModel from the .ckpt file? No, it's a Checkpoint, not a SavedModel. We can use `tf.io.checkpoint_to_saved_model` with a temporary directory. Let's fix the script.",
+  "plan": "1. Update sample.py to correctly load the Checkpoint and convert to SavedModel. 2. Test again. 3. If still failing, we may need to use a different method. Let's first check the TensorFlow documentation for loading Checkpoints in 2.x. We'll write a corrected script.",
+  "commands": [
+    {
+      "keystrokes": "cat > sample.py << 'EOF'\nimport sys\nimport tensorflow as tf\nimport numpy as np\nimport json\nimport os\n\ndef load_ckpt(filepath):\n    # Load the Checkpoint\n    ckpt = tf.io.checkpoint_reader(filepath)\n    # Convert to SavedModel\n    tmpdir = '/tmp/savedmodel'\n    tf.io.checkpoint_to_saved_model(ckpt, tmpdir)\n    # Load SavedModel\n    saved_model = tf.train.load_saved_model(os.path.join(tmpdir, 'saved_model.pb'))\n    return saved_model\n\ndef main():\n    # Load the model\n    model = load_ckpt('gpt2-124M.ckpt')\n    # Parse vocab.bpe\n    with open('vocab.bpe', 'r') as f:\n        lines = f.readlines()\n    # Remove comments and empty lines\n    vocab = []\n    for line in lines:\n        line = line.strip()\n        if not line or line.startswith('#'):\n            continue\n        vocab.append(line)\n    # Build mapping from string to id\n    vocab_dict = {word: i for i, word in enumerate(vocab)}\n    # Input string\n    input_str = sys.argv[3]\n    # Tokenize\n    tokens = input_str.split()\n    token_ids = []\n    for token in tokens:\n        if token in vocab_dict:\n            token_ids.append(vocab_dict[token])\n        else:\n            # If not in vocab, maybe use a special token like 0\n            token_ids.append(0)\n    # Convert to tensor\n    input_ids = tf.constant([token_ids], dtype=tf.int64)\n    # Run inference\n    output = model.predict(input_ids)\n    # Get next 20 tokens\n    next_tokens = output[0][:20]\n    # Convert to strings\n    next_strings = [vocab[t] for t in next_tokens]\n    print(' '.join(next_strings))\n\nif __name__ == '__main__':\n    main()\nEOF\n",
+      "duration": 1.0
+    },
+    {
+      "keystrokes": "python3 sample.py 2>&1\n",
+      "duration": 2.0
+    }
+  ],
+  "task_complete": false
+}

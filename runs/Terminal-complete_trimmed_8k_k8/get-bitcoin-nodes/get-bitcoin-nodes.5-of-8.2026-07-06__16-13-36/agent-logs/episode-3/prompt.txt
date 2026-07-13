@@ -1,0 +1,144 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@abe082a6051d:/app# cd /app
+root@abe082a6051d:/app# cat > bitcoin_service.py << 'EOF'
+> #!/usr/bin/env python3
+> """
+> Bitcoin Service API
+> Connects to local Bitcoin Core RPC server and provides blockchain data.
+> """
+> import json
+> import requests
+> from flask import Flask, request, abort
+> from urllib.parse import urlparse
+> import sys
+>
+> def connect_to_rpc():
+>     """Connect to local Bitcoin Core RPC server."""
+>     # Default localhost:8333
+>     host = 'localhost'
+>     port = 8333
+>     url = f'http://{host}:{port}'
+>     try:
+>         # Test connection
+>         resp = requests.get(url + '/ping', timeout=5)
+>         if resp.status_code == 200:
+>             return url
+>         else:
+>             return None
+>     except Exception as e:
+>         return None
+>
+> def get_block(block_hash, rpc_url):
+>     """Query RPC for block details."""
+>     url = rpc_url + '/getblock'
+>     params = {'hash': block_hash, 'verbose': 1}
+>     try:
+>         resp = requests.get(url, params=params, timeout=10)
+>         data = resp.json()
+>         # Build block response
+>         block = {
+>             'hash': data['hash'],
+>             'height': data['height'],
+>             'merkleroot': data['merkleroot'],
+>             'time': data['time'],
+>             'nonce': data['nonce'],
+>             'tx': data['tx']
+>         }
+>         return block
+>     except Exception as e:
+>         raise
+>
+> def get_transaction(txid, rpc_url):
+>     """Query RPC for transaction details."""
+>     url = rpc_url + '/gettransaction'
+>     params = {'txid': txid}
+>     try:
+>         resp = requests.get(url, params=params, timeout=10)
+>         data = resp.json()
+>         # Build transaction response
+>         # Map inputs
+>         vin = []
+>         for inp in data['vin']:
+>             vin.append({
+>                 'coinbase': inp.get('coinbase', ''),
+>                 'sequence': inp['sequence']
+>             })
+>         vout = []
+>         for out in data['vout']:
+>             script = out['scriptPubKey']
+>             vout.append({
+>                 'value': out['value'],
+>                 'n': out['n'],
+>                 'scriptPubKey': {
+>                     'asm': script['asm'],
+>                     'hex': script['hex'],
+>                     'type': script['type']
+>                 }
+>             })
+>         tx = {
+>             'txid': data['txid'],
+>             'blockhash': data['blockhash'],
+>             'vin': vin,
+>             'vout': vout
+>         }
+>         return tx
+>     except Exception as e:
+>         raise
+>
+> def get_status(rpc_url):
+>     """Check if RPC server is connected."""
+>     try:
+>         resp = requests.get(rpc_url + '/ping', timeout=5)
+>         if resp.status_code == 200:
+>             return 'online'
+>         else:
+>             return 'offline'
+>     except Exception:
+>         return 'offline'
+>
+> def main():
+>     """Main entry point."""
+>     app = Flask(__name__)
+>     rpc_url = connect_to_rpc()
+>     if rpc_url is None:
+>         print('ERROR: RPC server not available')
+>         sys.exit(1)
+>
+>     @app.route('/status')
+>     def status():
+>         status_msg = get_status(rpc_url)
+>         return {'status': status_msg}
+>
+>     @app.route('/block/<block_hash>')
+>     def block(block_hash):
+>         block = get_block(block_hash, rpc_url)
+>         return block
+>
+>     @app.route('/transaction/<txid>')
+>     def transaction(txid):
+>         tx = get_transaction(txid, rpc_url)
+>         return tx
+>
+>     # Error handling for missing endpoints
+>     @app.errorhandler(404)
+>     def handle_404(e):
+>         return {'error': 'Resource not found'}, 404
+>
+>     @app.errorhandler(503)
+>     def handle_503(e):
+>         return {'error': 'Service unavailable'}, 503
+>
+>     # Start server on port 5000
+>     app.run(host='0.0.0.0', port=5000, debug=False)
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@abe082a6051d:/app# chmod +x bitcoin_service.py
+root@abe082a6051d:/app# python3 bitcoin_service.py
+ERROR: RPC server not available
+root@abe082a6051d:/app#

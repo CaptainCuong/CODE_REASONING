@@ -1,0 +1,35 @@
+<think>
+The error indicates that `peaks` is an array of indices, but `peak_indices` is a boolean array (from `argsort`). We need to extract the actual indices of the top two peaks. Let's fix the script.
+
+We'll rewrite the script more cleanly. We'll also need to ensure we are using the correct column for intensity. The data shows x values from 1648 to 47183, which seems like wavenumber in some arbitrary units (maybe scaled). The y values range from 485 to 999994, which looks like intensity.
+
+We need to find peaks in the y column. Since there are many peaks (1200), we need to pick the two highest peaks (or peaks around the expected positions). We'll compute the scaling factor by finding the x values of the two peaks with highest intensity, and assume they correspond to G and 2D.
+
+Let's create a corrected script. We'll also add some debugging to see the x values of the top peaks.
+
+Plan:
+1. Write a new script that loads data correctly.
+2. Find all peaks using a simple peak detection (maybe using scipy's find_peaks).
+3. Select the two peaks with highest intensity.
+4. Fit Lorentzian to each using curve_fit.
+5. Convert to cm-1 using scaling factor derived from expected positions.
+6. Write results.json.
+
+Let's implement.
+</think>
+
+{
+  "analysis": "The error occurred because `peaks[peak_indices[:2]]` where `peak_indices` is a boolean array, not indices. We need to get the actual indices of the top two peaks. Also we should use scipy's find_peaks for more reliable peak detection. Let's write a corrected script.",
+  "plan": "1. Write a new script using scipy's find_peaks.\n2. Compute scaling factor by finding the two peaks with highest intensity.\n3. Fit Lorentzian to each peak with initial guesses based on the data.\n4. Convert to cm-1.\n5. Write results.json.\n6. Run and verify.",
+  "commands": [
+    {
+      "keystrokes": "cat > fit_peaks2.py << 'EOF'\nimport numpy as np\nimport scipy.optimize as opt\nimport scipy.signal as signal\nimport json\n\n# Load and preprocess data\nwith open('graphene.dat', 'r') as f:\n    lines = f.readlines()\n\ndata = []\nfor line in lines:\n    line = line.strip('\\r\\n')\n    parts = line.split(',')\n    if len(parts) != 3:\n        continue\n    # intensity is the third part (smaller number)\n    intensity = float(parts[2])\n    x = float(parts[0])\n    data.append([x, intensity])\n\ndata = np.array(data)\nx = data[:, 0]\ny = data[:, 1]\nprint('Data shape:', x.shape)\nprint('x min, max:', x.min(), x.max())\nprint('y min, max:', y.min(), y.max())\n\n# Find peaks using scipy\npeaks, _ = signal.find_peaks(y, distance=50)  # distance to avoid multiple peaks within same region\nprint('Number of peaks:', len(peaks))\nprint('Peak indices:', peaks[:10])\n\n# Get intensities at peaks\npeak_intensities = y[peaks]\nprint('Peak intensities:', peak_intensities[:5])\n\n# Sort peaks by intensity descending\nsorted_indices = np.argsort(peak_intensities)[::-1]\npeak_indices = peaks[sorted_indices[:2]]\nprint('Top 2 peaks indices:', peak_indices)\nprint('Corresponding x values:', x[peak_indices])\nprint('Corresponding intensities:', y[peak_indices])\n\n# Compute scaling factor\nx_peak1 = x[peak_indices[0]]\nx_peak2 = x[peak_indices[1]]\nexpected_diff_cm = 2700 - 1580\nscaling_factor = expected_diff_cm / (x_peak2 - x_peak1)\nprint('Scaling factor (cm per arbitrary unit):', scaling_factor)\n\n# Fit Lorentzian to each peak\ndef fit_peak(x, y, x0_guess, y0_guess):\n    # Initial guess for gamma: 10, amplitude: 1000, offset: 1000\n    p0 = (x0_guess, 10, 1000, 1000)\n    # Fit\n    try:\n        popt, pcov = opt.curve_fit(lorentzian, x, y, p0=p0, maxfev=5000)\n        return popt\n    except Exception as e:\n        print('Fit failed:', e)\n        return None\n\ndef lorentzian(x, x0, gamma, amplitude, offset):\n    return amplitude * gamma / ( (x - x0)**2 + gamma**2 ) + offset\n\nresults = {}\nfor i, idx in enumerate(peak_indices):\n    xi = x[idx]\n    yi = y[idx]\n    # Use a window around the peak to avoid fitting noise too much\n    start = max(0, idx - 100)\n    end = min(len(x), idx + 100)\n    xi_window = x[start:end]\n    yi_window = y[start:end]\n    popt = fit_peak(xi_window, yi_window, xi, yi)\n    if popt is None:\n        print('Could not fit peak at x=', xi)\n        continue\n    x0_arb, gamma_arb, amp_arb, offset_arb = popt\n    # Convert to cm-1\n    x0_cm = x0_arb * scaling_factor\n    gamma_cm = gamma_arb * scaling_factor\n    # Keep amplitude and offset as intensity units\n    results[f'Peak{i+1}'] = {\n        'x0': float(x0_cm),\n        'gamma': float(gamma_cm),\n        'amplitude': float(amp_arb),\n        'offset': float(offset_arb)\n    }\n\n# Rename keys to 'G' and '2D' (assuming peak1 is G, peak2 is 2D)\n# Actually G is at 1580, 2D at 2700. So peak1 (lower x) is G, peak2 is 2D.\nresults['G'] = results.pop('Peak1')\nresults['2D'] = results.pop('Peak2')\n\n# Write results\nwith open('results.json', 'w') as f:\n    json.dump(results, f, indent=2)\nprint('Results written to results.json')\nprint(json.dumps(results, indent=2))\nEOF\n",
+      "duration": 1.0
+    },
+    {
+      "keystrokes": "python3 fit_peaks2.py\n",
+      "duration": 2.0
+    }
+  ],
+  "task_complete": false
+}

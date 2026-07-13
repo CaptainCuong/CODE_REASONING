@@ -1,0 +1,85 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@8bc2b87bd41e:/app# ls -la
+total 16
+drwxr-xr-x 1 root root 162 Jul 11 08:44 .
+drwxr-xr-x 1 root root  87 Jul 11 08:41 ..
+drwxr-xr-x 2 root root  45 Jul 11 08:42 __pycache__
+-rw-r--r-- 1 root root 693 Jul 11 08:43 count_tokens_final.py
+-rw-r--r-- 1 root root 698 Jul 11 08:44 count_tokens_final2.py
+-rw-r--r-- 1 root root 684 Jul 11 08:44 count_tokens_final3.py
+-rw-r--r-- 1 root root 200 Jul 11 08:42 inspect_final.py
+root@8bc2b87bd41e:/app# cat > /app/count_tokens_final4.py << 'EOF'
+> import requests
+> import json
+> import tempfile
+> import os
+> from datasets import Dataset
+> from transformers import AutoTokenizer
+>
+> def download_dataset(dataset_id, model_id):
+>     # Download the dataset from Hugging Face API
+>     url = f'https://huggingface.co/api/datasets/{dataset_id}/files?model_id={model_id}'
+>     response = requests.get(url, timeout=10)
+>     response.raise_for_status()
+>     # The response is a JSON array of file objects
+>     files = response.json()
+>     # We'll download the first file (likely the data)
+>     file = files[0]
+>     download_url = file['url']
+>     # Download the file
+>     with tempfile.NamedTemporaryDirectory() as tmpdir:
+>         tmp_path = os.path.join(tmpdir, 'dataset.zip')
+>         with requests.get(download_url, stream=True, timeout=10) as r:
+>             with open(tmp_path, 'wb') as f:
+>                 for chunk in r.iter_content(chunk_size=1024):
+>                     f.write(chunk)
+>         # Extract the zip file
+>         import zipfile
+>         with zipfile.ZipFile(tmp_path, 'r') as zf:
+>             zf.extractall(tmpdir)
+>         # The extracted files are in the temporary directory
+>         # We can load them into a Dataset
+>         return tmpdir
+>
+> # Use a token if available
+> token = os.environ.get('HUGGINGFACE_TOKEN', '')
+> # Download the dataset
+> tmpdir = download_dataset('open-thoughts', 'OpenThoughts-114k')
+> # Load the dataset from the extracted files
+> dataset = Dataset(tmpdir)
+> print('Unique domains:', dataset['domain'].unique())
+> print('Total rows:', len(dataset))
+>
+> # Filter by domain
+> science_rows = dataset[dataset['domain'] == 'science']
+> print(f'Number of science rows: {len(science_rows)}')
+>
+> # Tokenize with Qwen2.5
+> from transformers import AutoTokenizer
+> tensorizer = AutoTokenizer.from_pretrained('Qwen2.5')
+> total_tokens = 0
+> for row in science_rows:
+>     total_tokens += len(tensorizer.tokenize(row['text']))
+>
+> print(f'Total tokens in science domain: {total_tokens}')
+>
+> with open('/app/answer.txt', 'w') as f:
+>     f.write(str(total_tokens))
+> EOF
+root@8bc2b87bd41e:/app# python3 /app/count_tokens_final4.py
+Traceback (most recent call last):
+  File "/app/count_tokens_final4.py", line 36, in <module>
+    tmpdir = download_dataset('open-thoughts', 'OpenThoughts-114k')
+  File "/app/count_tokens_final4.py", line 12, in download_dataset
+    response.raise_for_status()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/site-packages/requests/models.py", line 1167, in raise_for_status
+    raise HTTPError(http_error_msg, response=self)
+requests.exceptions.HTTPError: 401 Client Error: Unauthorized for url: https://huggingface.co/api/datasets/open-thoughts/files?model_id=OpenThoughts-114k
+root@8bc2b87bd41e:/app# cat /app/answer.txt
+cat: /app/answer.txt: No such file or directory
+root@8bc2b87bd41e:/app#

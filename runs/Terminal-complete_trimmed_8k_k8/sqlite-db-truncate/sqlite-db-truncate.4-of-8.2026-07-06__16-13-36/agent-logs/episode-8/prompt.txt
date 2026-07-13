@@ -1,0 +1,104 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@f1514ed14f7f:/app# cat > /app/extract.py << 'EOF'
+> import sqlite3
+> import re
+> import tempfile
+> import os
+>
+> def extract_sql_statements():
+>     with open('/app/trunc.db', 'rb') as f:
+>         data = f.read()
+>     # Try to split by semicolon
+>     statements = re.split(b';', data)
+>     # Also consider that statements may be separated by newline
+>     # We'll join by newline and split by semicolon
+>     data_str = data.decode('utf-8', errors='ignore')
+>     statements = re.split(r';', data_str)
+>     # Clean up empty strings
+>     statements = [s.strip() for s in statements if s.strip()]
+>     return statements
+>
+> def execute_statements(statements):
+>     rows = []
+>     for stmt in statements:
+>         # Remove any leading/trailing whitespace
+>         stmt = stmt.strip()
+>         if not stmt:
+>             continue
+>         # Try to execute the statement
+>         with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+>             tmp_path = tmp.name
+>         try:
+>             conn = sqlite3.connect(tmp_path, timeout=5)
+>             cursor = conn.cursor()
+>             cursor.execute(stmt)
+>             col_names = cursor.description
+>             if col_names:
+>                 table_rows = cursor.fetchall()
+>                 for row in table_rows:
+>                     row_dict = {}
+>                     for idx, val in enumerate(row):
+>                         row_dict[col_names[idx]] = val
+>                     rows.append(row_dict)
+>             conn.close()
+>             os.unlink(tmp_path)
+>         except sqlite3.Error as e:
+>             print(f'Failed to execute statement: {e}')
+>             print(f'Statement: {stmt}')
+>     return rows
+>
+> def main():
+>     statements = extract_sql_statements()
+>     print('Extracted statements:')
+>     for i, stmt in enumerate(statements):
+>         print(f'{i}: {stmt[:100]}')
+>     rows = execute_statements(statements)
+>     print(f'Found {len(rows)} rows')
+>     # Format as JSON
+>     output = []
+>     for row in rows:
+>         word_col = None
+>         value_col = None
+>         for key in row.keys():
+>             if 'word' in key.lower():
+>                 word_col = key
+>             if 'value' in key.lower():
+>                 value_col = key
+>         if word_col is None and value_col is None:
+>             # Try to find a column that looks like a word (string) and a numeric column
+>             # We'll just skip this row.
+>             continue
+>         if word_col is None:
+>             word_col = [k for k in row.keys() if isinstance(row[k], str) and len(row[k]) > 2][0]
+>         if value_col is None:
+>             value_col = [k for k in row.keys() if isinstance(row[k], (int, float))][0]
+>         output.append({'word': row[word_col], 'value': row[value_col]})
+>     with open('/app/recover.json', 'w') as f:
+>         json.dump(output, f, indent=2)
+>     print('Rows written to /app/recover.json')
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@f1514ed14f7f:/app# python3 /app/extract.py
+Extracted statements:
+0:
+IyaI
+Failed to execute statement: the query contains a null character
+Statement:
+IyaI
+!testword09?    !testword08@X\!testword07c!testword06K!testword052!testword04*!testword03!testword02
+!testword01!    testword00
+Found 0 rows
+Traceback (most recent call last):
+  File "/app/extract.py", line 79, in <module>
+    main()
+  File "/app/extract.py", line 75, in main
+    json.dump(output, f, indent=2)
+    ^^^^
+NameError: name 'json' is not defined. Did you forget to import 'json'?
+root@f1514ed14f7f:/app#

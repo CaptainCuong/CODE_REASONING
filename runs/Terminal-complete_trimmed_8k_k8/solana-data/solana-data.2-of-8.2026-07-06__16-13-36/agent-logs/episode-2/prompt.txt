@@ -1,0 +1,169 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@0e31a20913b4:/app# pip3 list
+Package Version
+------- -------
+pip     24.3.1
+root@0e31a20913b4:/app# pip3 install Flask solana-rpc
+Collecting Flask
+  Downloading flask-3.1.3-py3-none-any.whl.metadata (3.2 kB)
+ERROR: Could not find a version that satisfies the requirement solana-rpc (from versions: none)
+
+[notice] A new release of pip is available: 24.3.1 -> 26.1.2
+[notice] To update, run: pip install --upgrade pip
+ERROR: No matching distribution found for solana-rpc
+root@0e31a20913b4:/app# cd /app
+root@0e31a20913b4:/app# cat > server.py << 'EOF'
+> #!/usr/bin/env python3
+> import json
+> from flask import Flask, request, abort
+> from solana import Solana
+> from solana.rpc import RpcClient
+> from solana.rpc.requests import GetBlockWithTransactions, GetTransaction, GetAccountInfo, GetProgramAccounts
+> import sys
+>
+> app = Flask(__name__)
+>
+> # Connect to mainnet-beta
+> client = RpcClient("https://api.mainnet-beta.solana.com")
+> solana = Solana(client)
+>
+> # Helper to get network status
+> def get_network_status():
+>     # Get network info
+>     network = "mainnet-beta"
+>     # Get current slot
+>     slot = solana.get_slot()
+>     # Get node count (approximate via RPC)
+>     # We can use get_nodes_in_cluster
+>     nodes = solana.get_nodes_in_cluster()
+>     node_count = len(nodes) if nodes else 0
+>     # Get version
+>     version = solana.get_version()
+>     return {
+>         "status": "online",  # assuming we can connect
+>         "network": network,
+>         "current_slot": slot,
+>         "node_count": node_count,
+>         "version": version
+>     }
+>
+> # /status endpoint
+> @app.route('/status', methods=['GET'])
+> def status():
+>     try:
+>         return json.dumps(get_network_status())
+>     except Exception as e:
+>         return json.dumps({"error": str(e)})
+>
+> # /block/<slot_number>
+> @app.route('/block/<int:slot>', methods=['GET'])
+> def block_details(slot):
+>     try:
+>         block = solana.get_block_by_slot(slot)
+>         if block is None:
+>             return json.dumps({"error": f"Block not found for slot {slot}"})
+>         blockhash = block.blockhash
+>         parent_slot = block.parent_slot
+>         previous_blockhash = block.previous_blockhash
+>         block_height = block.block_height
+>         block_time = block.block_time
+>         return json.dumps({
+>             "blockhash": blockhash,
+>             "parent_slot": parent_slot,
+>             "previous_blockhash": previous_blockhash,
+>             "block_height": block_height,
+>             "block_time": block_time
+>         })
+>     except Exception as e:
+>         return json.dumps({"error": str(e)})
+>
+> # /transaction/<signature>
+> @app.route('/transaction/<signature>', methods=['GET'])
+> def transaction_details(signature):
+>     try:
+>         tx = solana.get_transaction(signature)
+>         if tx is None:
+>             return json.dumps({"error": f"Transaction not found with signature {signature}"})
+>         # Extract fields
+>         slot = tx.slot
+>         block_time = tx.block_time
+>         success = tx.success
+>         fee = tx.fee
+>         # token_transfers
+>         token_transfers = []
+>         for transfer in tx.token_transfers:
+>             token_transfers.append({
+>                 "account": transfer.account,
+>                 "mint": transfer.mint,
+>                 "amount": transfer.amount
+>             })
+>         return json.dumps({
+>             "signature": signature,
+>             "slot": slot,
+>             "block_time": block_time,
+>             "success": success,
+>             "fee": fee,
+>             "token_transfers": token_transfers
+>         })
+>     except Exception as e:
+>         return json.dumps({"error": str(e)})
+>
+> # /account/<address>
+> @app.route('/account/<address>', methods=['GET'])
+> def account_details(address):
+>     try:
+>         account = solana.get_account_info(address)
+>         if account is None:
+>             return json.dumps({"error": f"Account not found with address {address}"})
+>         lamports = account.lamports
+>         owner = account.owner
+>         rent_epoch = account.rent_epoch
+>         executable = account.executable
+>         return json.dumps({
+>             "address": address,
+>             "executable": executable,
+>             "lamports": lamports,
+>             "owner": owner,
+>             "rent_epoch": rent_epoch
+>         })
+>     except Exception as e:
+>         return json.dumps({"error": str(e)})
+>
+> # /program/<program_id>/accounts
+> @app.route('/program/<program_id>/accounts', methods=['GET'])
+> def program_accounts(program_id):
+>     try:
+>         # Default limit and offset
+>         limit = request.args.get('limit', 10)
+>         offset = request.args.get('offset', 0)
+>         accounts = solana.get_program_accounts(program_id, limit=limit, offset=offset)
+>         total = solana.get_program_accounts_count(program_id)
+>         result = []
+>         for acc in accounts:
+>             result.append({
+>                 "pubkey": acc.pubkey,
+>                 "account": {
+>                     "executable": acc.executable,
+>                     "lamports": acc.lamports,
+>                     "owner": acc.owner,
+>                     "rent_epoch": acc.rent_epoch
+>                 }
+>             })
+>         return json.dumps({
+>             "program_id": program_id,
+>             "total_accounts": total,
+>             "limit": limit,
+>             "offset": offset,
+>             "accounts": result
+>         })
+>     except Exception as e:
+>         return json.dumps({"error": str(e)})
+>
+> if __name__ == '__main__':
+>     app.run(port=5000, debug=True)
+> EOF
+root@0e31a20913b4:/app#

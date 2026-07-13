@@ -1,0 +1,184 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@643ba31915ab:/app# cat > /app/test_data.py << 'EOF'
+> import numpy as np
+> import sys
+>
+> def parse_line(line):
+>     line = line.strip()
+>     if not line:
+>         return None
+>     parts = line.split()
+>     if len(parts) != 2:
+>         return None
+>     x_str = parts[0].replace(',', '')
+>     y_str = parts[1].replace(',', '')
+>     try:
+>         x = float(x_str)
+>         y = float(y_str)
+>     except ValueError:
+>         return None
+>     return x, y
+>
+> x = []
+> y = []
+> with open('/app/graphene.dat', 'r') as f:
+>     for line in f:
+>         parsed = parse_line(line)
+>         if parsed is not None:
+>             x.append(parsed[0])
+>             y.append(parsed[1])
+>
+> x = np.array(x)
+> y = np.array(y)
+> print(f'Min x: {x.min():.1f}, Max x: {x.max():.1f}')
+> print(f'Min y: {y.min():.1f}, Max y: {y.max():.1f}')
+> print(f'Number of points: {len(x)}')
+> # Show first few points
+> for i in range(min(5, len(x))):
+>     print(f'{x[i]:.1f} -> {y[i]:.1f}')
+> EOF
+root@643ba31915ab:/app# python3 /app/test_data.py
+Min x: 1648724404.0, Max x: 47183554644.0
+Min y: 40090842.0, Max y: 79400095085.0
+Number of points: 3565
+47183554644.0 -> 19261547207.0
+46588360019.0 -> 19266089699.0
+46008191298.0 -> 19077996963.0
+45442488736.0 -> 19173287322.0
+44890718036.0 -> 19501518253.0
+root@643ba31915ab:/app# cat > /app/fit5.py << 'EOF'
+> import numpy as np
+> import scipy
+> import json
+> from scipy import stats
+> from scipy.optimize import fmin
+>
+> def parse_line(line):
+>     line = line.strip()
+>     if not line:
+>         return None
+>     parts = line.split()
+>     if len(parts) != 2:
+>         return None
+>     x_str = parts[0].replace(',', '')
+>     y_str = parts[1].replace(',', '')
+>     try:
+>         x = float(x_str)
+>         y = float(y_str)
+>     except ValueError:
+>         return None
+>     return x, y
+>
+> def load_data(filename):
+>     x = []
+>     y = []
+>     with open(filename, 'r') as f:
+>         for line in f:
+>             parsed = parse_line(line)
+>             if parsed is not None:
+>                 x.append(parsed[0])
+>                 y.append(parsed[1])
+>     return np.array(x), np.array(y)
+>
+> def fit_peak(x, y, peak_pos):
+>     """Fit a single peak to the data."""
+>     # We'll use scipy's fmin to minimize the error
+>     # Function: y = offset + amplitude * (gamma / ( (x - x0)^2 + gamma^2 ))
+>     def lorentzian(x, x0, gamma, amplitude, offset):
+>         return offset + amplitude * (gamma / ( (x - x0)**2 + gamma**2 ))
+>
+>     # Initial guess for x0
+>     x0 = peak_pos
+>     # Initial guess for gamma (width)
+>     gamma = 50  # reasonable value
+>     # Initial guess for amplitude (peak height)
+>     amp = y.max()
+>     # Initial guess for offset (average background)
+>     offset = np.mean(y)
+>
+>     # Define the error function that takes only the parameters
+>     def error(params):
+>         x0, gamma, amp, offset = params
+>         y_pred = offset + amp * (gamma / ( (x - x0)**2 + gamma**2 ))
+>         return np.sum((y - y_pred)**2)
+>
+>     # Use fmin to minimize the error
+>     params, _ = fmin(error, x0=[x0, gamma, amp, offset], xtol=1e-4, ftol=1e-4)
+>
+>     return {
+>         'x0': params[0],
+>         'gamma': params[1],
+>         'amplitude': params[2],
+>         'offset': params[3]
+>     }
+>
+> # Load data
+> x, y = load_data('/app/graphene.dat')
+>
+> # Find the positions of the two peaks
+> peak_indices = []
+> for i in range(1, len(y)-1):
+>     if y[i] > y[i-1] and y[i] > y[i+1]:
+>         peak_indices.append(i)
+>
+> # We expect two peaks: G around 1580 and 2D around 2700
+> # Let's find the indices corresponding to those ranges.
+> g_idx = None
+> two_d_idx = None
+> for idx in peak_indices:
+>     if 1580 < x[idx] < 1590:
+>         g_idx = idx
+>     elif 2700 < x[idx] < 2710:
+>         two_d_idx = idx
+>
+> if g_idx is not None and two_d_idx is not None:
+>     print(f'G peak index: {g_idx}, x: {x[g_idx]:.1f}')
+>     print(f'2D peak index: {two_d_idx}, x: {x[two_d_idx]:.1f}')
+>     g_peak = fit_peak(x, y, x[g_idx])
+>     two_d_peak = fit_peak(x, y, x[two_d_idx])
+> else:
+>     # If not found, we can try to find the two highest y values
+>     sorted_indices = sorted(peak_indices, key=lambda i: y[i], reverse=True)
+>     g_peak = fit_peak(x, y, x[sorted_indices[0]])
+>     two_d_peak = fit_peak(x, y, x[sorted_indices[1]])
+>     print('Could not locate peaks by position, using highest y values.')
+>
+> # Prepare results
+> results = {
+>     'G': {
+>         'x0': g_peak['x0'],
+>         'gamma': g_peak['gamma'],
+>         'amplitude': g_peak['amplitude'],
+>         'offset': g_peak['offset']
+>     },
+>     '2D': {
+>         'x0': two_d_peak['x0'],
+>         'gamma': two_d_peak['gamma'],
+>         'amplitude': two_d_peak['amplitude'],
+>         'offset': two_d_peak['offset']
+>     }
+> }
+>
+> # Write to file
+> with open('/app/results.json', 'w') as f:
+>     json.dump(results, f, indent=2)
+>
+> print('Results written to results.json')
+> EOF
+root@643ba31915ab:/app# python3 /app/fit5.py
+/app/fit5.py:57: RuntimeWarning: Maximum number of function evaluations has been exceeded.
+  params, _ = fmin(error, x0=[x0, gamma, amp, offset], xtol=1e-4, ftol=1e-4)
+Traceback (most recent call last):
+  File "/app/fit5.py", line 93, in <module>
+    g_peak = fit_peak(x, y, x[sorted_indices[0]])
+  File "/app/fit5.py", line 57, in fit_peak
+    params, _ = fmin(error, x0=[x0, gamma, amp, offset], xtol=1e-4, ftol=1e-4)
+    ^^^^^^^^^
+ValueError: too many values to unpack (expected 2)
+root@643ba31915ab:/app# cat /app/results.json
+cat: /app/results.json: No such file or directory
+root@643ba31915ab:/app#

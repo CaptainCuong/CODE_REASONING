@@ -1,0 +1,228 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@0e2e02bf216d:/app# cd /app
+root@0e2e02bf216d:/app# cat > intrusion_detector.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> RULES_FILE="/app/rules/detection_rules.json"
+> OUTPUT_DIR="/app"
+>
+> # Check if jq is available for JSON parsing
+> if command -v jq >/dev/null 2>&1; then
+>     JQ_AVAILABLE=1
+> else
+>     JQ_AVAILABLE=0
+> fi
+>
+> # Helper function to parse JSON if jq not available
+> parse_json() {
+>     echo "JSON parsing not supported (jq missing)" >&2
+>     exit 1
+> }
+>
+> # Get current timestamp in epoch seconds
+> CURRENT_EPOCH=$(date +%s)
+>
+> # Read rules
+> if [ $JQ_AVAILABLE -eq 1 ]; then
+>     # Extract rules array
+>     RULES=$(jq -r '.rules[]' "$RULES_FILE")
+> else
+>     parse_json
+> fi
+>
+> # Initialize arrays
+> RULE_IDS=()
+> RULE_SEVERITIES=()
+> RULE_PATTERNS=()
+> RULE_THRESHOLDS=()
+> RULE_TIMEFRAMES=()
+>
+> # Populate arrays
+> while IFS= read -r rule; do
+>     if [ $JQ_AVAILABLE -eq 1 ]; then
+>         rule_id=$(echo "$rule" | jq -r '.id')
+>         severity=$(echo "$rule" | jq -r '.severity')
+>         pattern=$(echo "$rule" | jq -r '.pattern')
+>         threshold=$(echo "$rule" | jq -r '.threshold')
+>         timeframe=$(echo "$rule" | jq -r '.timeframe')
+>     else
+>         parse_json
+>     fi
+>     RULE_IDS+=("$rule_id")
+>     RULE_SEVERITIES+=("$severity")
+>     RULE_PATTERNS+=("$pattern")
+>     RULE_THRESHOLDS+=("$threshold")
+>     RULE_TIMEFRAMES+=("$timeframe")
+> done <<< "$RULES"
+>
+> # Function to extract timestamp and IP from log lines
+> default_extract() {
+>     # Default extraction for auth.log
+>     if [ "$1" = "auth.log" ]; then
+>         echo "$2" | grep -o "Failed password for.*from \([0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+\)" | cut -d' ' -f3
+>     elif [ "$1" = "http.log" ]; then
+>         # Extract IP from common log format
+>         echo "$2" | grep -o "([0-9]\+\.[0-9]\+\.[0-9]\+\.[0-9]\+)" | head -1
+>     else
+>         echo ""
+>     fi
+> }
+>
+> # Function to parse timestamp to epoch for comparison
+> default_parse_ts() {
+>     if [ "$1" = "auth.log" ]; then
+>         # Parse format: Apr 10 08:15:45
+>         date -d "$2" +%s
+>     elif [ "$1" = "http.log" ]; then
+>         # Parse format: 10/Apr/2023:08:32:15
+>         date -d "$2" +%s
+>     else
+>         echo -1
+>     fi
+> }
+>
+> # Process each rule
+> MATCHES=()
+> IPS=()
+> while [ $JQ_AVAILABLE -eq 1 ]; do
+>     rule_id=${RULE_IDS[$((i-1))]}
+>     severity=${RULE_SEVERITIES[$((i-1))]}  # Note: we are iterating i after loop
+>     # We'll restructure: use while loop with index
+>     echo "Processing $rule_id"
+> done
+>
+> # Better approach: use jq to iterate
+> if [ $JQ_AVAILABLE -eq 1 ]; then
+>     echo "jq available, using jq to iterate"
+>     jq -c '.rules[]' "$RULES_FILE" | while read -r rule; do
+>         rule_id=$(echo "$rule" | jq -r '.id')
+>         severity=$(echo "$rule" | jq -r '.severity')
+>         pattern=$(echo "$rule" | jq -r '.pattern')
+>         threshold=$(echo "$rule" | jq -r '.threshold')
+>         timeframe=$(echo "$rule" | jq -r '.timeframe')
+>         echo "Processing $rule_id"
+>         # Count matches in auth.log
+>         auth_count=$(grep -c -E "$pattern" "$LOG_DIR/auth.log")
+>         # Count matches in http.log
+>         http_count=$(grep -c -E "$pattern" "$LOG_DIR/http.log")
+>         total_count=$((auth_count + http_count))
+>         # Collect IPs
+>         auth_ips=$(grep -o -E "$pattern" "$LOG_DIR/auth.log" | while read -r line; do
+>             ip=$(echo "$line" | default_extract auth.log)
+>             if [ -n "$ip" ]; then
+>                 echo "$ip"
+>             fi
+>         done | sort -u)
+>         http_ips=$(grep -o -E "$pattern" "$LOG_DIR/http.log" | while read -r line; do
+>             ip=$(echo "$line" | default_extract http.log)
+>             if [ -n "$ip" ]; then
+>                 echo "$ip"
+>             fi
+>         done | sort -u)
+>         # Combine unique IPs
+>         all_ips="$auth_ips $http_ips"
+>         # Filter by timeframe: need to consider timestamps
+>         # We'll implement a simple filter by scanning lines
+>         # For brevity, we'll assume all matches within timeframe (since logs are recent)
+>         # But we should at least check if any matches exceed timeframe
+>         # We'll compute epoch of each match and compare
+>         # We'll implement later
+>         # For now, store results
+>         echo "Matches: $total_count, IPs: $all_ips"
+>     done
+> else
+>     parse_json
+> fi
+>
+> # Generate JSON output
+> # We'll create a temporary JSON structure
+> # This is a simplified version; need to implement full logic.
+> # Since we haven't completed, we'll output placeholder.
+> echo "Script not fully implemented"
+> EOF
+root@0e2e02bf216d:/app# chmod +x intrusion_detector.sh
+root@0e2e02bf216d:/app# cat > response.sh << 'EOF'
+> #!/bin/bash
+> set -e
+>
+> LOG_DIR="/app/logs"
+> REPORT_DIR="/app"
+>
+> if [ $# -neq 1 ]; then
+>     echo "Usage: response.sh <IP>"
+>     exit 1
+> fi
+>
+> IP="$1"
+> TIMESTAMP=$(date -Iseconds)
+> REPORT_FILE="${REPORT_DIR}/incident_${IP}_${TIMESTAMP}.txt"
+>
+> # Write report header
+> echo "Incident Report for IP: $IP" > "$REPORT_FILE"
+> echo "Timestamp: $TIMESTAMP" >> "$REPORT_FILE"
+> echo "=============================" >> "$REPORT_FILE"
+>
+> # Extract all activity from both logs for this IP
+> echo "\nActivity from auth.log: " >> "$REPORT_FILE"
+> grep -n ".*$IP.*" "$LOG_DIR/auth.log" >> "$REPORT_FILE"
+>
+> echo "\nActivity from http.log: " >> "$REPORT_FILE"
+> grep -n ".*$IP.*" "$LOG_DIR/http.log" >> "$REPORT_FILE"
+>
+> # Identify suspicious activities using detection rules
+> # We'll parse the rules file
+> RULES_FILE="/app/rules/detection_rules.json"
+> if command -v jq >/dev/null 2>&1; then
+>     jq -c '.rules[]' "$RULES_FILE" | while read -r rule; do
+>         rule_id=$(echo "$rule" | jq -r '.id')
+>         pattern=$(echo "$rule" | jq -r '.pattern')
+>         # Check if any line from the IP matches this pattern
+>         if grep -q -E "$pattern" "$LOG_DIR/auth.log"; then
+>             echo "\nSuspicious activity detected: Rule $rule_id (Severity: $(echo "$rule" | jq -r '.severity'))" >> "$REPORT_FILE"
+>             echo "Matches in auth.log: " >> "$REPORT_FILE"
+>             grep -n -E "$pattern" "$LOG_DIR/auth.log" >> "$REPORT_FILE"
+>         fi
+>         if grep -q -E "$pattern" "$LOG_DIR/http.log"; then
+>             echo "\nSuspicious activity detected: Rule $rule_id (Severity: $(echo "$rule" | jq -r '.severity'))" >> "$REPORT_FILE"
+>             echo "Matches in http.log: " >> "$REPORT_FILE"
+>             grep -n -E "$pattern" "$LOG_DIR/http.log" >> "$REPORT_FILE"
+>         fi
+>     done
+> else
+>     echo "jq not available, skipping rule detection" >> "$REPORT_FILE"
+> fi
+>
+> # Write total lines
+> TOTAL_LINES=$(grep -c ".*$IP.*" "$LOG_DIR/auth.log" 2>/dev/null || echo 0)
+> TOTAL_LINES=$((TOTAL_LINES + $(grep -c ".*$IP.*" "$LOG_DIR/http.log" 2>/dev/null || echo 0)))
+> echo "\nTotal lines containing IP: $TOTAL_LINES" >> "$REPORT_FILE"
+>
+> # Add a note about timeframe if needed
+> # Not implemented for brevity
+>
+> echo "\nReport generated at $REPORT_FILE" >> "$REPORT_FILE"
+>
+> # Make report readable
+> sed -i '$ s/\n$/\n/' "$REPORT_FILE"
+> EOF
+root@0e2e02bf216d:/app# chmod +x response.sh
+root@0e2e02bf216d:/app# ls -l
+total 12
+-rwxr-xr-x 1 root root 4291 Jul  7 18:43 intrusion_detector.sh
+drwxr-xr-x 1 root root   30 Jul  7 18:33 logs
+drwxr-xr-x 2 root root   10 Jul  7 18:33 reports
+-rwxr-xr-x 1 root root 2260 Jul  7 18:43 response.sh
+drwxr-xr-x 1 root root   42 Jul  7 18:33 rules
+root@0e2e02bf216d:/app# cat > test_intrusion.sh << 'EOF'
+> #!/bin/bash
+> ./intrusion_detector.sh
+> EOF
+root@0e2e02bf216d:/app# ./response.sh 45.32.67.89
+./response.sh: line 7: [: -neq: binary operator expected
+root@0e2e02bf216d:/app#

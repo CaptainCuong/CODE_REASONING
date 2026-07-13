@@ -1,0 +1,175 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+ directory")
+root@28960d68e781:/app# find /app/filesystem_spec -type f -name '*.py' -exec grep -l 'class' {} \; 2>/dev/null
+/app/filesystem_spec/docs/source/conf.py
+/app/filesystem_spec/fsspec/__init__.py
+/app/filesystem_spec/fsspec/archive.py
+/app/filesystem_spec/fsspec/asyn.py
+/app/filesystem_spec/fsspec/caching.py
+/app/filesystem_spec/fsspec/callbacks.py
+/app/filesystem_spec/fsspec/compression.py
+/app/filesystem_spec/fsspec/config.py
+/app/filesystem_spec/fsspec/core.py
+/app/filesystem_spec/fsspec/dircache.py
+/app/filesystem_spec/fsspec/exceptions.py
+/app/filesystem_spec/fsspec/fuse.py
+/app/filesystem_spec/fsspec/generic.py
+/app/filesystem_spec/fsspec/gui.py
+/app/filesystem_spec/fsspec/implementations/arrow.py
+/app/filesystem_spec/fsspec/implementations/cache_mapper.py
+/app/filesystem_spec/fsspec/implementations/cache_metadata.py
+/app/filesystem_spec/fsspec/implementations/cached.py
+/app/filesystem_spec/fsspec/implementations/dask.py
+/app/filesystem_spec/fsspec/implementations/data.py
+/app/filesystem_spec/fsspec/implementations/dbfs.py
+/app/filesystem_spec/fsspec/implementations/dirfs.py
+/app/filesystem_spec/fsspec/implementations/ftp.py
+/app/filesystem_spec/fsspec/implementations/git.py
+/app/filesystem_spec/fsspec/implementations/github.py
+/app/filesystem_spec/fsspec/implementations/http.py
+/app/filesystem_spec/fsspec/implementations/jupyter.py
+/app/filesystem_spec/fsspec/implementations/libarchive.py
+/app/filesystem_spec/fsspec/implementations/local.py
+/app/filesystem_spec/fsspec/implementations/memory.py
+/app/filesystem_spec/fsspec/implementations/reference.py
+/app/filesystem_spec/fsspec/implementations/sftp.py
+/app/filesystem_spec/fsspec/implementations/smb.py
+/app/filesystem_spec/fsspec/implementations/tar.py
+/app/filesystem_spec/fsspec/implementations/tests/conftest.py
+/app/filesystem_spec/fsspec/implementations/tests/local/local_fixtures.py
+/app/filesystem_spec/fsspec/implementations/tests/local/local_test.py
+/app/filesystem_spec/fsspec/implementations/tests/memory/memory_fixtures.py
+/app/filesystem_spec/fsspec/implementations/tests/memory/memory_test.py
+/app/filesystem_spec/fsspec/implementations/tests/test_archive.py
+/app/filesystem_spec/fsspec/implementations/tests/test_cached.py
+/app/filesystem_spec/fsspec/implementations/tests/test_http.py
+/app/filesystem_spec/fsspec/implementations/tests/test_sftp.py
+/app/filesystem_spec/fsspec/implementations/tests/test_smb.py
+/app/filesystem_spec/fsspec/implementations/webhdfs.py
+/app/filesystem_spec/fsspec/implementations/zip.py
+/app/filesystem_spec/fsspec/json.py
+/app/filesystem_spec/fsspec/mapping.py
+/app/filesystem_spec/fsspec/parquet.py
+/app/filesystem_spec/fsspec/registry.py
+/app/filesystem_spec/fsspec/spec.py
+/app/filesystem_spec/fsspec/tests/abstract/__init__.py
+/app/filesystem_spec/fsspec/tests/abstract/copy.py
+/app/filesystem_spec/fsspec/tests/abstract/get.py
+/app/filesystem_spec/fsspec/tests/abstract/put.py
+/app/filesystem_spec/fsspec/tests/conftest.py
+/app/filesystem_spec/fsspec/tests/test_api.py
+/app/filesystem_spec/fsspec/tests/test_async.py
+/app/filesystem_spec/fsspec/tests/test_callbacks.py
+/app/filesystem_spec/fsspec/tests/test_core.py
+/app/filesystem_spec/fsspec/tests/test_generic.py
+/app/filesystem_spec/fsspec/tests/test_registry.py
+/app/filesystem_spec/fsspec/tests/test_spec.py
+/app/filesystem_spec/fsspec/tests/test_utils.py
+/app/filesystem_spec/fsspec/transaction.py
+/app/filesystem_spec/fsspec/utils.py
+root@28960d68e781:/app# grep -n 'DirFileSystem' /app/filesystem_spec/fsspec/asyn.py
+root@28960d68e781:/app# cat /app/filesystem_spec/fsspec/generic.py | head -100
+from __future__ import annotations
+
+import inspect
+import logging
+import os
+import shutil
+import uuid
+from typing import Optional
+
+from .asyn import AsyncFileSystem, _run_coros_in_chunks, sync_wrapper
+from .callbacks import DEFAULT_CALLBACK
+from .core import filesystem, get_filesystem_class, split_protocol, url_to_fs
+
+_generic_fs = {}
+logger = logging.getLogger("fsspec.generic")
+
+
+def set_generic_fs(protocol, **storage_options):
+    _generic_fs[protocol] = filesystem(protocol, **storage_options)
+
+
+default_method = "default"
+
+
+def _resolve_fs(url, method=None, protocol=None, storage_options=None):
+    """Pick instance of backend FS"""
+    method = method or default_method
+    protocol = protocol or split_protocol(url)[0]
+    storage_options = storage_options or {}
+    if method == "default":
+        return filesystem(protocol)
+    if method == "generic":
+        return _generic_fs[protocol]
+    if method == "current":
+        cls = get_filesystem_class(protocol)
+        return cls.current()
+    if method == "options":
+        fs, _ = url_to_fs(url, **storage_options.get(protocol, {}))
+        return fs
+    raise ValueError(f"Unknown FS resolution method: {method}")
+
+
+def rsync(
+    source,
+    destination,
+    delete_missing=False,
+    source_field="size",
+    dest_field="size",
+    update_cond="different",
+    inst_kwargs=None,
+    fs=None,
+    **kwargs,
+):
+    """Sync files between two directory trees
+
+    (experimental)
+
+    Parameters
+    ----------
+    source: str
+        Root of the directory tree to take files from. This must be a directory, but
+        do not include any terminating "/" character
+    destination: str
+        Root path to copy into. The contents of this location should be
+        identical to the contents of ``source`` when done. This will be made a
+        directory, and the terminal "/" should not be included.
+    delete_missing: bool
+        If there are paths in the destination that don't exist in the
+        source and this is True, delete them. Otherwise, leave them alone.
+    source_field: str | callable
+        If ``update_field`` is "different", this is the key in the info
+        of source files to consider for difference. Maybe a function of the
+        info dict.
+    dest_field: str | callable
+        If ``update_field`` is "different", this is the key in the info
+        of destination files to consider for difference. May be a function of
+        the info dict.
+    update_cond: "different"|"always"|"never"
+        If "always", every file is copied, regardless of whether it exists in
+        the destination. If "never", files that exist in the destination are
+        not copied again. If "different" (default), only copy if the info
+        fields given by ``source_field`` and ``dest_field`` (usually "size")
+        are different. Other comparisons may be added in the future.
+    inst_kwargs: dict|None
+        If ``fs`` is None, use this set of keyword arguments to make a
+        GenericFileSystem instance
+    fs: GenericFileSystem|None
+        Instance to use if explicitly given. The instance defines how to
+        to make downstream file system instances from paths.
+
+    Returns
+    -------
+    dict of the copy operations that were performed, {source: destination}
+    """
+    fs = fs or GenericFileSystem(**(inst_kwargs or {}))
+    source = fs._strip_protocol(source)
+    destination = fs._strip_protocol(destination)
+    allfiles = fs.find(source, withdirs=True, detail=True)
+    if not fs.isdir(source):
+        raise ValueError("Can only rsync on a directory")
+root@28960d68e781:/app#

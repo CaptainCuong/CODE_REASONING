@@ -1,0 +1,1943 @@
+        coros = [
+            self._cat_file(p, start=s, end=e, **kwargs)
+            for p, s, e in zip(paths, starts, ends)
+        ]
+        batch_size = batch_size or self.batch_size
+        return await _run_coros_in_chunks(
+            coros, batch_size=batch_size, nofiles=True, return_exceptions=True
+        )
+
+    async def _put_file(self, lpath, rpath, **kwargs):
+        raise NotImplementedError
+
+    async def _put(
+        self,
+        lpath,
+        rpath,
+        recursive=False,
+        callback=DEFAULT_CALLBACK,
+        batch_size=None,
+        maxdepth=None,
+        **kwargs,
+    ):
+        """Copy file(s) from local.
+
+        Copies a specific file or tree of files (if recursive=True). If rpath
+        ends with a "/", it will be assumed to be a directory, and target files
+        will go within.
+
+        The put_file method will be called concurrently on a batch of files. The
+        batch_size option can configure the amount of futures that can be executed
+        at the same time. If it is -1, then all the files will be uploaded concurrently.
+        The default can be set for this instance by passing "batch_size" in the
+        constructor, or for all instances by setting the "gather_batch_size" key
+        in ``fsspec.config.conf``, falling back to 1/8th of the system limit .
+        """
+        if isinstance(lpath, list) and isinstance(rpath, list):
+            # No need to expand paths when both source and destination
+            # are provided as lists
+            rpaths = rpath
+            lpaths = lpath
+        else:
+            source_is_str = isinstance(lpath, str)
+            if source_is_str:
+                lpath = make_path_posix(lpath)
+            fs = LocalFileSystem()
+            lpaths = fs.expand_path(lpath, recursive=recursive, maxdepth=maxdepth)
+            if source_is_str and (not recursive or maxdepth is not None):
+                # Non-recursive glob does not copy directories
+                lpaths = [p for p in lpaths if not (trailing_sep(p) or fs.isdir(p))]
+                if not lpaths:
+                    return
+
+            source_is_file = len(lpaths) == 1
+            dest_is_dir = isinstance(rpath, str) and (
+                trailing_sep(rpath) or await self._isdir(rpath)
+            )
+
+            rpath = self._strip_protocol(rpath)
+            exists = source_is_str and (
+                (has_magic(lpath) and source_is_file)
+                or (not has_magic(lpath) and dest_is_dir and not trailing_sep(lpath))
+            )
+            rpaths = other_paths(
+                lpaths,
+                rpath,
+                exists=exists,
+                flatten=not source_is_str,
+            )
+
+        is_dir = {l: os.path.isdir(l) for l in lpaths}
+        rdirs = [r for l, r in zip(lpaths, rpaths) if is_dir[l]]
+        file_pairs = [(l, r) for l, r in zip(lpaths, rpaths) if not is_dir[l]]
+
+        await asyncio.gather(*[self._makedirs(d, exist_ok=True) for d in rdirs])
+        batch_size = batch_size or self.batch_size
+
+        coros = []
+        callback.set_size(len(file_pairs))
+        for lfile, rfile in file_pairs:
+            put_file = callback.branch_coro(self._put_file)
+            coros.append(put_file(lfile, rfile, **kwargs))
+
+        return await _run_coros_in_chunks(
+            coros, batch_size=batch_size, callback=callback
+        )
+
+    async def _get_file(self, rpath, lpath, **kwargs):
+        raise NotImplementedError
+
+    async def _get(
+        self,
+        rpath,
+        lpath,
+        recursive=False,
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app# sed -n '290,350p' /app/filesystem_spec/fsspec/asyn.py
+    "_find",
+    "_du",
+    "_size",
+    "_mkdir",
+    "_makedirs",
+]
+
+
+class AsyncFileSystem(AbstractFileSystem):
+    """Async file operations, default implementations
+
+    Passes bulk operations to asyncio.gather for concurrent operation.
+
+    Implementations that have concurrent batch operations and/or async methods
+    should inherit from this class instead of AbstractFileSystem. Docstrings are
+    copied from the un-underscored method in AbstractFileSystem, if not given.
+    """
+
+    # note that methods do not have docstring here; they will be copied
+    # for _* methods and inferred for overridden methods.
+
+    async_impl = True
+    mirror_sync_methods = True
+    disable_throttling = False
+
+    def __init__(self, *args, asynchronous=False, loop=None, batch_size=None, **kwargs):
+        self.asynchronous = asynchronous
+        self._pid = os.getpid()
+        if not asynchronous:
+            self._loop = loop or get_loop()
+        else:
+            self._loop = None
+        self.batch_size = batch_size
+        super().__init__(*args, **kwargs)
+
+    @property
+    def loop(self):
+        if self._pid != os.getpid():
+            raise RuntimeError("This class is not fork-safe")
+        return self._loop
+
+    async def _rm_file(self, path, **kwargs):
+        raise NotImplementedError
+
+    async def _rm(self, path, recursive=False, batch_size=None, **kwargs):
+        # TODO: implement on_error
+        batch_size = batch_size or self.batch_size
+        path = await self._expand_path(path, recursive=recursive)
+        return await _run_coros_in_chunks(
+            [self._rm_file(p, **kwargs) for p in reversed(path)],
+            batch_size=batch_size,
+            nofiles=True,
+        )
+
+    async def _cp_file(self, path1, path2, **kwargs):
+        raise NotImplementedError
+
+    async def _copy(
+        self,
+        path1,
+        path2,
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# cd /app
+root@22c512c79d63:/app# grep -n "open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# sed -n '500,600p' /app/filesystem_spec/fsspec/asyn.py
+            raise TypeError
+        if not isinstance(starts, Iterable):
+            starts = [starts] * len(paths)
+        if not isinstance(ends, Iterable):
+            ends = [ends] * len(paths)
+        if len(starts) != len(paths) or len(ends) != len(paths):
+            raise ValueError
+        coros = [
+            self._cat_file(p, start=s, end=e, **kwargs)
+            for p, s, e in zip(paths, starts, ends)
+        ]
+        batch_size = batch_size or self.batch_size
+        return await _run_coros_in_chunks(
+            coros, batch_size=batch_size, nofiles=True, return_exceptions=True
+        )
+
+    async def _put_file(self, lpath, rpath, **kwargs):
+        raise NotImplementedError
+
+    async def _put(
+        self,
+        lpath,
+        rpath,
+        recursive=False,
+        callback=DEFAULT_CALLBACK,
+        batch_size=None,
+        maxdepth=None,
+        **kwargs,
+    ):
+        """Copy file(s) from local.
+
+        Copies a specific file or tree of files (if recursive=True). If rpath
+        ends with a "/", it will be assumed to be a directory, and target files
+        will go within.
+
+        The put_file method will be called concurrently on a batch of files. The
+        batch_size option can configure the amount of futures that can be executed
+        at the same time. If it is -1, then all the files will be uploaded concurrently.
+        The default can be set for this instance by passing "batch_size" in the
+        constructor, or for all instances by setting the "gather_batch_size" key
+        in ``fsspec.config.conf``, falling back to 1/8th of the system limit .
+        """
+        if isinstance(lpath, list) and isinstance(rpath, list):
+            # No need to expand paths when both source and destination
+            # are provided as lists
+            rpaths = rpath
+            lpaths = lpath
+        else:
+            source_is_str = isinstance(lpath, str)
+            if source_is_str:
+                lpath = make_path_posix(lpath)
+            fs = LocalFileSystem()
+            lpaths = fs.expand_path(lpath, recursive=recursive, maxdepth=maxdepth)
+            if source_is_str and (not recursive or maxdepth is not None):
+                # Non-recursive glob does not copy directories
+                lpaths = [p for p in lpaths if not (trailing_sep(p) or fs.isdir(p))]
+                if not lpaths:
+                    return
+
+            source_is_file = len(lpaths) == 1
+            dest_is_dir = isinstance(rpath, str) and (
+                trailing_sep(rpath) or await self._isdir(rpath)
+            )
+
+            rpath = self._strip_protocol(rpath)
+            exists = source_is_str and (
+                (has_magic(lpath) and source_is_file)
+                or (not has_magic(lpath) and dest_is_dir and not trailing_sep(lpath))
+            )
+            rpaths = other_paths(
+                lpaths,
+                rpath,
+                exists=exists,
+                flatten=not source_is_str,
+            )
+
+        is_dir = {l: os.path.isdir(l) for l in lpaths}
+        rdirs = [r for l, r in zip(lpaths, rpaths) if is_dir[l]]
+        file_pairs = [(l, r) for l, r in zip(lpaths, rpaths) if not is_dir[l]]
+
+        await asyncio.gather(*[self._makedirs(d, exist_ok=True) for d in rdirs])
+        batch_size = batch_size or self.batch_size
+
+        coros = []
+        callback.set_size(len(file_pairs))
+        for lfile, rfile in file_pairs:
+            put_file = callback.branch_coro(self._put_file)
+            coros.append(put_file(lfile, rfile, **kwargs))
+
+        return await _run_coros_in_chunks(
+            coros, batch_size=batch_size, callback=callback
+        )
+
+    async def _get_file(self, rpath, lpath, **kwargs):
+        raise NotImplementedError
+
+    async def _get(
+        self,
+        rpath,
+        lpath,
+        recursive=False,
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app# sed -n '290,350p' /app/filesystem_spec/fsspec/asyn.py
+    "_find",
+    "_du",
+    "_size",
+    "_mkdir",
+    "_makedirs",
+]
+
+
+class AsyncFileSystem(AbstractFileSystem):
+    """Async file operations, default implementations
+
+    Passes bulk operations to asyncio.gather for concurrent operation.
+
+    Implementations that have concurrent batch operations and/or async methods
+    should inherit from this class instead of AbstractFileSystem. Docstrings are
+    copied from the un-underscored method in AbstractFileSystem, if not given.
+    """
+
+    # note that methods do not have docstring here; they will be copied
+    # for _* methods and inferred for overridden methods.
+
+    async_impl = True
+    mirror_sync_methods = True
+    disable_throttling = False
+
+    def __init__(self, *args, asynchronous=False, loop=None, batch_size=None, **kwargs):
+        self.asynchronous = asynchronous
+        self._pid = os.getpid()
+        if not asynchronous:
+            self._loop = loop or get_loop()
+        else:
+            self._loop = None
+        self.batch_size = batch_size
+        super().__init__(*args, **kwargs)
+
+    @property
+    def loop(self):
+        if self._pid != os.getpid():
+            raise RuntimeError("This class is not fork-safe")
+        return self._loop
+
+    async def _rm_file(self, path, **kwargs):
+        raise NotImplementedError
+
+    async def _rm(self, path, recursive=False, batch_size=None, **kwargs):
+        # TODO: implement on_error
+        batch_size = batch_size or self.batch_size
+        path = await self._expand_path(path, recursive=recursive)
+        return await _run_coros_in_chunks(
+            [self._rm_file(p, **kwargs) for p in reversed(path)],
+            batch_size=batch_size,
+            nofiles=True,
+        )
+
+    async def _cp_file(self, path1, path2, **kwargs):
+        raise NotImplementedError
+
+    async def _copy(
+        self,
+        path1,
+        path2,
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# cd /app
+root@22c512c79d63:/app# grep -n "open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# sed -n '500,600p' /app/filesystem_spec/fsspec/asyn.py
+            raise TypeError
+        if not isinstance(starts, Iterable):
+            starts = [starts] * len(paths)
+        if not isinstance(ends, Iterable):
+            ends = [ends] * len(paths)
+        if len(starts) != len(paths) or len(ends) != len(paths):
+            raise ValueError
+        coros = [
+            self._cat_file(p, start=s, end=e, **kwargs)
+            for p, s, e in zip(paths, starts, ends)
+        ]
+        batch_size = batch_size or self.batch_size
+        return await _run_coros_in_chunks(
+            coros, batch_size=batch_size, nofiles=True, return_exceptions=True
+        )
+
+    async def _put_file(self, lpath, rpath, **kwargs):
+        raise NotImplementedError
+
+    async def _put(
+        self,
+        lpath,
+        rpath,
+        recursive=False,
+        callback=DEFAULT_CALLBACK,
+        batch_size=None,
+        maxdepth=None,
+        **kwargs,
+    ):
+        """Copy file(s) from local.
+
+        Copies a specific file or tree of files (if recursive=True). If rpath
+        ends with a "/", it will be assumed to be a directory, and target files
+        will go within.
+
+        The put_file method will be called concurrently on a batch of files. The
+        batch_size option can configure the amount of futures that can be executed
+        at the same time. If it is -1, then all the files will be uploaded concurrently.
+        The default can be set for this instance by passing "batch_size" in the
+        constructor, or for all instances by setting the "gather_batch_size" key
+        in ``fsspec.config.conf``, falling back to 1/8th of the system limit .
+        """
+        if isinstance(lpath, list) and isinstance(rpath, list):
+            # No need to expand paths when both source and destination
+            # are provided as lists
+            rpaths = rpath
+            lpaths = lpath
+        else:
+            source_is_str = isinstance(lpath, str)
+            if source_is_str:
+                lpath = make_path_posix(lpath)
+            fs = LocalFileSystem()
+            lpaths = fs.expand_path(lpath, recursive=recursive, maxdepth=maxdepth)
+            if source_is_str and (not recursive or maxdepth is not None):
+                # Non-recursive glob does not copy directories
+                lpaths = [p for p in lpaths if not (trailing_sep(p) or fs.isdir(p))]
+                if not lpaths:
+                    return
+
+            source_is_file = len(lpaths) == 1
+            dest_is_dir = isinstance(rpath, str) and (
+                trailing_sep(rpath) or await self._isdir(rpath)
+            )
+
+            rpath = self._strip_protocol(rpath)
+            exists = source_is_str and (
+                (has_magic(lpath) and source_is_file)
+                or (not has_magic(lpath) and dest_is_dir and not trailing_sep(lpath))
+            )
+            rpaths = other_paths(
+                lpaths,
+                rpath,
+                exists=exists,
+                flatten=not source_is_str,
+            )
+
+        is_dir = {l: os.path.isdir(l) for l in lpaths}
+        rdirs = [r for l, r in zip(lpaths, rpaths) if is_dir[l]]
+        file_pairs = [(l, r) for l, r in zip(lpaths, rpaths) if not is_dir[l]]
+
+        await asyncio.gather(*[self._makedirs(d, exist_ok=True) for d in rdirs])
+        batch_size = batch_size or self.batch_size
+
+        coros = []
+        callback.set_size(len(file_pairs))
+        for lfile, rfile in file_pairs:
+            put_file = callback.branch_coro(self._put_file)
+            coros.append(put_file(lfile, rfile, **kwargs))
+
+        return await _run_coros_in_chunks(
+            coros, batch_size=batch_size, callback=callback
+        )
+
+    async def _get_file(self, rpath, lpath, **kwargs):
+        raise NotImplementedError
+
+    async def _get(
+        self,
+        rpath,
+        lpath,
+        recursive=False,
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app# sed -n '290,350p' /app/filesystem_spec/fsspec/asyn.py
+    "_find",
+    "_du",
+    "_size",
+    "_mkdir",
+    "_makedirs",
+]
+
+
+class AsyncFileSystem(AbstractFileSystem):
+    """Async file operations, default implementations
+
+    Passes bulk operations to asyncio.gather for concurrent operation.
+
+    Implementations that have concurrent batch operations and/or async methods
+    should inherit from this class instead of AbstractFileSystem. Docstrings are
+    copied from the un-underscored method in AbstractFileSystem, if not given.
+    """
+
+    # note that methods do not have docstring here; they will be copied
+    # for _* methods and inferred for overridden methods.
+
+    async_impl = True
+    mirror_sync_methods = True
+    disable_throttling = False
+
+    def __init__(self, *args, asynchronous=False, loop=None, batch_size=None, **kwargs):
+        self.asynchronous = asynchronous
+        self._pid = os.getpid()
+        if not asynchronous:
+            self._loop = loop or get_loop()
+        else:
+            self._loop = None
+        self.batch_size = batch_size
+        super().__init__(*args, **kwargs)
+
+    @property
+    def loop(self):
+        if self._pid != os.getpid():
+            raise RuntimeError("This class is not fork-safe")
+        return self._loop
+
+    async def _rm_file(self, path, **kwargs):
+        raise NotImplementedError
+
+    async def _rm(self, path, recursive=False, batch_size=None, **kwargs):
+        # TODO: implement on_error
+        batch_size = batch_size or self.batch_size
+        path = await self._expand_path(path, recursive=recursive)
+        return await _run_coros_in_chunks(
+            [self._rm_file(p, **kwargs) for p in reversed(path)],
+            batch_size=batch_size,
+            nofiles=True,
+        )
+
+    async def _cp_file(self, path1, path2, **kwargs):
+        raise NotImplementedError
+
+    async def _copy(
+        self,
+        path1,
+        path2,
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# cd /app
+root@22c512c79d63:/app# sed -n '800,950p' /app/filesystem_spec/fsspec/asyn.py
+                depth = depth - depth_double_stars + maxdepth
+            else:
+                depth = None
+
+        allpaths = await self._find(
+            root, maxdepth=depth, withdirs=True, detail=True, **kwargs
+        )
+
+        pattern = glob_translate(path + ("/" if ends_with_sep else ""))
+        pattern = re.compile(pattern)
+
+        out = {
+            p: info
+            for p, info in sorted(allpaths.items())
+            if pattern.match(
+                (
+                    p + "/"
+                    if append_slash_to_dirname and info["type"] == "directory"
+                    else p
+                )
+            )
+        }
+
+        if detail:
+            return out
+        else:
+            return list(out)
+
+    async def _du(self, path, total=True, maxdepth=None, **kwargs):
+        sizes = {}
+        # async for?
+        for f in await self._find(path, maxdepth=maxdepth, **kwargs):
+            info = await self._info(f)
+            sizes[info["name"]] = info["size"]
+        if total:
+            return sum(sizes.values())
+        else:
+            return sizes
+
+    async def _find(self, path, maxdepth=None, withdirs=False, **kwargs):
+        path = self._strip_protocol(path)
+        out = {}
+        detail = kwargs.pop("detail", False)
+
+        # Add the root directory if withdirs is requested
+        # This is needed for posix glob compliance
+        if withdirs and path != "" and await self._isdir(path):
+            out[path] = await self._info(path)
+
+        # async for?
+        async for _, dirs, files in self._walk(path, maxdepth, detail=True, **kwargs):
+            if withdirs:
+                files.update(dirs)
+            out.update({info["name"]: info for name, info in files.items()})
+        if not out and (await self._isfile(path)):
+            # walk works on directories, but find should also return [path]
+            # when path happens to be a file
+            out[path] = {}
+        names = sorted(out)
+        if not detail:
+            return names
+        else:
+            return {name: out[name] for name in names}
+
+    async def _expand_path(self, path, recursive=False, maxdepth=None):
+        if maxdepth is not None and maxdepth < 1:
+            raise ValueError("maxdepth must be at least 1")
+
+        if isinstance(path, str):
+            out = await self._expand_path([path], recursive, maxdepth)
+        else:
+            out = set()
+            path = [self._strip_protocol(p) for p in path]
+            for p in path:  # can gather here
+                if has_magic(p):
+                    bit = set(await self._glob(p, maxdepth=maxdepth))
+                    out |= bit
+                    if recursive:
+                        # glob call above expanded one depth so if maxdepth is defined
+                        # then decrement it in expand_path call below. If it is zero
+                        # after decrementing then avoid expand_path call.
+                        if maxdepth is not None and maxdepth <= 1:
+                            continue
+                        out |= set(
+                            await self._expand_path(
+                                list(bit),
+                                recursive=recursive,
+                                maxdepth=maxdepth - 1 if maxdepth is not None else None,
+                            )
+                        )
+                    continue
+                elif recursive:
+                    rec = set(await self._find(p, maxdepth=maxdepth, withdirs=True))
+                    out |= rec
+                if p not in out and (recursive is False or (await self._exists(p))):
+                    # should only check once, for the root
+                    out.add(p)
+        if not out:
+            raise FileNotFoundError(path)
+        return sorted(out)
+
+    async def _mkdir(self, path, create_parents=True, **kwargs):
+        pass  # not necessary to implement, may not have directories
+
+    async def _makedirs(self, path, exist_ok=False):
+        pass  # not necessary to implement, may not have directories
+
+    async def open_async(self, path, mode="rb", **kwargs):
+        if "b" not in mode or kwargs.get("compression"):
+            raise ValueError
+        raise NotImplementedError
+
+
+def mirror_sync_methods(obj):
+    """Populate sync and async methods for obj
+
+    For each method will create a sync version if the name refers to an async method
+    (coroutine) and there is no override in the child class; will create an async
+    method for the corresponding sync method if there is no implementation.
+
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+root@22c512c79d63:/app# sed -n '920,1000p' /app/filesystem_spec/fsspec/asyn.py
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+):
+    import traceback
+
+    tasks = [t for t in asyncio.tasks.all_tasks(loop[0]) if not t.done()]
+    if printout:
+        [task.print_stack() for task in tasks]
+    out = [
+        {
+            "locals": task._coro.cr_frame.f_locals,
+            "file": task._coro.cr_frame.f_code.co_filename,
+            "firstline": task._coro.cr_frame.f_code.co_firstlineno,
+            "linelo": task._coro.cr_frame.f_lineno,
+            "stack": traceback.format_stack(task._coro.cr_frame),
+            "task": task if with_task else None,
+        }
+        for task in tasks
+    ]
+    if cancel:
+        for t in tasks:
+            cbs = t._callbacks
+            t.cancel()
+            asyncio.futures.Future.set_exception(t, exc)
+            asyncio.futures.Future.cancel(t)
+            [cb[0](t) for cb in cbs]  # cancels any dependent concurrent.futures
+            try:
+                t._coro.throw(exc)  # exits coro, unless explicitly handled
+            except exc:
+                pass
+    return out
+
+
+class AbstractAsyncStreamedFile(AbstractBufferedFile):
+    # no read buffering, and always auto-commit
+    # TODO: readahead might still be useful here, but needs async version
+
+    async def read(self, length=-1):
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = -1 if length is None else int(length)
+        if self.mode != "rb":
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app# cd /app
+root@22c512c79d63:/app# sed -n '800,950p' /app/filesystem_spec/fsspec/asyn.py
+                depth = depth - depth_double_stars + maxdepth
+            else:
+                depth = None
+
+        allpaths = await self._find(
+            root, maxdepth=depth, withdirs=True, detail=True, **kwargs
+        )
+
+        pattern = glob_translate(path + ("/" if ends_with_sep else ""))
+        pattern = re.compile(pattern)
+
+        out = {
+            p: info
+            for p, info in sorted(allpaths.items())
+            if pattern.match(
+                (
+                    p + "/"
+                    if append_slash_to_dirname and info["type"] == "directory"
+                    else p
+                )
+            )
+        }
+
+        if detail:
+            return out
+        else:
+            return list(out)
+
+    async def _du(self, path, total=True, maxdepth=None, **kwargs):
+        sizes = {}
+        # async for?
+        for f in await self._find(path, maxdepth=maxdepth, **kwargs):
+            info = await self._info(f)
+            sizes[info["name"]] = info["size"]
+        if total:
+            return sum(sizes.values())
+        else:
+            return sizes
+
+    async def _find(self, path, maxdepth=None, withdirs=False, **kwargs):
+        path = self._strip_protocol(path)
+        out = {}
+        detail = kwargs.pop("detail", False)
+
+        # Add the root directory if withdirs is requested
+        # This is needed for posix glob compliance
+        if withdirs and path != "" and await self._isdir(path):
+            out[path] = await self._info(path)
+
+        # async for?
+        async for _, dirs, files in self._walk(path, maxdepth, detail=True, **kwargs):
+            if withdirs:
+                files.update(dirs)
+            out.update({info["name"]: info for name, info in files.items()})
+        if not out and (await self._isfile(path)):
+            # walk works on directories, but find should also return [path]
+            # when path happens to be a file
+            out[path] = {}
+        names = sorted(out)
+        if not detail:
+            return names
+        else:
+            return {name: out[name] for name in names}
+
+    async def _expand_path(self, path, recursive=False, maxdepth=None):
+        if maxdepth is not None and maxdepth < 1:
+            raise ValueError("maxdepth must be at least 1")
+
+        if isinstance(path, str):
+            out = await self._expand_path([path], recursive, maxdepth)
+        else:
+            out = set()
+            path = [self._strip_protocol(p) for p in path]
+            for p in path:  # can gather here
+                if has_magic(p):
+                    bit = set(await self._glob(p, maxdepth=maxdepth))
+                    out |= bit
+                    if recursive:
+                        # glob call above expanded one depth so if maxdepth is defined
+                        # then decrement it in expand_path call below. If it is zero
+                        # after decrementing then avoid expand_path call.
+                        if maxdepth is not None and maxdepth <= 1:
+                            continue
+                        out |= set(
+                            await self._expand_path(
+                                list(bit),
+                                recursive=recursive,
+                                maxdepth=maxdepth - 1 if maxdepth is not None else None,
+                            )
+                        )
+                    continue
+                elif recursive:
+                    rec = set(await self._find(p, maxdepth=maxdepth, withdirs=True))
+                    out |= rec
+                if p not in out and (recursive is False or (await self._exists(p))):
+                    # should only check once, for the root
+                    out.add(p)
+        if not out:
+            raise FileNotFoundError(path)
+        return sorted(out)
+
+    async def _mkdir(self, path, create_parents=True, **kwargs):
+        pass  # not necessary to implement, may not have directories
+
+    async def _makedirs(self, path, exist_ok=False):
+        pass  # not necessary to implement, may not have directories
+
+    async def open_async(self, path, mode="rb", **kwargs):
+        if "b" not in mode or kwargs.get("compression"):
+            raise ValueError
+        raise NotImplementedError
+
+
+def mirror_sync_methods(obj):
+    """Populate sync and async methods for obj
+
+    For each method will create a sync version if the name refers to an async method
+    (coroutine) and there is no override in the child class; will create an async
+    method for the corresponding sync method if there is no implementation.
+
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+root@22c512c79d63:/app# sed -n '920,1000p' /app/filesystem_spec/fsspec/asyn.py
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+):
+    import traceback
+
+    tasks = [t for t in asyncio.tasks.all_tasks(loop[0]) if not t.done()]
+    if printout:
+        [task.print_stack() for task in tasks]
+    out = [
+        {
+            "locals": task._coro.cr_frame.f_locals,
+            "file": task._coro.cr_frame.f_code.co_filename,
+            "firstline": task._coro.cr_frame.f_code.co_firstlineno,
+            "linelo": task._coro.cr_frame.f_lineno,
+            "stack": traceback.format_stack(task._coro.cr_frame),
+            "task": task if with_task else None,
+        }
+        for task in tasks
+    ]
+    if cancel:
+        for t in tasks:
+            cbs = t._callbacks
+            t.cancel()
+            asyncio.futures.Future.set_exception(t, exc)
+            asyncio.futures.Future.cancel(t)
+            [cb[0](t) for cb in cbs]  # cancels any dependent concurrent.futures
+            try:
+                t._coro.throw(exc)  # exits coro, unless explicitly handled
+            except exc:
+                pass
+    return out
+
+
+class AbstractAsyncStreamedFile(AbstractBufferedFile):
+    # no read buffering, and always auto-commit
+    # TODO: readahead might still be useful here, but needs async version
+
+    async def read(self, length=-1):
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = -1 if length is None else int(length)
+        if self.mode != "rb":
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app# cd /app
+root@22c512c79d63:/app# sed -n '800,950p' /app/filesystem_spec/fsspec/asyn.py
+                depth = depth - depth_double_stars + maxdepth
+            else:
+                depth = None
+
+        allpaths = await self._find(
+            root, maxdepth=depth, withdirs=True, detail=True, **kwargs
+        )
+
+        pattern = glob_translate(path + ("/" if ends_with_sep else ""))
+        pattern = re.compile(pattern)
+
+        out = {
+            p: info
+            for p, info in sorted(allpaths.items())
+            if pattern.match(
+                (
+                    p + "/"
+                    if append_slash_to_dirname and info["type"] == "directory"
+                    else p
+                )
+            )
+        }
+
+        if detail:
+            return out
+        else:
+            return list(out)
+
+    async def _du(self, path, total=True, maxdepth=None, **kwargs):
+        sizes = {}
+        # async for?
+        for f in await self._find(path, maxdepth=maxdepth, **kwargs):
+            info = await self._info(f)
+            sizes[info["name"]] = info["size"]
+        if total:
+            return sum(sizes.values())
+        else:
+            return sizes
+
+    async def _find(self, path, maxdepth=None, withdirs=False, **kwargs):
+        path = self._strip_protocol(path)
+        out = {}
+        detail = kwargs.pop("detail", False)
+
+        # Add the root directory if withdirs is requested
+        # This is needed for posix glob compliance
+        if withdirs and path != "" and await self._isdir(path):
+            out[path] = await self._info(path)
+
+        # async for?
+        async for _, dirs, files in self._walk(path, maxdepth, detail=True, **kwargs):
+            if withdirs:
+                files.update(dirs)
+            out.update({info["name"]: info for name, info in files.items()})
+        if not out and (await self._isfile(path)):
+            # walk works on directories, but find should also return [path]
+            # when path happens to be a file
+            out[path] = {}
+        names = sorted(out)
+        if not detail:
+            return names
+        else:
+            return {name: out[name] for name in names}
+
+    async def _expand_path(self, path, recursive=False, maxdepth=None):
+        if maxdepth is not None and maxdepth < 1:
+            raise ValueError("maxdepth must be at least 1")
+
+        if isinstance(path, str):
+            out = await self._expand_path([path], recursive, maxdepth)
+        else:
+            out = set()
+            path = [self._strip_protocol(p) for p in path]
+            for p in path:  # can gather here
+                if has_magic(p):
+                    bit = set(await self._glob(p, maxdepth=maxdepth))
+                    out |= bit
+                    if recursive:
+                        # glob call above expanded one depth so if maxdepth is defined
+                        # then decrement it in expand_path call below. If it is zero
+                        # after decrementing then avoid expand_path call.
+                        if maxdepth is not None and maxdepth <= 1:
+                            continue
+                        out |= set(
+                            await self._expand_path(
+                                list(bit),
+                                recursive=recursive,
+                                maxdepth=maxdepth - 1 if maxdepth is not None else None,
+                            )
+                        )
+                    continue
+                elif recursive:
+                    rec = set(await self._find(p, maxdepth=maxdepth, withdirs=True))
+                    out |= rec
+                if p not in out and (recursive is False or (await self._exists(p))):
+                    # should only check once, for the root
+                    out.add(p)
+        if not out:
+            raise FileNotFoundError(path)
+        return sorted(out)
+
+    async def _mkdir(self, path, create_parents=True, **kwargs):
+        pass  # not necessary to implement, may not have directories
+
+    async def _makedirs(self, path, exist_ok=False):
+        pass  # not necessary to implement, may not have directories
+
+    async def open_async(self, path, mode="rb", **kwargs):
+        if "b" not in mode or kwargs.get("compression"):
+            raise ValueError
+        raise NotImplementedError
+
+
+def mirror_sync_methods(obj):
+    """Populate sync and async methods for obj
+
+    For each method will create a sync version if the name refers to an async method
+    (coroutine) and there is no override in the child class; will create an async
+    method for the corresponding sync method if there is no implementation.
+
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+root@22c512c79d63:/app# sed -n '920,1000p' /app/filesystem_spec/fsspec/asyn.py
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+):
+    import traceback
+
+    tasks = [t for t in asyncio.tasks.all_tasks(loop[0]) if not t.done()]
+    if printout:
+        [task.print_stack() for task in tasks]
+    out = [
+        {
+            "locals": task._coro.cr_frame.f_locals,
+            "file": task._coro.cr_frame.f_code.co_filename,
+            "firstline": task._coro.cr_frame.f_code.co_firstlineno,
+            "linelo": task._coro.cr_frame.f_lineno,
+            "stack": traceback.format_stack(task._coro.cr_frame),
+            "task": task if with_task else None,
+        }
+        for task in tasks
+    ]
+    if cancel:
+        for t in tasks:
+            cbs = t._callbacks
+            t.cancel()
+            asyncio.futures.Future.set_exception(t, exc)
+            asyncio.futures.Future.cancel(t)
+            [cb[0](t) for cb in cbs]  # cancels any dependent concurrent.futures
+            try:
+                t._coro.throw(exc)  # exits coro, unless explicitly handled
+            except exc:
+                pass
+    return out
+
+
+class AbstractAsyncStreamedFile(AbstractBufferedFile):
+    # no read buffering, and always auto-commit
+    # TODO: readahead might still be useful here, but needs async version
+
+    async def read(self, length=-1):
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = -1 if length is None else int(length)
+        if self.mode != "rb":
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app# cd /app
+root@22c512c79d63:/app# sed -n '800,950p' /app/filesystem_spec/fsspec/asyn.py
+                depth = depth - depth_double_stars + maxdepth
+            else:
+                depth = None
+
+        allpaths = await self._find(
+            root, maxdepth=depth, withdirs=True, detail=True, **kwargs
+        )
+
+        pattern = glob_translate(path + ("/" if ends_with_sep else ""))
+        pattern = re.compile(pattern)
+
+        out = {
+            p: info
+            for p, info in sorted(allpaths.items())
+            if pattern.match(
+                (
+                    p + "/"
+                    if append_slash_to_dirname and info["type"] == "directory"
+                    else p
+                )
+            )
+        }
+
+        if detail:
+            return out
+        else:
+            return list(out)
+
+    async def _du(self, path, total=True, maxdepth=None, **kwargs):
+        sizes = {}
+        # async for?
+        for f in await self._find(path, maxdepth=maxdepth, **kwargs):
+            info = await self._info(f)
+            sizes[info["name"]] = info["size"]
+        if total:
+            return sum(sizes.values())
+        else:
+            return sizes
+
+    async def _find(self, path, maxdepth=None, withdirs=False, **kwargs):
+        path = self._strip_protocol(path)
+        out = {}
+        detail = kwargs.pop("detail", False)
+
+        # Add the root directory if withdirs is requested
+        # This is needed for posix glob compliance
+        if withdirs and path != "" and await self._isdir(path):
+            out[path] = await self._info(path)
+
+        # async for?
+        async for _, dirs, files in self._walk(path, maxdepth, detail=True, **kwargs):
+            if withdirs:
+                files.update(dirs)
+            out.update({info["name"]: info for name, info in files.items()})
+        if not out and (await self._isfile(path)):
+            # walk works on directories, but find should also return [path]
+            # when path happens to be a file
+            out[path] = {}
+        names = sorted(out)
+        if not detail:
+            return names
+        else:
+            return {name: out[name] for name in names}
+
+    async def _expand_path(self, path, recursive=False, maxdepth=None):
+        if maxdepth is not None and maxdepth < 1:
+            raise ValueError("maxdepth must be at least 1")
+
+        if isinstance(path, str):
+            out = await self._expand_path([path], recursive, maxdepth)
+        else:
+            out = set()
+            path = [self._strip_protocol(p) for p in path]
+            for p in path:  # can gather here
+                if has_magic(p):
+                    bit = set(await self._glob(p, maxdepth=maxdepth))
+                    out |= bit
+                    if recursive:
+                        # glob call above expanded one depth so if maxdepth is defined
+                        # then decrement it in expand_path call below. If it is zero
+                        # after decrementing then avoid expand_path call.
+                        if maxdepth is not None and maxdepth <= 1:
+                            continue
+                        out |= set(
+                            await self._expand_path(
+                                list(bit),
+                                recursive=recursive,
+                                maxdepth=maxdepth - 1 if maxdepth is not None else None,
+                            )
+                        )
+                    continue
+                elif recursive:
+                    rec = set(await self._find(p, maxdepth=maxdepth, withdirs=True))
+                    out |= rec
+                if p not in out and (recursive is False or (await self._exists(p))):
+                    # should only check once, for the root
+                    out.add(p)
+        if not out:
+            raise FileNotFoundError(path)
+        return sorted(out)
+
+    async def _mkdir(self, path, create_parents=True, **kwargs):
+        pass  # not necessary to implement, may not have directories
+
+    async def _makedirs(self, path, exist_ok=False):
+        pass  # not necessary to implement, may not have directories
+
+    async def open_async(self, path, mode="rb", **kwargs):
+        if "b" not in mode or kwargs.get("compression"):
+            raise ValueError
+        raise NotImplementedError
+
+
+def mirror_sync_methods(obj):
+    """Populate sync and async methods for obj
+
+    For each method will create a sync version if the name refers to an async method
+    (coroutine) and there is no override in the child class; will create an async
+    method for the corresponding sync method if there is no implementation.
+
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+root@22c512c79d63:/app# sed -n '920,1000p' /app/filesystem_spec/fsspec/asyn.py
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+):
+    import traceback
+
+    tasks = [t for t in asyncio.tasks.all_tasks(loop[0]) if not t.done()]
+    if printout:
+        [task.print_stack() for task in tasks]
+    out = [
+        {
+            "locals": task._coro.cr_frame.f_locals,
+            "file": task._coro.cr_frame.f_code.co_filename,
+            "firstline": task._coro.cr_frame.f_code.co_firstlineno,
+            "linelo": task._coro.cr_frame.f_lineno,
+            "stack": traceback.format_stack(task._coro.cr_frame),
+            "task": task if with_task else None,
+        }
+        for task in tasks
+    ]
+    if cancel:
+        for t in tasks:
+            cbs = t._callbacks
+            t.cancel()
+            asyncio.futures.Future.set_exception(t, exc)
+            asyncio.futures.Future.cancel(t)
+            [cb[0](t) for cb in cbs]  # cancels any dependent concurrent.futures
+            try:
+                t._coro.throw(exc)  # exits coro, unless explicitly handled
+            except exc:
+                pass
+    return out
+
+
+class AbstractAsyncStreamedFile(AbstractBufferedFile):
+    # no read buffering, and always auto-commit
+    # TODO: readahead might still be useful here, but needs async version
+
+    async def read(self, length=-1):
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = -1 if length is None else int(length)
+        if self.mode != "rb":
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app# cd /app
+root@22c512c79d63:/app# sed -n '800,950p' /app/filesystem_spec/fsspec/asyn.py
+                depth = depth - depth_double_stars + maxdepth
+            else:
+                depth = None
+
+        allpaths = await self._find(
+            root, maxdepth=depth, withdirs=True, detail=True, **kwargs
+        )
+
+        pattern = glob_translate(path + ("/" if ends_with_sep else ""))
+        pattern = re.compile(pattern)
+
+        out = {
+            p: info
+            for p, info in sorted(allpaths.items())
+            if pattern.match(
+                (
+                    p + "/"
+                    if append_slash_to_dirname and info["type"] == "directory"
+                    else p
+                )
+            )
+        }
+
+        if detail:
+            return out
+        else:
+            return list(out)
+
+    async def _du(self, path, total=True, maxdepth=None, **kwargs):
+        sizes = {}
+        # async for?
+        for f in await self._find(path, maxdepth=maxdepth, **kwargs):
+            info = await self._info(f)
+            sizes[info["name"]] = info["size"]
+        if total:
+            return sum(sizes.values())
+        else:
+            return sizes
+
+    async def _find(self, path, maxdepth=None, withdirs=False, **kwargs):
+        path = self._strip_protocol(path)
+        out = {}
+        detail = kwargs.pop("detail", False)
+
+        # Add the root directory if withdirs is requested
+        # This is needed for posix glob compliance
+        if withdirs and path != "" and await self._isdir(path):
+            out[path] = await self._info(path)
+
+        # async for?
+        async for _, dirs, files in self._walk(path, maxdepth, detail=True, **kwargs):
+            if withdirs:
+                files.update(dirs)
+            out.update({info["name"]: info for name, info in files.items()})
+        if not out and (await self._isfile(path)):
+            # walk works on directories, but find should also return [path]
+            # when path happens to be a file
+            out[path] = {}
+        names = sorted(out)
+        if not detail:
+            return names
+        else:
+            return {name: out[name] for name in names}
+
+    async def _expand_path(self, path, recursive=False, maxdepth=None):
+        if maxdepth is not None and maxdepth < 1:
+            raise ValueError("maxdepth must be at least 1")
+
+        if isinstance(path, str):
+            out = await self._expand_path([path], recursive, maxdepth)
+        else:
+            out = set()
+            path = [self._strip_protocol(p) for p in path]
+            for p in path:  # can gather here
+                if has_magic(p):
+                    bit = set(await self._glob(p, maxdepth=maxdepth))
+                    out |= bit
+                    if recursive:
+                        # glob call above expanded one depth so if maxdepth is defined
+                        # then decrement it in expand_path call below. If it is zero
+                        # after decrementing then avoid expand_path call.
+                        if maxdepth is not None and maxdepth <= 1:
+                            continue
+                        out |= set(
+                            await self._expand_path(
+                                list(bit),
+                                recursive=recursive,
+                                maxdepth=maxdepth - 1 if maxdepth is not None else None,
+                            )
+                        )
+                    continue
+                elif recursive:
+                    rec = set(await self._find(p, maxdepth=maxdepth, withdirs=True))
+                    out |= rec
+                if p not in out and (recursive is False or (await self._exists(p))):
+                    # should only check once, for the root
+                    out.add(p)
+        if not out:
+            raise FileNotFoundError(path)
+        return sorted(out)
+
+    async def _mkdir(self, path, create_parents=True, **kwargs):
+        pass  # not necessary to implement, may not have directories
+
+    async def _makedirs(self, path, exist_ok=False):
+        pass  # not necessary to implement, may not have directories
+
+    async def open_async(self, path, mode="rb", **kwargs):
+        if "b" not in mode or kwargs.get("compression"):
+            raise ValueError
+        raise NotImplementedError
+
+
+def mirror_sync_methods(obj):
+    """Populate sync and async methods for obj
+
+    For each method will create a sync version if the name refers to an async method
+    (coroutine) and there is no override in the child class; will create an async
+    method for the corresponding sync method if there is no implementation.
+
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+root@22c512c79d63:/app# sed -n '920,1000p' /app/filesystem_spec/fsspec/asyn.py
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+):
+    import traceback
+
+    tasks = [t for t in asyncio.tasks.all_tasks(loop[0]) if not t.done()]
+    if printout:
+        [task.print_stack() for task in tasks]
+    out = [
+        {
+            "locals": task._coro.cr_frame.f_locals,
+            "file": task._coro.cr_frame.f_code.co_filename,
+            "firstline": task._coro.cr_frame.f_code.co_firstlineno,
+            "linelo": task._coro.cr_frame.f_lineno,
+            "stack": traceback.format_stack(task._coro.cr_frame),
+            "task": task if with_task else None,
+        }
+        for task in tasks
+    ]
+    if cancel:
+        for t in tasks:
+            cbs = t._callbacks
+            t.cancel()
+            asyncio.futures.Future.set_exception(t, exc)
+            asyncio.futures.Future.cancel(t)
+            [cb[0](t) for cb in cbs]  # cancels any dependent concurrent.futures
+            try:
+                t._coro.throw(exc)  # exits coro, unless explicitly handled
+            except exc:
+                pass
+    return out
+
+
+class AbstractAsyncStreamedFile(AbstractBufferedFile):
+    # no read buffering, and always auto-commit
+    # TODO: readahead might still be useful here, but needs async version
+
+    async def read(self, length=-1):
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = -1 if length is None else int(length)
+        if self.mode != "rb":
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app# cd /app
+root@22c512c79d63:/app# sed -n '800,950p' /app/filesystem_spec/fsspec/asyn.py
+                depth = depth - depth_double_stars + maxdepth
+            else:
+                depth = None
+
+        allpaths = await self._find(
+            root, maxdepth=depth, withdirs=True, detail=True, **kwargs
+        )
+
+        pattern = glob_translate(path + ("/" if ends_with_sep else ""))
+        pattern = re.compile(pattern)
+
+        out = {
+            p: info
+            for p, info in sorted(allpaths.items())
+            if pattern.match(
+                (
+                    p + "/"
+                    if append_slash_to_dirname and info["type"] == "directory"
+                    else p
+                )
+            )
+        }
+
+        if detail:
+            return out
+        else:
+            return list(out)
+
+    async def _du(self, path, total=True, maxdepth=None, **kwargs):
+        sizes = {}
+        # async for?
+        for f in await self._find(path, maxdepth=maxdepth, **kwargs):
+            info = await self._info(f)
+            sizes[info["name"]] = info["size"]
+        if total:
+            return sum(sizes.values())
+        else:
+            return sizes
+
+    async def _find(self, path, maxdepth=None, withdirs=False, **kwargs):
+        path = self._strip_protocol(path)
+        out = {}
+        detail = kwargs.pop("detail", False)
+
+        # Add the root directory if withdirs is requested
+        # This is needed for posix glob compliance
+        if withdirs and path != "" and await self._isdir(path):
+            out[path] = await self._info(path)
+
+        # async for?
+        async for _, dirs, files in self._walk(path, maxdepth, detail=True, **kwargs):
+            if withdirs:
+                files.update(dirs)
+            out.update({info["name"]: info for name, info in files.items()})
+        if not out and (await self._isfile(path)):
+            # walk works on directories, but find should also return [path]
+            # when path happens to be a file
+            out[path] = {}
+        names = sorted(out)
+        if not detail:
+            return names
+        else:
+            return {name: out[name] for name in names}
+
+    async def _expand_path(self, path, recursive=False, maxdepth=None):
+        if maxdepth is not None and maxdepth < 1:
+            raise ValueError("maxdepth must be at least 1")
+
+        if isinstance(path, str):
+            out = await self._expand_path([path], recursive, maxdepth)
+        else:
+            out = set()
+            path = [self._strip_protocol(p) for p in path]
+            for p in path:  # can gather here
+                if has_magic(p):
+                    bit = set(await self._glob(p, maxdepth=maxdepth))
+                    out |= bit
+                    if recursive:
+                        # glob call above expanded one depth so if maxdepth is defined
+                        # then decrement it in expand_path call below. If it is zero
+                        # after decrementing then avoid expand_path call.
+                        if maxdepth is not None and maxdepth <= 1:
+                            continue
+                        out |= set(
+                            await self._expand_path(
+                                list(bit),
+                                recursive=recursive,
+                                maxdepth=maxdepth - 1 if maxdepth is not None else None,
+                            )
+                        )
+                    continue
+                elif recursive:
+                    rec = set(await self._find(p, maxdepth=maxdepth, withdirs=True))
+                    out |= rec
+                if p not in out and (recursive is False or (await self._exists(p))):
+                    # should only check once, for the root
+                    out.add(p)
+        if not out:
+            raise FileNotFoundError(path)
+        return sorted(out)
+
+    async def _mkdir(self, path, create_parents=True, **kwargs):
+        pass  # not necessary to implement, may not have directories
+
+    async def _makedirs(self, path, exist_ok=False):
+        pass  # not necessary to implement, may not have directories
+
+    async def open_async(self, path, mode="rb", **kwargs):
+        if "b" not in mode or kwargs.get("compression"):
+            raise ValueError
+        raise NotImplementedError
+
+
+def mirror_sync_methods(obj):
+    """Populate sync and async methods for obj
+
+    For each method will create a sync version if the name refers to an async method
+    (coroutine) and there is no override in the child class; will create an async
+    method for the corresponding sync method if there is no implementation.
+
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+root@22c512c79d63:/app# sed -n '920,1000p' /app/filesystem_spec/fsspec/asyn.py
+    Uses the methods specified in
+    - async_methods: the set that an implementation is expected to provide
+    - default_async_methods: that can be derived from their sync version in
+      AbstractFileSystem
+    - AsyncFileSystem: async-specific default coroutines
+    """
+    from fsspec import AbstractFileSystem
+
+    for method in async_methods + dir(AsyncFileSystem):
+        if not method.startswith("_"):
+            continue
+        smethod = method[1:]
+        if private.match(method):
+            isco = inspect.iscoroutinefunction(getattr(obj, method, None))
+            unsync = getattr(getattr(obj, smethod, False), "__func__", None)
+            is_default = unsync is getattr(AbstractFileSystem, smethod, "")
+            if isco and is_default:
+                mth = sync_wrapper(getattr(obj, method), obj=obj)
+                setattr(obj, smethod, mth)
+                if not mth.__doc__:
+                    mth.__doc__ = getattr(
+                        getattr(AbstractFileSystem, smethod, None), "__doc__", ""
+                    )
+
+
+class FSSpecCoroutineCancel(Exception):
+    pass
+
+
+def _dump_running_tasks(
+    printout=True, cancel=True, exc=FSSpecCoroutineCancel, with_task=False
+):
+    import traceback
+
+    tasks = [t for t in asyncio.tasks.all_tasks(loop[0]) if not t.done()]
+    if printout:
+        [task.print_stack() for task in tasks]
+    out = [
+        {
+            "locals": task._coro.cr_frame.f_locals,
+            "file": task._coro.cr_frame.f_code.co_filename,
+            "firstline": task._coro.cr_frame.f_code.co_firstlineno,
+            "linelo": task._coro.cr_frame.f_lineno,
+            "stack": traceback.format_stack(task._coro.cr_frame),
+            "task": task if with_task else None,
+        }
+        for task in tasks
+    ]
+    if cancel:
+        for t in tasks:
+            cbs = t._callbacks
+            t.cancel()
+            asyncio.futures.Future.set_exception(t, exc)
+            asyncio.futures.Future.cancel(t)
+            [cb[0](t) for cb in cbs]  # cancels any dependent concurrent.futures
+            try:
+                t._coro.throw(exc)  # exits coro, unless explicitly handled
+            except exc:
+                pass
+    return out
+
+
+class AbstractAsyncStreamedFile(AbstractBufferedFile):
+    # no read buffering, and always auto-commit
+    # TODO: readahead might still be useful here, but needs async version
+
+    async def read(self, length=-1):
+        """
+        Return data from cache, or fetch pieces as necessary
+
+        Parameters
+        ----------
+        length: int (-1)
+            Number of bytes to read; if <0, all remaining bytes.
+        """
+        length = -1 if length is None else int(length)
+        if self.mode != "rb":
+            raise ValueError("File not in read mode")
+        if length < 0:
+            length = self.size - self.loc
+        if self.closed:
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py
+907:    async def open_async(self, path, mode="rb", **kwargs):
+root@22c512c79d63:/app# grep -n "def open" /app/filesystem_spec/fsspec/asyn.py | wc -l
+1
+root@22c512c79d63:/app#

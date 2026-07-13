@@ -1,0 +1,109 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@cc18da589bea:/app# cat > /app/fit_final4.py << 'EOF'
+> import numpy as np
+> from scipy import optimize
+> import json
+>
+> # Parse the data
+> x = []
+> y = []
+> with open('/app/graphene.dat', 'r') as f:
+>     for line in f:
+>         line = line.strip()
+>         if not line:
+>             continue
+>         parts = line.split()
+>         for part in parts:
+>             subparts = part.split(',')
+>             if len(subparts) == 2:
+>                 x.append(float(subparts[0]))
+>                 y.append(float(subparts[1]))
+>
+> # Split into two datasets (first column, second column)
+> dataset1 = [(x[i], y[i]) for i in range(0, len(x), 2)]
+> dataset2 = [(x[i], y[i]) for i in range(1, len(x), 2)]
+>
+> print('Dataset1 count:', len(dataset1))
+> print('Dataset2 count:', len(dataset2))
+>
+> # Extract x and y for each dataset
+> def extract(dataset):
+>     xs = [p[0] for p in dataset]
+>     ys = [p[1] for p in dataset]
+>     return np.array(xs), np.array(ys)
+>
+> d1_x, d1_y = extract(dataset1)
+> d2_x, d2_y = extract(dataset2)
+>
+> # Now we need to fit the peaks. We'll assume the G peak is in dataset2 and the 2D peak is in dataset1.
+> # But note: the 2D peak at 2700 is also in dataset2. Let's check the distribution of values around 1580 and 2700.
+> # We'll write a function to fit a peak in a given dataset.
+> def fit_peak_in_dataset(x, y, guess):
+>     # guess is a list of [x0, gamma, amp, offset]
+>     def f(params, x):
+>         x0, gamma, amp, offset = params
+>         return offset + (amp / (2 * gamma)) * (1 / (1 + ((x - x0) / gamma) ** 2))
+>     result = optimize.minimize(lambda p: ((f(p, x) - y) ** 2).sum(), guess)
+>     return result.x
+>
+> # For dataset2, fit the G peak (around 1580)
+> g_peak_guess = [1580, 10, 1, 0]
+> g_params = fit_peak_in_dataset(d2_x, d2_y, g_peak_guess)
+> print('G parameters:', g_params)
+> # For dataset1, fit the 2D peak (around 2700)
+> d_peak_guess = [2700, 10, 1, 0]
+> d_params = fit_peak_in_dataset(d1_x, d1_y, d_peak_guess)
+> print('D parameters:', d_params)
+>
+> # Extract parameters
+> g_x0, g_gamma, g_amp, g_offset = g_params
+> d_x0, d_gamma, d_amp, d_offset = d_params
+>
+> # Create dictionary
+> results = {
+>     'G': {
+>         'x0': g_x0,
+>         'gamma': g_gamma,
+>         'amplitude': g_amp,
+>         'offset': g_offset
+>     },
+>     '2D': {
+>         'x0': d_x0,
+>         'gamma': d_gamma,
+>         'amplitude': d_amp,
+>         'offset': d_offset
+>     }
+> }
+>
+> # Write to file
+> with open('/app/results.json', 'w') as f:
+>     json.dump(results, f, indent=2)
+>
+> print('Results written to /app/results.json')
+> print(json.dumps(results, indent=2))
+> EOF
+root@cc18da589bea:/app# python3 /app/fit_final4.py
+Dataset1 count: 3565
+Dataset2 count: 3565
+G parameters: [1.58000000e+03 1.00000000e+01 1.00000000e+00 5.05040354e+05]
+D parameters: [ 1.33927021e+05 -2.66789385e+03  1.85166851e+07  4.95850581e+05]
+Results written to /app/results.json
+{
+  "G": {
+    "x0": 1580.0,
+    "gamma": 10.0,
+    "amplitude": 1.0,
+    "offset": 505040.35386889917
+  },
+  "2D": {
+    "x0": 133927.02148329758,
+    "gamma": -2667.8938536003907,
+    "amplitude": 18516685.08847,
+    "offset": 495850.5812795942
+  }
+}
+root@cc18da589bea:/app#

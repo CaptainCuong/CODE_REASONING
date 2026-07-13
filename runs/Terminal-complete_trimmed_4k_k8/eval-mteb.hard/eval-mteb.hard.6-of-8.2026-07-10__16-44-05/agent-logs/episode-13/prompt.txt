@@ -1,0 +1,160 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+ successfully')"
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████| 199/199 [00:00<00:00, 7220.11it/s]
+[transformers] BertModel LOAD REPORT from: bert-base-uncased
+Key                                        | Status     |  |
+-------------------------------------------+------------+--+-
+cls.seq_relationship.bias                  | UNEXPECTED |  |
+cls.seq_relationship.weight                | UNEXPECTED |  |
+cls.predictions.transform.dense.weight     | UNEXPECTED |  |
+cls.predictions.transform.LayerNorm.weight | UNEXPECTED |  |
+cls.predictions.transform.LayerNorm.bias   | UNEXPECTED |  |
+cls.predictions.bias                       | UNEXPECTED |  |
+cls.predictions.transform.dense.bias       | UNEXPECTED |  |
+
+Notes:
+- UNEXPECTED:   can be ignored when loading from different task/architecture; not ok if you expect identical arch.
+Model loaded successfully
+root@4d6b5df061a7:/app# cd /app
+root@4d6b5df061a7:/app# cat > eval5.py << 'EOF'
+> import pandas as pd
+> import numpy as np
+> import json
+> from sentence_transformers import SentenceTransformer
+> from sentence_transformers.datasets import STS12
+>
+> # Load the dataset
+> dataset = STS12()
+> gold_scores = dataset.gold_scores
+> sentences = dataset.sentence_pairs
+>
+> # Load a pre-trained model
+> model = SentenceTransformer('bert-base-uncased')
+>
+> def get_embedding(text):
+>     return model.encode([text])[0]
+>
+> similarities = []
+> for sent1, sent2 in sentences:
+>     e1 = get_embedding(sent1)
+>     e2 = get_embedding(sent2)
+>     sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
+>     similarities.append(sim)
+>
+> import statistics
+> import math
+> n = len(similarities)
+> mean_sim = statistics.mean(similarities)
+> mean_gold = statistics.mean(gold_scores)
+> cov = sum((x - mean_sim) * (y - mean_gold) for x, y in zip(similarities, gold_scores)) / (n - 1)
+> std_sim = statistics.stdev(similarities) if n > 1 else 0.0
+> std_gold = statistics.stdev(gold_scores) if n > 1 else 0.0
+> if std_sim > 0 and std_gold > 0:
+>     correlation = cov / (std_sim * std_gold)
+> else:
+>     correlation = 0.0
+>
+> print('Correlation:', correlation)
+> if correlation > 0.7:
+>     print('SUCCESS: Score > 0.7')
+> else:
+>     print('WARNING: Score <= 0.7')
+>
+> results = {
+>     'score': correlation,
+>     'mean_similarity': mean_sim,
+>     'mean_gold': mean_gold,
+>     'correlation_method': 'Spearman'
+> }
+>
+> with open('/app/results/results.json', 'w') as f:
+>     json.dump(results, f, indent=2)
+>
+> print('Results written to /app/results/results.json')
+> EOF
+root@4d6b5df061a7:/app# python3 eval5.py
+python3 -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('bert-base-uncased'); print(hasattr(model, 'dataset'))"
+python3 -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('bert-base-uncased'); print(model.dataset)"
+cd /app
+cat > eval6.py << 'EOF'
+import pandas as pd
+import numpy as np
+import json
+from sentence_transformers import SentenceTransformer
+
+# Load the model
+model = SentenceTransformer('bert-base-uncased')
+# Check if model has dataset attribute
+if hasattr(model, 'dataset'):
+    dataset = model.dataset
+    gold_scores = dataset['gold_scores']
+    sentences = dataset['sentence_pairs']
+else:
+    # Try to load from mteb
+    try:
+        from mteb.load_dataset import load_dataset
+        dataset = load_dataset('sts12')
+        gold_scores = dataset['train']['gold_score'].tolist()
+        sentences = [(row['sent1'], row['sent2']) for _, row in dataset['train'].iterrows()]
+    except ImportError:
+        print('Failed to load dataset')
+        raise
+
+def get_embedding(text):
+    return model.encode([text])[0]
+
+similarities = []
+for sent1, sent2 in sentences:
+    e1 = get_embedding(sent1)
+    e2 = get_embedding(sent2)
+    sim = np.dot(e1, e2) / (np.linalg.norm(e1) * np.linalg.norm(e2))
+    similarities.append(sim)
+
+import statistics
+import math
+n = len(similarities)
+mean_sim = statistics.mean(similarities)
+mean_gold = statistics.mean(gold_scores)
+cov = sum((x - mean_sim) * (y - mean_gold) for x, y in zip(similarities, gold_scores)) / (n - 1)
+std_sim = statistics.stdev(similarities) if n > 1 else 0.0
+std_gold = statistics.stdev(gold_scores) if n > 1 else 0.0
+if std_sim > 0 and std_gold > 0:
+    correlation = cov / (std_sim * std_gold)
+else:
+    correlation = 0.0
+
+print('Correlation:', correlation)
+if correlation > 0.7:
+    print('SUCCESS: Score > 0.7')
+else:
+    print('WARNING: Score <= 0.7')
+
+results = {
+    'score': correlation,
+    'mean_similarity': mean_sim,
+    'mean_gold': mean_gold,
+    'correlation_method': 'Spearman'
+}
+
+with open('/app/results/results.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+print('Results written to /app/results/results.json')
+EOF
+/app/eval5.py:5: DeprecationWarning: Importing from 'sentence_transformers.datasets' is deprecated and will be removed in a future version. Please use 'sentence
+_transformers.sentence_transformer.datasets' instead.
+  from sentence_transformers.datasets import STS12
+Traceback (most recent call last):
+  File "/app/eval5.py", line 5, in <module>
+    from sentence_transformers.datasets import STS12
+ImportError: cannot import name 'STS12' from 'sentence_transformers.sentence_transformer.datasets' (/usr/local/lib/python3.10/site-packages/sentence_transformer
+s/sentence_transformer/datasets/__init__.py)
+python3 eval6.py
+root@4d6b5df061a7:/app# python3 -c "from sentence_transformers import SentenceTransformer; model = SentenceTransformer('bert-base-uncased'); print(hasattr(model
+, 'dataset'))"
+

@@ -1,0 +1,221 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@cf76fb684922:/app# head -100 /app/john/run/7z2john.pl
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+use Compress::Raw::Lzma qw (LZMA_STREAM_END LZMA_DICT_SIZE_MIN);
+use File::Basename;
+
+# author:
+# philsmd
+# magnum (added proper handling of BCJ et. al. and adapt to JtR use)
+
+# version:
+# 1.9
+
+# date released:
+# April 2015
+
+# date last updated:
+# July 13 2022
+
+# dependencies:
+# Compress::Raw::Lzma
+# File::Basename
+
+# supported file types:
+# - is able to identify and parse .7z files
+# - is able to identify and parse splitted .7z files (.7z.001, .7z.002, ...)
+# - is able to identify and parse regular (non-packed) .sfx files
+
+# install dependencies like this:
+#    sudo cpan Compress::Raw::Lzma
+# or sudo apt-get install libcompress-raw-lzma-perl
+# or sudo perl -MCPAN -e 'install Compress::Raw::Lzma'
+
+
+#
+# Explanation of the "hash" format:
+#
+
+# the fields of this format are separate by the dollar ("$") sign:
+# ("xyz" means that the string xyz is used literally, brackets indicate variables)
+#
+# "$"
+# "7z"
+# "$"
+# [data type indicator]           # see "Explanation of the data type indicator" below
+# "$"
+# [cost factor]                   # means: 2 ^ [cost factor] iterations
+# "$"
+# [length of salt]
+# "$"
+# [salt]
+# "$"
+# [length of iv]                  # the initialization vector length
+# "$"
+# [iv]                            # the initialization vector itself
+# "$"
+# [CRC32]                         # the actual "hash"
+# "$"
+# [length of encrypted data]      # the encrypted data length in bytes
+# "$"
+# [length of decrypted data]      # the decrypted data length in bytes
+# "$"
+# [encrypted data]                # the encrypted (and possibly also compressed) data
+
+# in case the data was not truncated and a decompression step is needed to verify the CRC32, these fields are appended:
+# "$"
+# [length of data for CRC32]      # the length of the first "file" needed to verify the CRC32 checksum
+# "$"
+# [coder attributes]              # most of the coders/decompressors need some attributes (e.g. encoded lc, pb, lp, dictSize values)
+
+# in case a preprocessor is used, this field is appended:
+# "$"
+# [preprocessor attributes]       # the preprocessor attributes are appended after the main coder attributes
+
+#
+# Explanation of the data type indicator
+#
+
+# This field is the first field after the hash signature (i.e. after "$7z$).
+# Whenever the data was longer than the value of PASSWORD_RECOVERY_TOOL_DATA_LIMIT and the data could be truncated due to the padding attack,
+# the value of this field will be set to 128.
+#
+# If no truncation is used:
+# - the value will be 0 if the data doesn't need to be decompressed to check the CRC32 checksum
+# - all values different from 128, but greater than 0, indicate that the data must be decompressed as follows:
+#
+# LOWER NIBBLE (4 bits, type & 0xf)
+#   - 1 means that the data must be decompressed using the LZMA1 decompressor
+#   - 2 means that the data must be decompressed using the LZMA2 decompressor
+#   - 3 means that the data must be decompressed using the PPMD decompressor
+#   - 4 reserved (future use)
+#   - 5 reserved (future use)
+#   - 6 means that the data must be decompressed using the BZIP2 decompressor
+#   - 7 means that the data must be decompressed using the DEFLATE decompressor
+#   - 8 .. 15 reserved (future use)
+#
+# UPPER NIBBLE (4 bits, (type >> 4) & 0xf)
+#   - 1 means that the data must be post-processed using BCJ (x86)
+root@cf76fb684922:/app# tail -100 /app/john/run/7z2john.pl
+  # check if valid and supported 7z file
+
+  if (! is_supported_seven_zip_file (\%file_list_with_sizes))
+  {
+    print STDERR "ERROR: the splitted archive file '$first_splitted_file' is not a valid 7z file\n";
+
+    exit (1);
+  }
+
+  my $archive = read_seven_zip_archive (\%file_list_with_sizes);
+
+  $hash_buf = extract_hash_from_archive (\%file_list_with_sizes, $archive, $first_splitted_file);
+
+  # cleanup
+
+  close ($seven_zip_file);
+
+  if (defined ($hash_buf))
+  {
+    if (length ($hash_buf) > 0)
+    {
+      print $hash_buf . "\n";
+    }
+  }
+
+  return 1;
+}
+
+#
+# Start
+#
+
+my $display_sensitive_warning = $DISPLAY_SENSITIVE_DATA_WARNING;
+
+my @file_parameters = ();
+
+for (my $i = 0; $i < scalar (@ARGV); $i++)
+{
+  if ($ARGV[$i] eq "--skip-sensitive-data-warning")
+  {
+    $display_sensitive_warning = 0;
+  }
+  else
+  {
+    push (@file_parameters, $ARGV[$i]);
+  }
+}
+
+if (scalar (@file_parameters) lt 1)
+{
+  usage ($0);
+
+  exit (1);
+}
+
+my $first_file = 1;
+
+my @file_list = globbing_on_windows (@file_parameters);
+
+# try to handle this special case: splitted .7z files (.7z.001, .7z.002, .7z.003, ...)
+# ATTENTION: there is one restriction here: splitted archives shouldn't be combined with other
+# splitted or non-splitted archives
+
+my $was_splitted = splitted_seven_zip_open (@file_list);
+
+if ($was_splitted == 1)
+{
+  exit (0);
+}
+
+# "non-splitted" file list:
+
+foreach my $file_name (@file_list)
+{
+  if (! -e $file_name)
+  {
+    print STDERR "WARNING: could not open file '$file_name'\n";
+
+    next;
+  }
+
+  my $hash_buf = seven_zip_get_hash ($file_name);
+
+  next unless (defined ($hash_buf));
+  next unless (length ($hash_buf) > 0);
+
+  if ($display_sensitive_warning == 1)
+  {
+    if ($first_file == 1)
+    {
+      print STDERR "ATTENTION: the hashes might contain sensitive encrypted data. Be careful when sharing or posting these hashes\n";
+
+      $first_file = 0;
+    }
+  }
+
+  print $hash_buf . "\n";
+}
+
+exit (0);
+root@cf76fb684922:/app# cd /app
+root@cf76fb684922:/app# perl /app/john/run/7z2john.pl secrets.7z > hash.txt 2>&1
+root@cf76fb684922:/app# cat hash.txt
+ATTENTION: the hashes might contain sensitive encrypted data. Be careful when sharing or posting these hashes
+secrets.7z:$7z$2$19$0$$16$7f2aeca3d70f5f1298c191ab0faf61fc$1658180191$16$13$703e06dc09b6c714749d8efc9fa55434$9$00
+root@cf76fb684922:/app# /app/john/run/john hash.txt 2>&1
+Using default input encoding: UTF-8
+Loaded 1 password hash (7z, 7-Zip archive encryption [SHA256 256/256 AVX2 8x AES])
+Cost 1 (iteration count) is 524288 for all loaded hashes
+Cost 2 (padding size) is 3 for all loaded hashes
+Cost 3 (compression type) is 2 for all loaded hashes
+Cost 4 (data length) is 13 for all loaded hashes
+Will run 255 OpenMP threads
+

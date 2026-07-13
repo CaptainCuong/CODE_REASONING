@@ -1,0 +1,47 @@
+<think>
+We need to create the two shell scripts. The previous attempt to create intrusion_detector.sh might have failed due to the JSON parsing error in the previous response, but the terminal output shows that the file does not exist. Let's create both scripts now.
+
+First, create intrusion_detector.sh. We'll write it step by step.
+
+We need to parse the rules, process logs, and generate the required JSON files.
+
+Let's create the script using a heredoc, but we must ensure the JSON is valid.
+
+We'll also need to create response.sh.
+
+Let's start by creating intrusion_detector.sh. We'll do it in multiple steps to avoid errors. We'll use a temporary file and then move it.
+
+But we can directly write the script using cat with a quoted delimiter to avoid shell expansion issues.
+
+We'll use the following approach:
+
+1. Write the script to a file.
+2. Make it executable.
+3. Run it and check for errors.
+
+Let's proceed.
+</think>
+
+{
+  "analysis": "The directory listing shows only logs, reports, and rules directories. No scripts yet. Need to create both shell scripts. We'll create them now. First, create intrusion_detector.sh. We'll write it with proper handling of the detection rules and logs. Then create response.sh. After that, test them.",
+  "plan": "1. Create intrusion_detector.sh using cat with a heredoc. We'll ensure the script is correct. 2. Make it executable. 3. Create response.sh. 4. Run both scripts and verify output. 5. If any errors, fix.",
+  "commands": [
+    {
+      "keystrokes": "cat > intrusion_detector.sh << 'EOF'\n#!/bin/bash\n\n# Import jq for JSON processing\n# We'll parse detection rules\nparse_rules() {\n    local rule_id\n    local pattern\n    local threshold\n    local severity\n    # Use jq to iterate over rules\n    jq '.rules[] | {rule_id, pattern, threshold, severity}' rules/detection_rules.json > /tmp/rules.tmp\n    while read -r line; do\n        # Skip header\n        if [[ $line == \"rule_id\"* ]]; then\n            continue\n        fi\n        # Parse line\n        # We'll store in associative arrays\n        declare -A rules_data\n        rules_data[$rule_id][\"pattern\"]=\"$pattern\"\n        rules_data[$rule_id][\"threshold\"]=\"$threshold\"\n        rules_data[$rule_id][\"severity\"]=\"$severity\"\n    done < /tmp/rules.tmp\n}\n\n# Process logs and count matches\ncount_matches() {\n    local log_file\n    for log_file in /app/logs/auth.log /app/logs/http.log; do\n        while read -r line; do\n            # Extract IP\n            ip=$(echo \"$line\" | grep -oEo 'from [0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}' | head -1)\n            if [[ -z \"$ip\" ]]; then\n                ip=$(echo \"$line\" | grep -oEo '\\[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}' | head -1)\n            fi\n            if [[ -z \"$ip\" ]]; then\n                ip=$(echo \"$line\" | grep -oEo '192\\.168\\.1\\.[0-9]{4}' | head -1)\n            fi\n            if [[ -z \"$ip\" ]]; then\n                continue\n            fi\n            # For each rule, check pattern\n            for rule_id in \"${!rules_data[@]}\"; do\n                pattern=$(rules_data[$rule_id][\"pattern\"])\n                if [[ -n \"$pattern\" ]]; then\n                    if [[ $line =~ \"$pattern\" ]]; then\n                        # Count matches\n                        rules_data[$rule_id][\"matches\"]=$((rules_data[$rule_id][\"matches\"] + 1))\n                        rules_data[$rule_id][\"ips\"]=\"$rules_data[$rule_id][\"ips\"]$ip\"\n                    fi\n                fi\n            done\n        done\n    done\n}\n\n# Generate alert and report\ngenerate_outputs() {\n    # Build alerts and events lists\n    alerts=()\n    events=()\n    statistics=()\n    for rule_id in \"${!rules_data[@]}\"; matches=$(rules_data[$rule_id][\"matches\"]); do\n        if [[ -n \"$matches\" && $matches -ge ${rules_data[$rule_id][\"threshold\"]} ]]; then\n            # Parse IPs\n            ips=$(rules_data[$rule_id][\"ips\"])\n            # Remove duplicates\n            ips=$(echo \"$ips\" | sort -u)\n            severity=$(rules_data[$rule_id][\"severity\"])\n            alerts+=(\"$rule_id $severity $matches $ips\")\n        fi\n        events+=(\"$rule_id $severity $matches $ips\")\n        statistics[$rule_id]=$matches\n    done\n    # Generate timestamp\n    timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%fZ)\n    # Write alert.json\n    jq -r '{timestamp:\"\\(.timestamp)\", alerts:[{\"id\":\"\\(.rule_id)\", \"severity\":\"\\(.severity)\", \"matches\":\\(.matches), \"ips\":\"\\(.ips)\"}]}' alerts > /app/reports/alert.json\n    # Write report.json\n    jq -r '{timestamp:\"\\(.timestamp)\", events:[{\"id\":\"\\(.rule_id)\", \"severity\":\"\\(.severity)\", \"matches\":\\(.matches), \"ips\":\"\\(.ips)\"}], statistics:\\(.statistics)}' events > /app/reports/report.json\n}\n\n# Main function\nmain() {\n    parse_rules\n    count_matches\n    generate_outputs\n    echo \"Done\"\n}\n\n# Execute\nmain\nEOF\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "chmod +x intrusion_detector.sh\n",
+      "duration": 0.1
+    },
+    {
+      "keystrokes": "cat > response.sh << 'EOF'\n#!/bin/bash\n\n# Generate block rule\ngenerate_block_rule() {\n    local ip=$1\n    echo \"firewall add rule: block all from $ip\"\n    echo \"block $ip\"\n    echo \"127.0.0.1/32\"\n    echo \"0.0.0.0/0\"\n}\n\n# Extract activity for IP\nextract_activity() {\n    local ip=$1\n    local log_file\n    for log_file in /app/logs/auth.log /app/logs/http.log; do\n        echo \"=== $log_file ===\"\n        grep -E \"from $ip|to $ip\" \"$log_file\" | head -10\n    done\n}\n\n# Write incident report\ngenerate Incident Report() {\n    local ip=$1\n    local timestamp=$(date -u +%Y-%m-%dT%H:%M:%S.%fZ)\n    local report_file=\"/app/reports/ incident_${ip}_${timestamp}.txt\"\n    echo \" Incident Report for $ip \" > \"$report_file\"\n    echo \"=\" >> \"$report_file\"\n    echo \"Timestamp: $timestamp\" >> \"$report_file\"\n    echo \"--- Activity ---\" >> \"$report_file\"\n    extract_activity \"$ip\" >> \"$report_file\"\n    echo \"--- Rule Recommendations ---\" >> \"$report_file\"\n    generate_block_rule \"$ip\" >> \"$report_file\"\n    echo \"--- End of Report ---\" >> \"$report_file\"\n    echo \"Report saved to $report_file\"\n}\n\n# Main function\nmain() {\n    if [[ -z \"$1\" ]]; then\n        echo \"Usage: $0 <IP>\"\n        echo \"Example: $0 45.32.67.89\"\n        exit 1\n    fi\n    generate Incident Report \"$1\"\n}\n\n# Execute\nmain \"$@\"\nEOF\n",
+      "duration": 0.5
+    },
+    {
+      "keystrokes": "chmod +x response.sh\n",
+      "duration": 0.1
+    }
+  ],
+  "task_complete": false
+}

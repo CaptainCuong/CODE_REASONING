@@ -1,0 +1,99 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@1e0795c57442:/app# which ss
+root@1e0795c57442:/app# which netstat
+root@1e0795c57442:/app# which nmap
+root@1e0795c57442:/app# cd /app
+root@1e0795c57442:/app# cat > bitcoin_service.py << 'EOF'
+> #!/usr/bin/env python3
+> import sys
+> import json
+> from flask import Flask, request, abort
+> from bitcoinlib.services import bitcoind
+>
+> # Configuration
+> RPC_ENDPOINT = 'http://testnet.bitcoinrpc.org'  # fallback if we can't connect
+> NETWORK = 'testnet'
+>
+> def get_client():
+>     """Get a connected bitcoind client."""
+>     try:
+>         client = bitcoind.BitcoindClient(base_url=RPC_ENDPOINT, network=NETWORK)
+>         return client
+>     except Exception as e:
+>         raise ConnectionError(f'Cannot connect to RPC endpoint: {e}')
+>
+> client = None
+>
+> def connect():
+>     global client
+>     try:
+>         client = get_client()
+>     except Exception as e:
+>         raise SystemExit(f'Error: {e}')
+>
+> app = Flask(__name__)
+>
+> @app.route('/status')
+> def status():
+>     if client is None:
+>         return {'status': 'offline'}, 503
+>     return {'status': 'online'}, 200
+>
+> @app.route('/block/<block_hash>')
+> def block(block_hash):
+>     try:
+>         block = client.getblock(block_hash)
+>         # Convert to required format
+>         block_info = {
+>             'hash': block['hash'],
+>             'height': block['height'],
+>             'merkleroot': block['merkleroot'],
+>             'time': block['time'],
+>             'nonce': block['nonce'],
+>             'tx': block['tx']
+>         }
+>         return block_info, 200
+>     except Exception as e:
+>         return {'error': str(e)}, 404
+>
+> @app.route('/transaction/<txid>')
+> def transaction(txid):
+>     try:
+>         tx = client.gettransaction(txid)
+>         # Convert to required format
+>         tx_inputs = []
+>         for inp in tx['vin']:
+>             tx_inputs.append({
+>                 'coinbase': inp['coinbase'] if 'vin' in inp else '',
+>                 'sequence': inp['sequence']
+>             })
+>         tx_outputs = []
+>         for out in tx['vout']:
+>             tx_outputs.append({
+>                 'value': out['value'],
+>                 'n': out['n'],
+>                 'scriptPubKey': {
+>                     'asm': out['scriptPubKey']['asm'],
+>                     'hex': out['scriptPubKey']['hex'],
+>                     'type': out['scriptPubKey']['type']
+>                 }
+>             })
+>         tx_info = {
+>             'txid': tx['txid'],
+>             'blockhash': tx['blockhash'],
+>             'vin': tx_inputs,
+>             'vout': tx_outputs
+>         }
+>         return tx_info, 200
+>     except Exception as e:
+>         return {'error': str(e)}, 404
+>
+> if __name__ == '__main__':
+>     connect()
+>     app.run(host='0.0.0.0', port=5000)
+> EOF
+root@1e0795c57442:/app#

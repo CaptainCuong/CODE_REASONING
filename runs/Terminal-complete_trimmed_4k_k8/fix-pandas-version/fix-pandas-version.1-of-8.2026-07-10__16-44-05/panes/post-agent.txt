@@ -1,0 +1,287 @@
+root@02d982fcd679:/app# ls -la
+total 0
+drwxr-xr-x 1 root root 25 Jul 12 17:23 .
+drwxr-xr-x 1 root root 57 Jul 12 17:24 ..
+drwxr-xr-x 2 root root 88 Jun 24 11:01 src
+root@02d982fcd679:/app# python3 --version
+Python 3.8.20
+root@02d982fcd679:/app# pip list | grep pandas
+pandas            1.3.0
+
+[notice] A new release of pip is available: 23.0.1 -> 25.0.1
+[notice] To update, run: pip install --upgrade pip
+root@02d982fcd679:/app# cat src/data_processor.py
+from typing import Any, Dict, Tuple
+
+import numpy as np  # type: ignore
+import pandas as pd  # type: ignore
+
+from .data_loader import load_sample_transactions
+
+
+def load_and_process_data(filepath) -> pd.DataFrame:
+    """Load CSV data with optimized dtypes using Arrow and handle mixed date formats.
+
+    Args:
+        filepath: Path to the CSV file containing transaction data
+
+    Returns:
+        DataFrame with properly typed columns using Arrow backend
+    """
+    # This requires pandas >= 2.0.0 for date_format and dtype_backend
+    pd.options.mode.copy_on_write = True
+
+    df = pd.read_csv(
+        filepath,
+        dtype_backend="pyarrow",
+        date_format="mixed",
+    )
+
+    # Convert date columns using the new mixed format parser
+    date_cols = ["transaction_date", "processing_date"]
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], format="mixed")
+
+    return df
+
+
+def process_transactions(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Process transaction data using pandas 2.0 features.
+
+    Args:
+        df: Input DataFrame with transaction data
+
+    Returns:
+        Tuple containing:
+        - Summary DataFrame with transaction statistics
+        - Dictionary with metadata about boolean columns
+    """
+    # Get boolean columns using pyarrow dtypes
+    bool_cols = df.select_dtypes(include=["boolean[pyarrow]"]).columns.tolist()
+
+    # Calculate summary statistics
+    # Using Copy-on-Write, this won't create unnecessary copies
+    summary = pd.DataFrame(
+        {
+            "amount": [df["amount"].sum(), df["amount"].mean()],
+            "approval_rate": [df[bool_cols[0]].mean() if bool_cols else np.nan] * 2,
+        },
+        index=["sum", "mean"],
+    )
+
+    return summary, {"bool_columns": bool_cols}
+
+
+def analyze_customer_segments(df: pd.DataFrame) -> Tuple[pd.DataFrame, list]:
+    """Analyze customer segments with advanced pandas 2.0 features.
+
+    Args:
+        df: Input DataFrame with transaction data
+
+    Returns:
+        Tuple containing:
+        - DataFrame with segment statistics
+        - List of boolean column names
+    """
+
+    bool_cols = [col for col in df.columns if str(df[col].dtype) == "bool[pyarrow]"]
+
+    # Group by customer segment and calculate statistics
+    # Copy-on-Write ensures efficient operations
+    stats = df.groupby("segment").agg(
+        {
+            "amount": ["sum", "mean"],
+            "category": lambda x: x.mode()[0] if not x.empty else None,
+            **{col: "mean" for col in bool_cols},
+        }
+    )
+    return stats, bool_cols
+
+
+if __name__ == "__main__":
+    df = load_sample_transactions()
+    print(df.head())
+root@02d982fcd679:/app# pip install pandas>=2.0.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a v
+irtual environment instead: https://pip.pypa.io/warnings/venv
+
+[notice] A new release of pip is available: 23.0.1 -> 25.0.1
+[notice] To update, run: pip install --upgrade pip
+root@02d982fcd679:/app# python3 -m src.data_processor
+   id  name  value  valid
+0   1  John   10.5   True
+1   2  Jane   20.3  False
+2   3   NaN   30.1    NaN
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.8/runpy.py", line 194, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/local/lib/python3.8/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/app/src/data_processor.py", line 90, in <module>
+    df = load_sample_transactions()
+  File "/app/src/data_loader.py", line 26, in load_sample_transactions
+    df = pd.read_csv(
+  File "/usr/local/lib/python3.8/site-packages/pandas/util/_decorators.py", line 311, in wrapper
+    return func(*args, **kwargs)
+TypeError: read_csv() got an unexpected keyword argument 'dtype_backend'
+root@02d982fcd679:/app# pip list | grep pandas
+pandas            1.3.0
+
+[notice] A new release of pip is available: 23.0.1 -> 25.0.1
+[notice] To update, run: pip install --upgrade pip
+root@02d982fcd679:/app# python3 -c "import pandas; print(pandas.__version__)"
+1.3.0
+root@02d982fcd679:/app# pip install pandas==2.2.0
+ERROR: Ignored the following versions that require a different python version: 2.1.0 Requires-Python >=3.9; 2.1.1 Requires-Python >=3.9; 2.1.2 Requires-Python >
+=3.9; 2.1.3 Requires-Python >=3.9; 2.1.4 Requires-Python >=3.9; 2.2.0 Requires-Python >=3.9; 2.2.1 Requires-Python >=3.9; 2.2.2 Requires-Python >=3.9; 2.2.3 Req
+uires-Python >=3.9; 2.3.0 Requires-Python >=3.9; 2.3.1 Requires-Python >=3.9; 2.3.2 Requires-Python >=3.9; 2.3.3 Requires-Python >=3.9; 3.0.0 Requires-Python >=
+3.11; 3.0.0rc0 Requires-Python >=3.11; 3.0.0rc1 Requires-Python >=3.11; 3.0.0rc2 Requires-Python >=3.11; 3.0.1 Requires-Python >=3.11; 3.0.2 Requires-Python >=3
+.11; 3.0.3 Requires-Python >=3.11; 3.0.4 Requires-Python >=3.11
+ERROR: Could not find a version that satisfies the requirement pandas==2.2.0 (from versions: 0.1, 0.2, 0.3.0, 0.4.0, 0.4.1, 0.4.2, 0.4.3, 0.5.0, 0.6.0, 0.6.1, 0
+.7.0, 0.7.1, 0.7.2, 0.7.3, 0.8.0, 0.8.1, 0.9.0, 0.9.1, 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.14.0, 0.14.1, 0.15.0, 0.15.1, 0.15.2, 0.16.0, 0.16.1, 0
+.16.2, 0.17.0, 0.17.1, 0.18.0, 0.18.1, 0.19.0, 0.19.1, 0.19.2, 0.20.0, 0.20.1, 0.20.2, 0.20.3, 0.21.0, 0.21.1, 0.22.0, 0.23.0, 0.23.1, 0.23.2, 0.23.3, 0.23.4, 0
+.24.0, 0.24.1, 0.24.2, 0.25.0, 0.25.1, 0.25.2, 0.25.3, 1.0.0, 1.0.1, 1.0.2, 1.0.3, 1.0.4, 1.0.5, 1.1.0, 1.1.1, 1.1.2, 1.1.3, 1.1.4, 1.1.5, 1.2.0, 1.2.1, 1.2.2,
+1.2.3, 1.2.4, 1.2.5, 1.3.0, 1.3.1, 1.3.2, 1.3.3, 1.3.4, 1.3.5, 1.4.0, 1.4.1, 1.4.2, 1.4.3, 1.4.4, 1.5.0, 1.5.1, 1.5.2, 1.5.3, 2.0.0, 2.0.1, 2.0.2, 2.0.3)
+ERROR: No matching distribution found for pandas==2.2.0
+
+[notice] A new release of pip is available: 23.0.1 -> 25.0.1
+[notice] To update, run: pip install --upgrade pip
+root@02d982fcd679:/app# python3 -m src.data_processor
+   id  name  value  valid
+0   1  John   10.5   True
+1   2  Jane   20.3  False
+2   3   NaN   30.1    NaN
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.8/runpy.py", line 194, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/local/lib/python3.8/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/app/src/data_processor.py", line 90, in <module>
+    df = load_sample_transactions()
+  File "/app/src/data_loader.py", line 26, in load_sample_transactions
+    df = pd.read_csv(
+  File "/usr/local/lib/python3.8/site-packages/pandas/util/_decorators.py", line 311, in wrapper
+    return func(*args, **kwargs)
+TypeError: read_csv() got an unexpected keyword argument 'dtype_backend'
+root@02d982fcd679:/app# pip install pandas==2.0.3
+Collecting pandas==2.0.3
+  Downloading pandas-2.0.3-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (12.4 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 12.4/12.4 MB 103.9 MB/s eta 0:00:00
+Collecting tzdata>=2022.1
+  Downloading tzdata-2026.3-py2.py3-none-any.whl (348 kB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 348.2/348.2 kB 95.0 MB/s eta 0:00:00
+Requirement already satisfied: pytz>=2020.1 in /usr/local/lib/python3.8/site-packages (from pandas==2.0.3) (2026.2)
+Requirement already satisfied: numpy>=1.20.3 in /usr/local/lib/python3.8/site-packages (from pandas==2.0.3) (1.21.0)
+Requirement already satisfied: python-dateutil>=2.8.2 in /usr/local/lib/python3.8/site-packages (from pandas==2.0.3) (2.9.0.post0)
+Requirement already satisfied: six>=1.5 in /usr/local/lib/python3.8/site-packages (from python-dateutil>=2.8.2->pandas==2.0.3) (1.17.0)
+Installing collected packages: tzdata, pandas
+  Attempting uninstall: pandas
+    Found existing installation: pandas 1.3.0
+    Uninstalling pandas-1.3.0:
+      Successfully uninstalled pandas-1.3.0
+Successfully installed pandas-2.0.3 tzdata-2026.3
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a v
+irtual environment instead: https://pip.pypa.io/warnings/venv
+
+[notice] A new release of pip is available: 23.0.1 -> 25.0.1
+[notice] To update, run: pip install --upgrade pip
+root@02d982fcd679:/app# python3 -c "import pandas; print(pandas.__version__)"
+2.0.3
+root@02d982fcd679:/app# python3 -m src.data_processor
+   id  name  value  valid
+0   1  John   10.5   True
+1   2  Jane   20.3  False
+2   3   NaN   30.1    NaN
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.8/runpy.py", line 194, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/local/lib/python3.8/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/app/src/data_processor.py", line 90, in <module>
+    df = load_sample_transactions()
+  File "/app/src/data_loader.py", line 26, in load_sample_transactions
+    df = pd.read_csv(
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/readers.py", line 912, in read_csv
+    return _read(filepath_or_buffer, kwds)
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/readers.py", line 577, in _read
+    parser = TextFileReader(filepath_or_buffer, **kwds)
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/readers.py", line 1407, in __init__
+    self._engine = self._make_engine(f, self.engine)
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/readers.py", line 1679, in _make_engine
+    return mapping[engine](f, **self.options)
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/c_parser_wrapper.py", line 92, in __init__
+    import_optional_dependency("pyarrow")
+  File "/usr/local/lib/python3.8/site-packages/pandas/compat/_optional.py", line 171, in import_optional_dependency
+    raise ImportError(msg)
+ImportError: Pandas requires version '7.0.0' or newer of 'pyarrow' (version '6.0.0' currently installed).
+root@02d982fcd679:/app# pip install pyarrow>=7.0.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a v
+irtual environment instead: https://pip.pypa.io/warnings/venv
+
+[notice] A new release of pip is available: 23.0.1 -> 25.0.1
+[notice] To update, run: pip install --upgrade pip
+root@02d982fcd679:/app# python3 -c "import pyarrow; print(pyarrow.__version__)"
+6.0.0
+root@02d982fcd679:/app# python3 -m src.data_processor
+   id  name  value  valid
+0   1  John   10.5   True
+1   2  Jane   20.3  False
+2   3   NaN   30.1    NaN
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.8/runpy.py", line 194, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/local/lib/python3.8/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/app/src/data_processor.py", line 90, in <module>
+    df = load_sample_transactions()
+  File "/app/src/data_loader.py", line 26, in load_sample_transactions
+    df = pd.read_csv(
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/readers.py", line 912, in read_csv
+    return _read(filepath_or_buffer, kwds)
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/readers.py", line 577, in _read
+    parser = TextFileReader(filepath_or_buffer, **kwds)
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/readers.py", line 1407, in __init__
+    self._engine = self._make_engine(f, self.engine)
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/readers.py", line 1679, in _make_engine
+    return mapping[engine](f, **self.options)
+  File "/usr/local/lib/python3.8/site-packages/pandas/io/parsers/c_parser_wrapper.py", line 92, in __init__
+    import_optional_dependency("pyarrow")
+  File "/usr/local/lib/python3.8/site-packages/pandas/compat/_optional.py", line 171, in import_optional_dependency
+    raise ImportError(msg)
+ImportError: Pandas requires version '7.0.0' or newer of 'pyarrow' (version '6.0.0' currently installed).
+root@02d982fcd679:/app# pip list | grep pyarrow
+pyarrow           6.0.0
+
+[notice] A new release of pip is available: 23.0.1 -> 25.0.1
+[notice] To update, run: pip install --upgrade pip
+root@02d982fcd679:/app# pip install --upgrade pyarrow==7.0.0
+Collecting pyarrow==7.0.0
+  Downloading pyarrow-7.0.0-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (26.7 MB)
+     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 26.7/26.7 MB 76.5 MB/s eta 0:00:00
+Requirement already satisfied: numpy>=1.16.6 in /usr/local/lib/python3.8/site-packages (from pyarrow==7.0.0) (1.21.0)
+Installing collected packages: pyarrow
+  Attempting uninstall: pyarrow
+    Found existing installation: pyarrow 6.0.0
+    Uninstalling pyarrow-6.0.0:
+      Successfully uninstalled pyarrow-6.0.0
+Successfully installed pyarrow-7.0.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a v
+irtual environment instead: https://pip.pypa.io/warnings/venv
+
+[notice] A new release of pip is available: 23.0.1 -> 25.0.1
+[notice] To update, run: pip install --upgrade pip
+root@02d982fcd679:/app# python3 -c "import pyarrow; print(pyarrow.__version__)"
+7.0.0
+root@02d982fcd679:/app# python3 -m src.data_processor
+   id  name  value  valid
+0   1  John   10.5   True
+1   2  Jane   20.3  False
+2   3   NaN   30.1    NaN
+   transaction_id  customer_id  amount is_approved     category  segment transaction_date processing_date
+0               1          101  100.50        True         food        1       2023-01-15      2023-01-15
+1               2          102   75.25       False       travel        2       2023-02-20      2023-02-20
+2               3          103   50.75        True  electronics        3       2023-03-25      2023-03-25
+3               4          101  150.00        True         food        1       2023-04-10      2023-04-10
+4               5          102  200.00       False       travel        2       2023-05-15      2023-05-15
+root@02d982fcd679:/app#

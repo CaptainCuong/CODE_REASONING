@@ -1,0 +1,74 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@30e484150c15:/app# python3 debug.py 2>&1 | head -20
+netstat -tulpn 2>/dev/null | grep 3000
+cat > debug2.py << 'EOF'
+import http.server
+import json
+import sys
+import socket
+
+def fibonacci(n):
+    if n < 0:
+        raise ValueError('Negative index')
+    a, b = 0, 1
+    for _ in range(n):
+        a, b = b, a + b
+    return a
+
+class FibonacciHandler(http.server.SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.protocol_version = 'HTTP/1.1'
+        self.server_version = '1.0'
+
+    def do_GET(self):
+        print('do_GET called')
+        query = self.path.split('?')[1] if '?' in self.path else ''
+        params = {}
+        for pair in query.split('&'):
+            if '=' in pair:
+                key, val = pair.split('=', 1)
+                params[key] = val
+        if 'n' not in params:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'Query parameter "n" is missing')
+            return
+        try:
+            n = int(params['n'])
+        except ValueError:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b'Query parameter "n" must be an integer')
+            return
+        result = fibonacci(n)
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(json.dumps({'result': result}))
+
+def main():
+    port = 3000
+    handler = FibonacciHandler
+    httpd = http.server.HTTPServer(('0.0.0.0', port), handler)
+    print('Server started')
+    # Try to serve for 5 seconds, then interrupt
+    import threading
+    thread = threading.Thread(target=httpd.serve_forever)
+    thread.start()
+    thread.join(5)
+    if thread.isAlive():
+        print('Server did not start within 5 seconds')
+        thread.join()
+        print('Interrupted')
+    else:
+        print('Server started and ready')
+
+if __name__ == '__main__':
+    main()
+EOF
+python3 debug2.py
+

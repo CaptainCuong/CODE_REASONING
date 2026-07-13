@@ -1,0 +1,120 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+ path[idx_double_stars:].count("/") + 1
+                depth = depth - depth_double_stars + maxdepth
+            else:
+                depth = None
+
+        allpaths = await self._find(
+            root, maxdepth=depth, withdirs=True, detail=True, **kwargs
+        )
+
+        pattern = glob_translate(path + ("/" if ends_with_sep else ""))
+        pattern = re.compile(pattern)
+
+        out = {
+            p: info
+            for p, info in sorted(allpaths.items())
+            if pattern.match(
+                (
+                    p + "/"
+                    if append_slash_to_dirname and info["type"] == "directory"
+                    else p
+                )
+            )
+        }
+
+        if detail:
+            return out
+        else:
+            return list(out)
+
+    async def _du(self, path, total=True, maxdepth=None, **kwargs):
+        sizes = {}
+        # async for?
+        for f in await self._find(path, maxdepth=maxdepth, **kwargs):
+            info = await self._info(f)
+            sizes[info["name"]] = info["size"]
+        if total:
+            return sum(sizes.values())
+        else:
+            return sizes
+
+    async def _find(self, path, maxdepth=None, withdirs=False, **kwargs):
+        path = self._strip_protocol(path)
+        out = {}
+        detail = kwargs.pop("detail", False)
+
+        # Add the root directory if withdirs is requested
+        # This is needed for posix glob compliance
+        if withdirs and path != "" and await self._isdir(path):
+            out[path] = await self._info(path)
+
+        # async for?
+        async for _, dirs, files in self._walk(path, maxdepth, detail=True, **kwargs):
+            if withdirs:
+                files.update(dirs)
+            out.update({info["name"]: info for name, info in files.items()})
+        if not out and (await self._isfile(path)):
+            # walk works on directories, but find should also return [path]
+            # when path happens to be a file
+            out[path] = {}
+        names = sorted(out)
+        if not detail:
+            return names
+        else:
+            return {name: out[name] for name in names}
+
+    async def _expand_path(self, path, recursive=False, maxdepth=None):
+        if maxdepth is not None and maxdepth < 1:
+            raise ValueError("maxdepth must be at least 1")
+
+        if isinstance(path, str):
+            out = await self._expand_path([path], recursive, maxdepth)
+        else:
+            out = set()
+            path = [self._strip_protocol(p) for p in path]
+            for p in path:  # can gather here
+                if has_magic(p):
+                    bit = set(await self._glob(p, maxdepth=maxdepth))
+                    out |= bit
+                    if recursive:
+                        # glob call above expanded one depth so if maxdepth is defined
+                        # then decrement it in expand_path call below. If it is zero
+                        # after decrementing then avoid expand_path call.
+                        if maxdepth is not None and maxdepth <= 1:
+                            continue
+                        out |= set(
+                            await self._expand_path(
+                                list(bit),
+                                recursive=recursive,
+                                maxdepth=maxdepth - 1 if maxdepth is not None else None,
+                            )
+                        )
+                    continue
+                elif recursive:
+                    rec = set(await self._find(p, maxdepth=maxdepth, withdirs=True))
+                    out |= rec
+                if p not in out and (recursive is False or (await self._exists(p))):
+                    # should only check once, for the root
+                    out.add(p)
+        if not out:
+            raise FileNotFoundError(path)
+        return sorted(out)
+
+    async def _mkdir(self, path, create_parents=True, **kwargs):
+        pass  # not necessary to implement, may not have directories
+
+    async def _makedirs(self, path, exist_ok=False):
+        pass  # not necessary to implement, may not have directories
+
+    async def open_async(self, path, mode="rb", **kwargs):
+        if "b" not in mode or kwargs.get("compression"):
+            raise ValueError
+        raise NotImplementedError
+
+
+def mirror_sync_methods(obj):
+root@9ff0acd9dddd:/app/filesystem_spec#

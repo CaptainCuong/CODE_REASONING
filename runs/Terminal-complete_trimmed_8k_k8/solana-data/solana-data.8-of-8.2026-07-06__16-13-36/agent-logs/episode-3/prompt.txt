@@ -1,0 +1,124 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@d2d6b972a9de:/app# cd /app
+root@d2d6b972a9de:/app# cat > server.py << 'EOF'
+> import json
+> import flask
+> from solana import Solana
+> from solana.rpc import RpcClient
+> from solana.rpc.api import RpcMethod
+> from solana.rpc.errors importRpcError
+> from solana.utils import to_bytes, to_string
+> from solana.web3 import Web3
+> import sys
+>
+> app = flask.Flask(__name__)
+>
+> # Connect to mainnet-beta
+> solana = Solana('https://mainnet-beta-rpc.cluster0001.solanafoundation.com')
+> web3 = Web3(solana)
+>
+> # Helper to handle exceptions and return error JSON
+> def handle_error(e, endpoint):
+>     return flask.jsonify({"error": str(e)})
+>
+> # /status endpoint
+> @app.route('/status')
+> def status():
+>     try:
+>         status = web3.cluster.status()
+>         network = status['network']
+>         current_slot = status['current_slot']
+>         node_count = status['node_count']
+>         version = status['version']
+>         return flask.jsonify({
+>             "status": "online",
+>             "network": network,
+>             "current_slot": current_slot,
+>             "node_count": node_count,
+>             "version": version
+>         })
+>     except Exception as e:
+>         return handle_error(e, '/status')
+>
+> # /block/<slot_number>
+> @app.route('/block/<int:slot>')
+> def block_details(slot):
+>     try:
+>         block = web3.block.get_block_by_slot(slot)
+>         # block is a dict with fields: blockhash, parent_slot, previous_blockhash, block_height, block_time
+>         return flask.jsonify({
+>             "blockhash": block['blockhash'],
+>             "parent_slot": block['parent_slot'],
+>             "previous_blockhash": block['previous_blockhash'],
+>             "block_height": block['block_height'],
+>             "block_time": block['block_time']
+>         })
+>     except Exception as e:
+>         return handle_error(e, f'/block/{slot}')
+>
+> # /transaction/<signature>
+> @app.route('/transaction/<signature>')
+> def transaction_details(signature):
+>     try:
+>         # The transaction might be in the ledger; we can get the transaction by signature.
+>         # The Solana RPC provides transaction.get_transaction_by_signature
+>         tx = web3.transaction.get_transaction_by_signature(signature)
+>         # tx is a dict with fields: signature, slot, block_time, success, fee, token_transfers
+>         # token_transfers is a list of dicts with account, mint, amount
+>         return flask.jsonify({
+>             "signature": tx['signature'],
+>             "slot": tx['slot'],
+>             "block_time": tx['block_time'],
+>             "success": tx['success'],
+>             "fee": tx['fee'],
+>             "token_transfers": tx['token_transfers']
+>         })
+>     except Exception as e:
+>         return handle_error(e, f'/transaction/{signature}')
+>
+> # /account/<address>
+> @app.route('/account/<address>')
+> def account_details(address):
+>     try:
+>         account = web3.account.get_account_by_address(address)
+>         return flask.jsonify({
+>             "address": account['address'],
+>             "executable": account['executable'],
+>             "lamports": account['lamports'],
+>             "owner": account['owner'],
+>             "rent_epoch": account['rent_epoch']
+>         })
+>     except Exception as e:
+>         return handle_error(e, f'/account/{address}')
+>
+> # /program/<program_id>/accounts
+> @app.route('/program/<program_id>/accounts')
+> def program_accounts(program_id):
+>     try:
+>         # The RPC endpoint for program accounts is: transaction.get_program_accounts_by_program_id
+>         # It returns a list of accounts owned by the program.
+>         # We need to implement pagination.
+>         limit = flask.request.args.get('limit', 10)
+>         offset = flask.request.args.get('offset', 0)
+>         accounts = web3.transaction.get_program_accounts_by_program_id(program_id, limit, offset)
+>         # accounts is a dict with: program_id, total_accounts, accounts
+>         # each account has pubkey, account (with executable, lamports, owner, rent_epoch)
+>         result = {
+>             "program_id": accounts['program_id'],
+>             "total_accounts": accounts['total_accounts'],
+>             "limit": limit,
+>             "offset": offset,
+>             "accounts": accounts['accounts']
+>         }
+>         return flask.jsonify(result)
+>     except Exception as e:
+>         return handle_error(e, f'/program/{program_id}/accounts')
+>
+> if __name__ == '__main__':
+>     app.run(port=5000, debug=True)
+> EOF
+root@d2d6b972a9de:/app#

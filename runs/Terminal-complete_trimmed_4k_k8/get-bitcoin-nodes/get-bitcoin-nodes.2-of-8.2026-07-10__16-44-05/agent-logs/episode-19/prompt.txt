@@ -1,0 +1,156 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@38e7a67301dd:/app# cat > /app/bitcoin_service.py << 'EOF'
+> import json
+> import sys
+> from flask import Flask, abort, Response
+> from requests import Request, HTTPException, URLError
+> from requests.exceptions import ConnectionError, Timeout
+> import time
+>
+> def main():
+>     app = Flask(__name__)
+>
+>     # Configuration
+>     LOCAL_NODE_URL = 'http://127.0.0.1:8332'
+>     BLOCKCHAIR_BASE = 'https://api.blockchair.com/1.0.0/'
+>
+>     # Helper to try a request with a given URL and block/tx ID
+>     def query_network(url, block_tx_id):
+>         try:
+>             resp = Request('GET', url).send()
+>             resp.raise_for_status()
+>             return resp.json()
+>         except (ConnectionError, Timeout, URLError, HTTPException) as e:
+>             # Try to fall back to blockchair if the local node fails
+>             if url.startswith('http://127.0.0.1:'):
+>                 url = BLOCKCHAIR_BASE + 'blocks/' + block_tx_id
+>                 try:
+>                     resp = Request('GET', url).send()
+>                     resp.raise_for_status()
+>                     return resp.json()
+>                 except Exception:
+>                     raise
+>             else:
+>                 raise
+>
+>     # Define endpoints
+>     @app.route('/status')
+>     def status():
+>         try:
+>             # Try to connect to a local full node
+>             resp = Request('GET', LOCAL_NODE_URL).send()
+>             return {'status': 'online'}
+>         except Exception:
+>             return {'error': 'Not connected to the network'}
+>
+>     @app.route('/block/<block_hash>')
+>     def block(block_hash):
+>         try:
+>             # Try local node
+>             resp = Request('GET', f'{LOCAL_NODE_URL}/block/{block_hash}').send()
+>             resp.raise_for_status()
+>             block = resp.json()
+>             # Transform to required schema
+>             return {
+>                 'hash': block['hash'],
+>                 'height': block['height'],
+>                 'merkleroot': block['merkleroot'],
+>                 'time': block['time'],
+>                 'nonce': block['nonce'],
+>                 'tx': block['tx']
+>             }
+>         except Exception:
+>             # Try blockchair
+>             try:
+>                 resp = Request('GET', f'{BLOCKCHAIR_BASE}blocks/{block_hash}').send()
+>                 resp.raise_for_status()
+>                 block = resp.json()
+>                 return {
+>                     'hash': block['hash'],
+>                     'height': block['height'],
+>                     'merkleroot': block['merkleroot'],
+>                     'time': block['time'],
+>                     'nonce': block['nonce'],
+>                     'tx': block['tx']
+>                 }
+>             except Exception:
+>                 abort(404, f"Invalid block hash: {block_hash}")
+>
+>     @app.route('/transaction/<txid>')
+>     def transaction(txid):
+>         try:
+>             # Try local node
+>             resp = Request('GET', f'{LOCAL_NODE_URL}/transaction/{txid}').send()
+>             resp.raise_for_status()
+>             tx = resp.json()
+>             # Transform to required schema
+>             inputs = []
+>             for vin in tx['inputs']:
+>                 inputs.append({
+>                     'coinbase': vin['coinbase'],
+>                     'sequence': vin['sequence']
+>                 })
+>             outputs = []
+>             for vout in tx['outputs']:
+>                 outputs.append({
+>                     'value': vout['value'],
+>                     'n': vout['n'],
+>                     'scriptPubKey': {
+>                         'asm': vout['scriptPubKey']['asm'],
+>                         'hex': vout['scriptPubKey']['hex'],
+>                         'type': vout['scriptPubKey']['type']
+>                     }
+>                 })
+>             return {
+>                 'txid': tx['txid'],
+>                 'blockhash': tx['blockhash'],
+>                 'vin': inputs,
+>                 'vout': outputs
+>             }
+>         except Exception:
+>             # Try blockchair
+>             try:
+>                 resp = Request('GET', f'{BLOCKCHAIR_BASE}transactions/{txid}').send()
+>                 resp.raise_for_status()
+>                 tx = resp.json()
+>                 inputs = []
+>                 for vin in tx['inputs']:
+>                     inputs.append({
+>                         'coinbase': vin['coinbase'],
+>                         'sequence': vin['sequence']
+>                     })
+>                 outputs = []
+>                 for vout in tx['outputs']:
+>                     outputs.append({
+>                         'value': vout['value'],
+>                         'n': vout['n'],
+>                         'scriptPubKey': {
+>                             'asm': vout['scriptPubKey']['asm'],
+>                             'hex': vout['scriptPubKey']['hex'],
+>                             'type': vout['scriptPubKey']['type']
+>                         }
+>                     })
+>                 return {
+>                     'txid': tx['txid'],
+>                     'blockhash': tx['blockhash'],
+>                     'vin': inputs,
+>                     'vout': outputs
+>                 }
+>             except Exception:
+>                 abort(404, f"Invalid transaction ID: {txid}")
+>
+>     app.run(host='0.0.0.0', port=5000)
+>
+> if __name__ == '__main__':
+>     main()
+> EOF
+root@38e7a67301dd:/app# python3 /app/bitcoin_service.py
+Traceback (most recent call last):
+  File "/app/bitcoin_service.py", line 4, in <module>
+    from requests import Request, HTTPException, URLError
+ImportError: cannot import name 'HTTPException' from 'requests' (/usr/local/lib/python3.13/site-packages/requests/__init__.py)
+root@38e7a67301dd:/app#

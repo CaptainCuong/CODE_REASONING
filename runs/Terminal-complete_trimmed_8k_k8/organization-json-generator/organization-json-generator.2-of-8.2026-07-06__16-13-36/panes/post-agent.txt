@@ -1,0 +1,875 @@
+root@daa2e1c60e88:/app# ls -la
+total 4
+drwxr-xr-x 1 root root   33 Jul  8 07:39 .
+drwxr-xr-x 1 root root   57 Jul  8 07:40 ..
+drwxr-xr-x 1 root root   34 Jul  8 07:39 data
+-rw-rw-r-- 1 root root 3420 Jun 24 11:01 schema.json
+root@daa2e1c60e88:/app# cat schema.json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["metadata", "organization", "statistics"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["version", "timestamp", "generator"],
+      "properties": {
+        "version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "generator": { "type": "string" }
+      }
+    },
+    "organization": {
+      "type": "object",
+      "required": ["name", "founded", "departments"],
+      "properties": {
+        "name": { "type": "string" },
+        "founded": { "type": "string", "format": "date" },
+        "departments": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "budget", "employees", "projects"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "budget": { "type": "number", "minimum": 0 },
+              "employees": {
+                "type": "array",
+                "minItems": 2,
+                "items": {
+                  "type": "object",
+                  "required": ["id", "name", "position", "skills", "years_of_service"],
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string" },
+                    "position": { "type": "string" },
+                    "skills": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": { "type": "string" }
+                    },
+                    "years_of_service": { "type": "integer", "minimum": 0 }
+                  }
+                }
+              },
+              "projects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "status", "members", "deadline"],
+                  "properties": {
+                    "name": { "type": "string" },
+                    "status": {
+                      "type": "string",
+                      "enum": ["Planning", "In Progress", "Testing", "Completed", "On Hold"]
+                    },
+                    "members": {
+                      "type": "array",
+                      "items": { "type": "string" }
+                    },
+                    "deadline": { "type": "string", "format": "date" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "required": [
+        "averageDepartmentBudget",
+        "totalEmployees",
+        "skillDistribution",
+        "departmentSizes",
+        "projectStatusDistribution",
+        "averageYearsOfService"
+      ],
+      "properties": {
+        "averageDepartmentBudget": { "type": "number" },
+        "totalEmployees": { "type": "integer" },
+        "skillDistribution": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "departmentSizes": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "projectStatusDistribution": {
+          "type": "object",
+          "additionalProperties": { "type": "integer" }
+        },
+        "averageYearsOfService": { "type": "number" }
+      }
+    }
+  }
+}root@daa2e1c60e88:/app# head departments.csv
+head: cannot open 'departments.csv' for reading: No such file or directory
+root@daa2e1c60e88:/app# head employees.csv
+head: cannot open 'employees.csv' for reading: No such file or directory
+root@daa2e1c60e88:/app# head projects.csv
+head: cannot open 'projects.csv' for reading: No such file or directory
+root@daa2e1c60e88:/app# ls -la data/
+total 12
+drwxr-xr-x 1 root root  34 Jul  8 07:39 .
+drwxr-xr-x 1 root root  33 Jul  8 07:39 ..
+-rw-rw-r-- 1 root root 154 Jun 24 11:01 departments.csv
+-rw-rw-r-- 1 root root 992 Jun 24 11:01 employees.csv
+-rw-rw-r-- 1 root root 440 Jun 24 11:01 projects.csv
+root@daa2e1c60e88:/app# head -5 data/departments.csv
+id,name,budget
+D001,Engineering,1500000
+D002,Marketing,800000
+D003,Human Resources,400000
+D004,Research & Development,2000000
+root@daa2e1c60e88:/app# head -5 data/employees.csv
+id,name,position,skills,years_of_service,department_id
+D001-E001,Cristiano Ronaldo,Manager,Python;Leadership;Project Management,10,D001
+D001-E002,Bernardo Silva,Senior Developer,JavaScript;Python;Cloud Services,7,D001
+D001-E003,Sergio Ramos,Team Lead,Java;C++;DevOps,12,D001
+D002-E001,Kylian Mbappe,Designer,UI/UX Design;Communication;Marketing,5,D002
+root@daa2e1c60e88:/app# head -5 data/projects.csv
+name,status,member_ids,deadline,department_id
+Madrid,In Progress,D001-E001;D001-E002;D001-E003,2025-06-30,D001
+Ferrari,Completed,D001-E002;D001-E003,2025-03-15,D001
+RedBull,Planning,D002-E001;D002-E002,2025-09-10,D002
+McLaren,In Progress,D003-E001;D003-E002,2025-07-20,D003
+root@daa2e1c60e88:/app# cd /app
+root@daa2e1c60e88:/app# cat > process_csv.py << 'EOF'
+> import csv
+> import json
+> from datetime import datetime, timezone
+> import os
+>
+> # Read departments
+> departments = []
+> with open('data/departments.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         departments.append(row)
+>
+> # Read employees
+> employees = []
+> with open('data/employees.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         # Split skills string into list
+>         skills = row['skills'].split(';') if row['skills'] else []
+>         employees.append({
+>             'id': row['id'],
+>             'name': row['name'],
+>             'position': row['position'],
+>             'skills': skills,
+>             'years_of_service': int(row['years_of_service']),
+>             'department_id': row['department_id']
+>         })
+>
+> # Read projects
+> projects = []
+> with open('data/projects.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         members = row['member_ids'].split(';') if row['member_ids'] else []
+>         projects.append({
+>             'name': row['name'],
+>             'status': row['status'],
+>             'members': members,
+>             'deadline': row['deadline'],
+>             'department_id': row['department_id']
+>         })
+>
+> # Build organization structure
+> # First create department objects with employees and projects
+> org_departments = []
+> for dept in departments:
+>     dept_id = dept['id']
+>     dept_employees = [e for e in employees if e['department_id'] == dept_id]
+>     dept_projects = [p for p in projects if p['department_id'] == dept_id]
+>     org_departments.append({
+>         'id': dept_id,
+>         'name': dept['name'],
+>         'budget': float(dept['budget']),
+>         'employees': dept_employees,
+>         'projects': dept_projects
+>     })
+>
+> # Statistics
+> # averageDepartmentBudget
+> budgets = [d['budget'] for d in org_departments]
+> average_department_budget = sum(budgets) / len(budgets) if budgets else 0
+>
+> # totalEmployees
+> total_employees = len(employees)
+>
+> # skillDistribution: count of employees per skill across all employees
+> skill_counts = {}
+> for emp in employees:
+>     for skill in emp['skills']:
+>         skill_counts[skill] = skill_counts.get(skill, 0) + 1
+>
+> # departmentSizes: count of employees per department
+> dept_sizes = {}
+> for emp in employees:
+>     dept = emp['department_id']
+>     dept_sizes[dept] = dept_sizes.get(dept, 0) + 1
+>
+> # projectStatusDistribution
+> status_counts = {}
+> for proj in projects:
+>     status = proj['status']
+>     status_counts[status] = status_counts.get(status, 0) + 1
+>
+> # averageYearsOfService
+> avg_years = sum(e['years_of_service'] for e in employees) / total_employees if total_employees else 0
+>
+> # Metadata
+> metadata = {
+>     'version': '1.0',
+>     'timestamp': datetime.now(timezone.utc).isoformat(),
+>     'generator': 'csv_to_json'
+> }
+>
+> # Organization
+> organization = {
+>     'name': 'Example Organization',  # placeholder, could be derived from data? We'll keep generic.
+>     'founded': '2000-01-01',  # placeholder
+>     'departments': org_departments
+> }
+>
+> # Statistics
+> statistics = {
+>     'averageDepartmentBudget': average_department_budget,
+>     'totalEmployees': total_employees,
+>     'skillDistribution': skill_counts,
+>     'departmentSizes': dept_sizes,
+>     'projectStatusDistribution': status_counts,
+>     'averageYearsOfService': avg_years
+> }
+>
+> # Final output
+> output = {
+>     'metadata': metadata,
+>     'organization': organization,
+>     'statistics': statistics
+> }
+>
+> # Write to organization.json
+> with open('organization.json', 'w') as f:
+>     json.dump(output, f, indent=2)
+>
+> print('organization.json created successfully')
+> EOF
+root@daa2e1c60e88:/app# python3 process_csv.py
+organization.json created successfully
+root@daa2e1c60e88:/app# cat organization.json
+{
+  "metadata": {
+    "version": "1.0",
+    "timestamp": "2026-07-08T07:40:47.789983+00:00",
+    "generator": "csv_to_json"
+  },
+  "organization": {
+    "name": "Example Organization",
+    "founded": "2000-01-01",
+    "departments": [
+      {
+        "id": "D001",
+        "name": "Engineering",
+        "budget": 1500000.0,
+        "employees": [
+          {
+            "id": "D001-E001",
+            "name": "Cristiano Ronaldo",
+            "position": "Manager",
+            "skills": [
+              "Python",
+              "Leadership",
+              "Project Management"
+            ],
+            "years_of_service": 10,
+            "department_id": "D001"
+          },
+          {
+            "id": "D001-E002",
+            "name": "Bernardo Silva",
+            "position": "Senior Developer",
+            "skills": [
+              "JavaScript",
+              "Python",
+              "Cloud Services"
+            ],
+            "years_of_service": 7,
+            "department_id": "D001"
+          },
+          {
+            "id": "D001-E003",
+            "name": "Sergio Ramos",
+            "position": "Team Lead",
+            "skills": [
+              "Java",
+              "C++",
+              "DevOps"
+            ],
+            "years_of_service": 12,
+            "department_id": "D001"
+          }
+        ],
+        "projects": [
+          {
+            "name": "Madrid",
+            "status": "In Progress",
+            "members": [
+              "D001-E001",
+              "D001-E002",
+              "D001-E003"
+            ],
+            "deadline": "2025-06-30",
+            "department_id": "D001"
+          },
+          {
+            "name": "Ferrari",
+            "status": "Completed",
+            "members": [
+              "D001-E002",
+              "D001-E003"
+            ],
+            "deadline": "2025-03-15",
+            "department_id": "D001"
+          }
+        ]
+      },
+      {
+        "id": "D002",
+        "name": "Marketing",
+        "budget": 800000.0,
+        "employees": [
+          {
+            "id": "D002-E001",
+            "name": "Kylian Mbappe",
+            "position": "Designer",
+            "skills": [
+              "UI/UX Design",
+              "Communication",
+              "Marketing"
+            ],
+            "years_of_service": 5,
+            "department_id": "D002"
+          },
+          {
+            "id": "D002-E002",
+            "name": "Vinicius Junior",
+            "position": "Specialist",
+            "skills": [
+              "Content Creation",
+              "Marketing",
+              "Communication"
+            ],
+            "years_of_service": 3,
+            "department_id": "D002"
+          }
+        ],
+        "projects": [
+          {
+            "name": "RedBull",
+            "status": "Planning",
+            "members": [
+              "D002-E001",
+              "D002-E002"
+            ],
+            "deadline": "2025-09-10",
+            "department_id": "D002"
+          }
+        ]
+      },
+      {
+        "id": "D003",
+        "name": "Human Resources",
+        "budget": 400000.0,
+        "employees": [
+          {
+            "id": "D003-E001",
+            "name": "Antonio Silva",
+            "position": "Director",
+            "skills": [
+              "Leadership",
+              "Communication",
+              "Project Management"
+            ],
+            "years_of_service": 8,
+            "department_id": "D003"
+          },
+          {
+            "id": "D003-E002",
+            "name": "Diogo Dalot",
+            "position": "Coordinator",
+            "skills": [
+              "SQL",
+              "Data Analysis",
+              "Communication"
+            ],
+            "years_of_service": 4,
+            "department_id": "D003"
+          }
+        ],
+        "projects": [
+          {
+            "name": "McLaren",
+            "status": "In Progress",
+            "members": [
+              "D003-E001",
+              "D003-E002"
+            ],
+            "deadline": "2025-07-20",
+            "department_id": "D003"
+          }
+        ]
+      },
+      {
+        "id": "D004",
+        "name": "Research & Development",
+        "budget": 2000000.0,
+        "employees": [
+          {
+            "id": "D004-E001",
+            "name": "Lewis Hamilton",
+            "position": "Senior Developer",
+            "skills": [
+              "Python",
+              "Machine Learning",
+              "Data Analysis"
+            ],
+            "years_of_service": 9,
+            "department_id": "D004"
+          },
+          {
+            "id": "D004-E002",
+            "name": "Charles Leclerc",
+            "position": "Researcher",
+            "skills": [
+              "Research",
+              "Python",
+              "Data Analysis"
+            ],
+            "years_of_service": 6,
+            "department_id": "D004"
+          },
+          {
+            "id": "D004-E003",
+            "name": "Max Verstappen",
+            "position": "Analyst",
+            "skills": [
+              "SQL",
+              "Data Analysis",
+              "Machine Learning"
+            ],
+            "years_of_service": 7,
+            "department_id": "D004"
+          }
+        ],
+        "projects": [
+          {
+            "name": "Mercedes",
+            "status": "Testing",
+            "members": [
+              "D004-E001",
+              "D004-E002",
+              "D004-E003"
+            ],
+            "deadline": "2025-05-15",
+            "department_id": "D004"
+          },
+          {
+            "name": "Hala",
+            "status": "In Progress",
+            "members": [
+              "D004-E002",
+              "D004-E003"
+            ],
+            "deadline": "2025-08-25",
+            "department_id": "D004"
+          }
+        ]
+      },
+      {
+        "id": "D005",
+        "name": "Customer Support",
+        "budget": 600000.0,
+        "employees": [
+          {
+            "id": "D005-E001",
+            "name": "Jude Bellingham",
+            "position": "Team Lead",
+            "skills": [
+              "Customer Service",
+              "Leadership",
+              "Communication"
+            ],
+            "years_of_service": 5,
+            "department_id": "D005"
+          },
+          {
+            "id": "D005-E002",
+            "name": "Luka Modric",
+            "position": "Specialist",
+            "skills": [
+              "Customer Service",
+              "Communication",
+              "Sales"
+            ],
+            "years_of_service": 11,
+            "department_id": "D005"
+          }
+        ],
+        "projects": [
+          {
+            "name": "United",
+            "status": "On Hold",
+            "members": [
+              "D005-E001",
+              "D005-E002"
+            ],
+            "deadline": "2025-11-30",
+            "department_id": "D005"
+          }
+        ]
+      }
+    ]
+  },
+  "statistics": {
+    "averageDepartmentBudget": 1060000.0,
+    "totalEmployees": 12,
+    "skillDistribution": {
+      "Python": 4,
+      "Leadership": 3,
+      "Project Management": 2,
+      "JavaScript": 1,
+      "Cloud Services": 1,
+      "Java": 1,
+      "C++": 1,
+      "DevOps": 1,
+      "UI/UX Design": 1,
+      "Communication": 6,
+      "Marketing": 2,
+      "Content Creation": 1,
+      "SQL": 2,
+      "Data Analysis": 4,
+      "Machine Learning": 2,
+      "Research": 1,
+      "Customer Service": 2,
+      "Sales": 1
+    },
+    "departmentSizes": {
+      "D001": 3,
+      "D002": 2,
+      "D003": 2,
+      "D004": 3,
+      "D005": 2
+    },
+    "projectStatusDistribution": {
+      "In Progress": 3,
+      "Completed": 1,
+      "Planning": 1,
+      "Testing": 1,
+      "On Hold": 1
+    },
+    "averageYearsOfService": 7.25
+  }
+}root@daa2e1c60e88:/app# cat > process_csv2.py << 'EOF'
+yees': total_employees,
+    'skillDistribution': skill_counts,
+    'departmentSizes': dept_sizes,
+    'projectStatusDistribution': status_counts,
+    'averageYearsOfService': avg_years
+}
+
+output = {
+    'metadata': metadata,
+    'organization': organization,
+    'statistics': statistics
+}
+
+with open('organization.json', 'w') as f:
+    json.dump(output, f, indent=2)
+
+print('organization.json created successfully')
+EOF
+> import csv
+> import json
+> from datetime import datetime, timezone
+>
+> # Read departments
+> departments = []
+> with open('data/departments.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         departments.append(row)
+>
+> # Read employees
+> employees = []
+> with open('data/employees.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         skills = row['skills'].split(';') if row['skills'] else []
+>         emp = {
+>             'id': row['id'],
+>             'name': row['name'],
+>             'position': row['position'],
+>             'skills': skills,
+>             'years_of_service': int(row['years_of_service']),
+>             'department_id': row['department_id']
+>         }
+>         employees.append(emp)
+>
+> # Read projects
+> projects = []
+> with open('data/projects.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         members = row['member_ids'].split(';') if row['member_ids'] else []
+>         proj = {
+>             'name': row['name'],
+>             'status': row['status'],
+>             'members': members,
+>             'deadline': row['deadline'],
+>             'department_id': row['department_id']
+>         }
+>         projects.append(proj)
+>
+> # Build organization structure
+> org_departments = []
+> for dept in departments:
+>     dept_id = dept['id']
+>     dept_employees = [e for e in employees if e['department_id'] == dept_id]
+>     # Remove department_id from employee objects
+>     dept_employees = [e.copy() for e in dept_employees]
+>     for e in dept_employees:
+>         del e['department_id']
+>     dept_projects = [p for p in projects if p['department_id'] == dept_id]
+>     # Remove department_id from project objects
+>     dept_projects = [p.copy() for p in dept_projects]
+>     for p in dept_projects:
+>         del p['department_id']
+>     org_departments.append({
+>         'id': dept_id,
+>         'name': dept['name'],
+>         'budget': float(dept['budget']),
+>         'employees': dept_employees,
+>         'projects': dept_projects
+>     })
+>
+> # Statistics
+> budgets = [d['budget'] for d in org_departments]
+> average_department_budget = sum(budgets) / len(budgets) if budgets else 0
+>
+> total_employees = len(employees)
+>
+> skill_counts = {}
+> for emp in employees:
+>     for skill in emp['skills']:
+>         skill_counts[skill] = skill_counts.get(skill, 0) + 1
+>
+> # departmentSizes: count of employees per department
+> dept_sizes = {}
+> for emp in employees:
+>     dept = emp['department_id']
+>     dept_sizes[dept] = dept_sizes.get(dept, 0) + 1
+>
+> # projectStatusDistribution
+> status_counts = {}
+> for proj in projects:
+>     status = proj['status']
+>     status_counts[status] = status_counts.get(status, 0) + 1
+>
+> avg_years = sum(e['years_of_service'] for e in employees) / total_employees if total_employees else 0
+>
+> metadata = {
+>     'version': '1.0',
+>     'timestamp': datetime.now(timezone.utc).isoformat(),
+>     'generator': 'csv_to_json'
+> }
+>
+> organization = {
+>     'name': 'Example Organization',
+>     'founded': '2000-01-01',
+>     'departments': org_departments
+> }
+>
+> statistics = {
+>     'averageDepartmentBudget': average_department_budget,
+>     'totalEmployees': total_employees,
+>     'skillDistribution': skill_counts,
+>     'departmentSizes': dept_sizes,
+>     'projectStatusDistribution': status_counts,
+>     'averageYearsOfService': avg_years
+> }
+>
+> output = {
+>     'metadata': metadata,
+>     'organization': organization,
+>     'statistics': statistics
+> }
+>
+> with open('organization.json', 'w') as f:
+>     json.dump(output, f, indent=2)
+>
+> print('organization.json created successfully')
+> EOF
+root@daa2e1c60e88:/app# python3 process_csv2.py
+organization.json created successfully
+root@daa2e1c60e88:/app# head -30 organization.json
+{
+  "metadata": {
+    "version": "1.0",
+    "timestamp": "2026-07-08T07:41:00.986523+00:00",
+    "generator": "csv_to_json"
+  },
+  "organization": {
+    "name": "Example Organization",
+    "founded": "2000-01-01",
+    "departments": [
+      {
+        "id": "D001",
+        "name": "Engineering",
+        "budget": 1500000.0,
+        "employees": [
+          {
+            "id": "D001-E001",
+            "name": "Cristiano Ronaldo",
+            "position": "Manager",
+            "skills": [
+              "Python",
+              "Leadership",
+              "Project Management"
+            ],
+            "years_of_service": 10
+          },
+          {
+            "id": "D001-E002",
+            "name": "Bernardo Silva",
+            "position": "Senior Developer",
+root@daa2e1c60e88:/app# grep -n 'department_id' organization.json
+root@daa2e1c60e88:/app# cat > validate.py << 'EOF'
+> import csv
+> import json
+>
+> # Load CSV data
+> departments = []
+> with open('data/departments.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         departments.append(row)
+>
+> employees = []
+> with open('data/employees.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         skills = row['skills'].split(';') if row['skills'] else []
+>         employees.append({
+>             'id': row['id'],
+>             'name': row['name'],
+>             'position': row['position'],
+>             'skills': skills,
+>             'years_of_service': int(row['years_of_service']),
+>             'department_id': row['department_id']
+>         })
+>
+> projects = []
+> with open('data/projects.csv', 'r') as f:
+>     reader = csv.DictReader(f)
+>     for row in reader:
+>         members = row['member_ids'].split(';') if row['member_ids'] else []
+>         projects.append({
+>             'name': row['name'],
+>             'status': row['status'],
+>             'members': members,
+>             'deadline': row['deadline'],
+>             'department_id': row['department_id']
+>         })
+>
+> # Compute statistics
+> budgets = [float(d['budget']) for d in departments]
+> avg_budget = sum(budgets) / len(budgets)
+> print(f'Average budget from CSV: {avg_budget}')
+>
+> print(f'Total employees: {len(employees)}')
+>
+> skill_counts = {}
+> for emp in employees:
+>     for skill in emp['skills']:
+>         skill_counts[skill] = skill_counts.get(skill, 0) + 1
+> print('Skill distribution:', skill_counts)
+>
+> dept_sizes = {}
+> for emp in employees:
+>     dept = emp['department_id']
+>     dept_sizes[dept] = dept_sizes.get(dept, 0) + 1
+> print('Department sizes:', dept_sizes)
+>
+> status_counts = {}
+> for proj in projects:
+>     status = proj['status']
+>     status_counts[status] = status_counts.get(status, 0) + 1
+> print('Project status distribution:', status_counts)
+>
+> avg_years = sum(e['years_of_service'] for e in employees) / len(employees)
+> print(f'Average years of service: {avg_years}')
+>
+> # Load generated JSON
+> with open('organization.json', 'r') as f:
+>     data = json.load(f)
+>
+> print('\nStatistics from JSON:')
+> print(f"averageDepartmentBudget: {data['statistics']['averageDepartmentBudget']}")
+> print(f"totalEmployees: {data['statistics']['totalEmployees']}")
+> print(f"skillDistribution: {data['statistics']['skillDistribution']}")
+> print(f"departmentSizes: {data['statistics']['departmentSizes']}")
+> print(f"projectStatusDistribution: {data['statistics']['projectStatusDistribution']}")
+> print(f"averageYearsOfService: {data['statistics']['averageYearsOfService']}")
+>
+> # Compare
+> if abs(avg_budget - data['statistics']['averageDepartmentBudget']) < 0.01:
+>     print('\nAverage budget matches!')
+> else:
+>     print('\nAverage budget mismatch!')
+> EOF
+root@daa2e1c60e88:/app# python3 validate.py
+Average budget from CSV: 1060000.0
+Total employees: 12
+Skill distribution: {'Python': 4, 'Leadership': 3, 'Project Management': 2, 'JavaScript': 1, 'Cloud Services': 1, 'Java': 1, 'C++': 1, 'DevOps': 1, 'UI/UX Desig
+n': 1, 'Communication': 6, 'Marketing': 2, 'Content Creation': 1, 'SQL': 2, 'Data Analysis': 4, 'Machine Learning': 2, 'Research': 1, 'Customer Service': 2, 'Sa
+les': 1}
+Department sizes: {'D001': 3, 'D002': 2, 'D003': 2, 'D004': 3, 'D005': 2}
+Project status distribution: {'In Progress': 3, 'Completed': 1, 'Planning': 1, 'Testing': 1, 'On Hold': 1}
+Average years of service: 7.25
+
+Statistics from JSON:
+averageDepartmentBudget: 1060000.0
+totalEmployees: 12
+skillDistribution: {'Python': 4, 'Leadership': 3, 'Project Management': 2, 'JavaScript': 1, 'Cloud Services': 1, 'Java': 1, 'C++': 1, 'DevOps': 1, 'UI/UX Design
+': 1, 'Communication': 6, 'Marketing': 2, 'Content Creation': 1, 'SQL': 2, 'Data Analysis': 4, 'Machine Learning': 2, 'Research': 1, 'Customer Service': 2, 'Sal
+es': 1}
+departmentSizes: {'D001': 3, 'D002': 2, 'D003': 2, 'D004': 3, 'D005': 2}
+projectStatusDistribution: {'In Progress': 3, 'Completed': 1, 'Planning': 1, 'Testing': 1, 'On Hold': 1}
+averageYearsOfService: 7.25
+
+Average budget matches!
+root@daa2e1c60e88:/app# ls -l organization.json
+-rw-r--r-- 1 root root 6993 Jul  8 07:41 organization.json
+root@daa2e1c60e88:/app# head -5 organization.json
+{
+  "metadata": {
+    "version": "1.0",
+    "timestamp": "2026-07-08T07:41:00.986523+00:00",
+    "generator": "csv_to_json"
+root@daa2e1c60e88:/app# tail -5 organization.json
+      "On Hold": 1
+    },
+    "averageYearsOfService": 7.25
+  }
+}root@daa2e1c60e88:/app# python3 -m json.tool organization.json > /dev/null && echo 'JSON is valid'
+JSON is valid
+root@daa2e1c60e88:/app#

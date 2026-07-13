@@ -1,0 +1,280 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@38e7a67301dd:/app# cat /usr/local/lib/python3.13/site-packages/bitcoinlib/services/bitcoind.py
+# -*- coding: utf-8 -*-
+#
+#    BitcoinLib - Python Cryptocurrency Library
+#    Client for bitcoind deamon
+#    © 2017 - 2024 May - 1200 Web Development <http://1200wd.com/>
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU Affero General Public License as
+#    published by the Free Software Foundation, either version 3 of the
+#    License, or (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU Affero General Public License for more details.
+#
+#    You should have received a copy of the GNU Affero General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import configparser
+from bitcoinlib.main import *
+from bitcoinlib.services.authproxy import AuthServiceProxy
+from bitcoinlib.services.baseclient import BaseClient, ClientError
+from bitcoinlib.transactions import Transaction
+from bitcoinlib.networks import Network
+
+
+PROVIDERNAME = 'bitcoind'
+
+_logger = logging.getLogger(__name__)
+
+
+class ConfigError(Exception):
+    def __init__(self, msg=''):
+        self.msg = msg
+        _logger.info(msg)
+
+    def __str__(self):
+        return self.msg
+
+
+def _read_from_config(configparser, section, value, fallback=None):
+    try:
+        return configparser.get(section, value)
+    except Exception:
+        return fallback
+
+
+class BitcoindClient(BaseClient):
+    """
+    Class to interact with bitcoind, the Bitcoin deamon
+    """
+
+    @staticmethod
+    @deprecated
+    def from_config(configfile=None, network='bitcoin', **kwargs):
+        """
+        Read settings from bitcoind config file
+
+        Obsolete: does not work anymore, passwords are not stored in bitcoin config, only hashed password.
+
+        :param configfile: Path to config file. Leave empty to look in default places
+        :type: str
+        :param network: Bitcoin mainnet or testnet. Default is bitcoin mainnet
+        :type: str
+
+        :return BitcoindClient:
+        """
+        try:
+            config = configparser.ConfigParser(strict=False)
+        except TypeError:
+            config = configparser.ConfigParser()
+        config_fn = 'bitcoin.conf'
+        if isinstance(network, Network):
+            network = network.name
+        if network == 'testnet':
+            config_fn = 'bitcoin-testnet.conf'
+
+        cfn = None
+        if not configfile:
+            config_locations = ['~/.bitcoinlib', '~/.bitcoin', '~/Application Data/Bitcoin',
+                                '~/Library/Application Support/Bitcoin']
+            for location in config_locations:
+                cfn = Path(location, config_fn).expanduser()
+                if cfn.exists():
+                    break
+        else:
+            cfn = Path(BCL_DATA_DIR, 'config', configfile)
+
+        if not cfn or not cfn.is_file():
+            raise ConfigError("Config file %s not found. Please install bitcoin client and specify a path to config "
+                              "file if path is not default. Or place a config file in .bitcoinlib/bitcoin.conf to "
+                              "reference to an external server." % cfn)
+
+        try:
+            config.read(cfn)
+        except Exception:
+            with cfn.open() as f:
+                config_string = '[rpc]\n' + f.read()
+            config.read_string(config_string)
+
+        testnet = _read_from_config(config, 'rpc', 'testnet')
+        if testnet:
+            network = 'testnet'
+        if _read_from_config(config, 'rpc', 'rpcpassword') == 'specify_rpc_password':
+            raise ConfigError("Please update config settings in %s" % cfn)
+        if network == 'testnet':
+            port = 18332
+        else:
+            port = 8332
+        port = _read_from_config(config, 'rpc', 'rpcport', port)
+        server = '127.0.0.1'
+        server = _read_from_config(config, 'rpc', 'rpcconnect', server)
+        server = _read_from_config(config, 'rpc', 'bind', server)
+        server = _read_from_config(config, 'rpc', 'externalip', server)
+
+        url = "http://%s:%s@%s:%s" % (config.get('rpc', 'rpcuser'), config.get('rpc', 'rpcpassword'), server, port)
+        return BitcoindClient(network, url, **kwargs)
+
+    def __init__(self, network='bitcoin', base_url='', denominator=100000000, *args):
+        """
+        Open connection to bitcoin node
+
+        :param base_url: Connection URL in format http(s)://user:password@host:port.
+        :type: str
+        :param network: Bitcoin mainnet or testnet. Default is bitcoin mainnet
+        :type: str
+        :param denominator: Denominator for this currency. Should be always 100000000 (Satoshi's) for bitcoin
+        :type: str
+        :param wallet_name: Name of Bitcoin core wallet to use
+[... output limited to 10000 bytes; 70 interior bytes omitted ...]
+transactions %d, use other service provider for this "
+                              "wallet" % MAX_WALLET_TRANSACTIONS)
+        txids = list(set([(tx['txid'], tx.get('blockheight')) for tx in txs_list if tx['address'] == address]))
+        for (txid, blockheight) in txids:
+            tx_raw = self.proxy.getrawtransaction(txid, 1)
+            t = self._parse_transaction(tx_raw, blockheight)
+            txs.append(t)
+            if txid == after_txid:
+                txs = []
+        return txs
+
+    def getrawtransaction(self, txid):
+        res = self.proxy.getrawtransaction(txid)
+        return res
+
+    def sendrawtransaction(self, rawtx):
+        res = self.proxy.sendrawtransaction(rawtx)
+        return {
+            'txid': res,
+            'response_dict': res
+        }
+
+    def estimatefee(self, blocks):
+        pres = ''
+        try:
+            pres = self.proxy.estimatesmartfee(blocks)
+            res = pres['feerate']
+        except KeyError as e:
+            _logger.info("bitcoind error: %s, %s" % (e, pres))
+            res = self.proxy.estimatefee(blocks)
+        return round(res * self.units)
+
+    def blockcount(self):
+        bcinfo = self.proxy.getblockchaininfo()
+        if bcinfo['headers'] - bcinfo['blocks'] > 2:
+            raise ClientError("Node not fully synced! Currently %d blocks synced and %d blocks known" %
+                              (bcinfo['blocks'], bcinfo['headers']))
+        return bcinfo['blocks']
+
+    def mempool(self, txid=''):
+        txids = self.proxy.getrawmempool()
+        if not txid:
+            return txids
+        elif txid in txids:
+            return [txid]
+        return []
+
+    def getblock(self, blockid, parse_transactions=True, page=1, limit=None):
+        if isinstance(blockid, int) or len(blockid) < 10:
+            blockid = self.proxy.getblockhash(int(blockid))
+        if not limit:
+            limit = 99999
+
+        txs = []
+        if parse_transactions:
+            bd = self.proxy.getblock(blockid, 2)
+            for tx in bd['tx'][(page - 1) * limit:page * limit]:
+                tx['time'] = bd['time']
+                tx['blockhash'] = bd['hash']
+                txs.append(self._parse_transaction(tx, block_height=bd['height'], get_input_values=True))
+        else:
+            bd = self.proxy.getblock(blockid, 1)
+            txs = bd['tx']
+
+        block = {
+            'bits': int(bd['bits'], 16),
+            'depth': bd['confirmations'],
+            'block_hash': bd['hash'],
+            'height': bd['height'],
+            'merkle_root': bd['merkleroot'],
+            'nonce': bd['nonce'],
+            'prev_block': None if 'previousblockhash' not in bd else bd['previousblockhash'],
+            'time': bd['time'],
+            'tx_count': bd['nTx'],
+            'txs': txs,
+            'version': bd['version'],
+            'page': page,
+            'pages': None,
+            'limit': limit
+        }
+        return block
+
+    def getrawblock(self, blockid):
+        if isinstance(blockid, int):
+            blockid = self.proxy.getblockhash(blockid)
+        return self.proxy.getblock(blockid, 0)
+
+    def isspent(self, txid, index):
+        res = self.proxy.gettxout(txid, index)
+        return 0 if res else 1
+
+    def getinfo(self):
+        info = self.proxy.getmininginfo()
+        return {
+            'blockcount': info['blocks'],
+            'chain': info['chain'],
+            'difficulty': int(info['difficulty']),
+            'hashrate': int(info['networkhashps']),
+            'mempool_size': int(info['pooledtx']),
+        }
+
+
+if __name__ == '__main__':
+    #
+    # SOME EXAMPLES
+    #
+
+    from pprint import pprint
+
+    # Connect by specifying connection URL
+    base_url = 'http://bitcoinrpc:passwd@host:8332'
+    bdc = BitcoindClient(base_url=base_url)
+
+    print("\n=== SERVERINFO ===")
+    pprint(bdc.proxy.getnetworkinfo())
+
+    print("\n=== Best Block ===")
+    blockhash = bdc.proxy.getbestblockhash()
+    bestblock = bdc.proxy.getblock(blockhash)
+    bestblock['tx'] = '...' + str(len(bestblock['tx'])) + ' transactions...'
+    pprint(bestblock)
+
+    print("\n=== Mempool ===")
+    rmp = bdc.proxy.getrawmempool()
+    pprint(rmp[:25])
+    print('... truncated ...')
+    print("Mempool Size %d" % len(rmp))
+
+    print("\n=== Raw Transaction by txid ===")
+    t = bdc.getrawtransaction('7eb5332699644b753cd3f5afba9562e67612ea71ef119af1ac46559adb69ea0d')
+    pprint(t)
+
+    print("\n=== Current network fees ===")
+    t = bdc.estimatefee(5)
+    pprint(t)
+root@38e7a67301dd:/app# python3 -c "import json; from bitcoinlib import Networks; net = Networks('mainnet'); print(dir(net))"
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    import json; from bitcoinlib import Networks; net = Networks('mainnet'); print(dir(net))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ImportError: cannot import name 'Networks' from 'bitcoinlib' (/usr/local/lib/python3.13/site-packages/bitcoinlib/__init__.py). Did you mean: 'networks'?
+root@38e7a67301dd:/app#

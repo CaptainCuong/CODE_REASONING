@@ -1,0 +1,113 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@529b14e7bc4a:/app# cd /app
+root@529b14e7bc4a:/app# cat > bitcoin_service.py << 'EOF'
+> #!/usr/bin/env python3
+>
+> from bitcoinlib.rpc import RPCClient
+> from flask import Flask, request, json, abort, make_response
+> import sys
+> from typing import Dict, Any, List, Optional
+>
+> # Create Flask app
+> app = Flask(__name__)
+>
+> # RPC client configuration
+> rpc_config = {
+>     'host': 'localhost',
+>     'port': 8333,
+>     'user': '',
+>     'password': '',
+> }
+>
+> # Initialize RPC client
+> rpc_client = RPCClient(rpc_config)
+>
+> # Connection status
+> connected = False
+> try:
+>     # Test connection
+>     result = rpc_client.getinfo()
+>     connected = True
+> except Exception as e:
+>     connected = False
+>
+> # Helper function to get connection status
+> def get_connection_status() -> Dict[str, Any]:
+>     return {
+>         'status': 'online' if connected else 'offline',
+>         'error': 'Connection to Bitcoin network failed' if not connected else None
+>     }
+>
+> # Endpoint for block details
+> @app.route('/block/<block_hash>', methods=['GET'])
+> def get_block(block_hash: str):
+>     global connected
+>     if not connected:
+>         return make_response(json.dumps({'error': 'Not connected to Bitcoin network'}), 503)
+>     try:
+>         block = rpc_client.get_block(block_hash)
+>         # Build response
+>         response = {
+>             'hash': block['hash'],
+>             'height': block['height'],
+>             'merkleroot': block['merkleroot'],
+>             'time': block['timestamp'],
+>             'nonce': block['nonce'],
+>             'tx': [tx['txid'] for tx in block['tx']]
+>         }
+>         return make_response(json.dumps(response), 200)
+>     except Exception as e:
+>         # If block not found, return 404
+>         return make_response(json.dumps({'error': f'Block {block_hash} not found'}), 404)
+>
+> # Endpoint for transaction details
+> @app.route('/transaction/<txid>', methods=['GET'])
+> def get_transaction(txid: str):
+>     global connected
+>     if not connected:
+>         return make_response(json.dumps({'error': 'Not connected to Bitcoin network'}), 503)
+>     try:
+>         tx = rpc_client.get_transaction(txid)
+>         # Build response
+>         vin = []
+>         for vin_entry in tx['vin']:
+>             vin.append({
+>                 'coinbase': vin_entry.get('coinbase', ''),
+>                 'sequence': vin_entry['sequence']
+>             })
+>         vout = []
+>         for vout_entry in tx['vout']:
+>             vout.append({
+>                 'value': vout_entry['value'],
+>                 'n': vout_entry['n'],
+>                 'scriptPubKey': {
+>                     'asm': vout_entry['scriptPubKey']['asm'],
+>                     'hex': vout_entry['scriptPubKey']['hex'],
+>                     'type': vout_entry['scriptPubKey']['type']
+>                 }
+>             })
+>         response = {
+>             'txid': tx['txid'],
+>             'blockhash': tx['blockhash'],
+>             'vin': vin,
+>             'vout': vout
+>         }
+>         return make_response(json.dumps(response), 200)
+>     except Exception as e:
+>         return make_response(json.dumps({'error': f'Transaction {txid} not found'}), 404)
+>
+> # Endpoint for network status
+> @app.route('/status', methods=['GET'])
+> def get_status():
+>     status_info = get_connection_status()
+>     return make_response(json.dumps(status_info), 200)
+>
+> # Main function
+> if __name__ == '__main__':
+>     app.run(host='0.0.0.0', port=5000, debug=False)
+> EOF
+root@529b14e7bc4a:/app#

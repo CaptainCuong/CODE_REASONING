@@ -1,0 +1,120 @@
+Previous response had warnings:
+WARNINGS: - Extra text detected before JSON object
+
+New Terminal Output:
+
+root@7f1978478c1e:/app# head -80 cli_tool.c
+#include <stdio.h>
+#include <stdlib.h>
+#include <cJSON.h>
+#include <lodepng.h>
+#include <math.h>
+
+#define INPUT_DIM 28
+#define HIDDEN_DIM 16
+#define NUM_CLASSES 10
+
+// Load weights from JSON
+tensor_t load_weights(const char* filename) {
+    FILE* f = fopen(filename, "r");
+    if (!f) {
+        printf("Error: cannot open %s\n", filename);
+        exit(1);
+    }
+    fseek(f, 0, SEEK_END);
+    long len = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* data = malloc(len);
+    fread(data, 1, len, f);
+    fclose(f);
+    cJSON* root = cJSON_Parse(data);
+    free(data);
+
+    tensor_t weights = tensor_create(HIDDEN_DIM * HIDDEN_DIM + HIDDEN_DIM * INPUT_DIM + HIDDEN_DIM + NUM_CLASSES * HIDDEN_DIM);
+
+    // input_layer.weight
+    cJSON* key = cJSON_GetObjectItemCaseSensitive(root, "input_layer.weight");
+    if (!key || !key->value.array) {
+        printf("Missing input_layer.weight\n");
+        exit(1);
+    }
+    for (int i = 0; i < HIDDEN_DIM * INPUT_DIM; i++) {
+        weights.data[i] = key->value.array[i] / 255.0; // normalize
+    }
+
+    // input_layer.bias
+    key = cJSON_GetObjectItemCaseSensitive(root, "input_layer.bias");
+    for (int i = 0; i < HIDDEN_DIM; i++) {
+        weights.data[HIDDEN_DIM * INPUT_DIM + i] = key->value.array[i] / 255.0;
+    }
+
+    // hidden_layer.weight
+    key = cJSON_GetObjectItemCaseSensitive(root, "hidden_layer.weight");
+    for (int i = 0; i < HIDDEN_DIM * HIDDEN_DIM; i++) {
+        weights.data[HIDDEN_DIM * INPUT_DIM + HIDDEN_DIM + i] = key->value.array[i] / 255.0;
+    }
+
+    // hidden_layer.bias
+    key = cJSON_GetObjectItemCaseSensitive(root, "hidden_layer.bias");
+    for (int i = 0; i < HIDDEN_DIM; i++) {
+        weights.data[HIDDEN_DIM * INPUT_DIM + HIDDEN_DIM + HIDDEN_DIM + i] = key->value.array[i] / 255.0;
+    }
+
+    // output_layer.weight
+    key = cJSON_GetObjectItemCaseSensitive(root, "output_layer.weight");
+    for (int i = 0; i < NUM_CLASSES * HIDDEN_DIM; i++) {
+        weights.data[HIDDEN_DIM * INPUT_DIM + HIDDEN_DIM + HIDDEN_DIM + HIDDEN_DIM + i] = key->value.array[i] / 255.0;
+    }
+
+    // output_layer.bias
+    key = cJSON_GetObjectItemCaseSensitive(root, "output_layer.bias");
+    for (int i = 0; i < NUM_CLASSES; i++) {
+        weights.data[HIDDEN_DIM * INPUT_DIM + HIDDEN_DIM + HIDDEN_DIM + HIDDEN_DIM + HIDDEN_DIM + i] = key->value.array[i] / 255.0;
+    }
+
+    return weights;
+}
+
+// Load image tensor from PNG
+tensor_t load_image(const char* filename) {
+    unsigned char* image = NULL;
+    unsigned int width, height;
+    lodepng_decode_file(&image, &width, &height, filename, LODEPNG_FORMAT_PNG);
+    if (width != INPUT_DIM || height != INPUT_DIM) {
+        printf("Image dimensions must be %dx%d\n", INPUT_DIM, INPUT_DIM);
+        exit(1);
+    }
+root@7f1978478c1e:/app# tail -30 cli_tool.c
+
+    // Cleanup
+    tensor_free(weights);
+    tensor_free(x);
+    tensor_free(out);
+
+    return 0;
+}
+
+// Simple tensor structure
+typedef struct {
+    int dim;          // number of dimensions
+    int size;         // number of elements in last dimension
+    double* data;
+} tensor_t;
+
+// Create tensor with given size
+tensor_t tensor_create(int size) {
+    tensor_t t = malloc(sizeof(struct tensor_s));
+    t->dim = 1;
+    t->size = size;
+    t->data = malloc(size * sizeof(double));
+    return t;
+}
+
+// Free tensor
+void tensor_free(tensor_t t) {
+    free(t->data);
+    free(t);
+}
+root@7f1978478c1e:/app# gcc -std=c99 -Wall -O2 -I. cli_tool.c -o cli_tool -lm -lpthread -lstdc++ -lcJSON -lodepng 2>&1
+bash: gcc: command not found
+root@7f1978478c1e:/app#
